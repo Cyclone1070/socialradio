@@ -1,8 +1,8 @@
-import { IngestionService } from './ingestion.service';
+import { FeedService } from './feed.service';
 import { FeedProvider } from './interfaces/feed-provider.interface';
 
-describe('IngestionService', () => {
-  let service: IngestionService;
+describe('FeedService', () => {
+  let service: FeedService;
   let mockRedditProvider: jest.Mocked<FeedProvider>;
 
   beforeEach(() => {
@@ -10,7 +10,7 @@ describe('IngestionService', () => {
       fetchFeed: jest.fn(),
     };
 
-    service = new IngestionService(mockRedditProvider);
+    service = new FeedService(mockRedditProvider);
   });
 
   it('should delegate fetching to the RedditProvider when source is reddit', async () => {

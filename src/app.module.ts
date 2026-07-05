@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
-import { IngestionModule } from './features/ingestion/ingestion.module';
+import { FeedModule } from './features/feed/feed.module';
 
 @Module({
-  imports: [IngestionModule],
+  imports: [FeedModule],
   controllers: [],
   providers: [],
 })
