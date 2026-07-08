@@ -35,19 +35,26 @@ export class RadioService {
     }
 
     const posts = await this.postRepo.find({ where: { topicId } });
-    const postIds = posts.map(p => p.id);
+    const postIds = posts.map((p) => p.id);
     let comments: Comment[] = [];
     if (postIds.length > 0) {
       // Find all top comments for the posts in this topic
       comments = await this.commentRepo.find({
-        where: postIds.map(postId => ({ postId })),
+        where: postIds.map((postId) => ({ postId })),
       });
     }
 
     const scriptText = await this.scriptService.generateScript(posts, comments);
-    const outputFilePath = path.join('assets', 'cache', `tts-topic-${topicId}.mp3`);
+    const outputFilePath = path.join(
+      'assets',
+      'cache',
+      `tts-topic-${topicId}.mp3`,
+    );
 
-    const durationSeconds = await this.audioService.generateSpeech(scriptText, outputFilePath);
+    const durationSeconds = await this.audioService.generateSpeech(
+      scriptText,
+      outputFilePath,
+    );
 
     const script = this.scriptRepo.create({
       topicId,

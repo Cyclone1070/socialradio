@@ -20,8 +20,8 @@ Make it sound exactly like a real radio broadcast segment. Deliver it smoothly. 
       userPrompt += `Title: ${post.title}\n`;
       userPrompt += `Author: ${post.author}\n`;
       userPrompt += `Content: ${post.body || 'No selftext body content'}\n`;
-      
-      const postComments = comments.filter(c => c.postId === post.id);
+
+      const postComments = comments.filter((c) => c.postId === post.id);
       if (postComments.length > 0) {
         userPrompt += `Top Comments:\n`;
         postComments.forEach((c, idx) => {

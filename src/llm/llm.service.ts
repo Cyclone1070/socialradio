@@ -10,7 +10,10 @@ export class LlmService {
     private readonly configService: ConfigService,
   ) {}
 
-  async generateText(systemPrompt: string, userPrompt: string): Promise<string> {
+  async generateText(
+    systemPrompt: string,
+    userPrompt: string,
+  ): Promise<string> {
     const apiKey = this.configService.get<string>('GEMINI_API_KEY');
     if (!apiKey) {
       throw new Error('Gemini API key is not configured');
@@ -37,7 +40,18 @@ export class LlmService {
       }),
     );
 
-    const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    interface GeminiResponse {
+      candidates?: Array<{
+        content?: {
+          parts?: Array<{
+            text?: string;
+          }>;
+        };
+      }>;
+    }
+
+    const data = response.data as GeminiResponse;
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) {
       throw new Error('No text returned from Gemini API');
     }

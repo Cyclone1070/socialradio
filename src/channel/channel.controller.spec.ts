@@ -3,11 +3,10 @@ import { ChannelController } from './channel.controller';
 import { ChannelService } from './channel.service';
 import { ChannelBroadcasterService } from './channel-broadcaster.service';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
+import { Request, Response } from 'express';
 
 describe('ChannelController', () => {
   let controller: ChannelController;
-  let service: ChannelService;
-  let broadcasterService: ChannelBroadcasterService;
 
   const mockChannelService = {
     getUserChannels: jest.fn(),
@@ -25,13 +24,14 @@ describe('ChannelController', () => {
       controllers: [ChannelController],
       providers: [
         { provide: ChannelService, useValue: mockChannelService },
-        { provide: ChannelBroadcasterService, useValue: mockBroadcasterService },
+        {
+          provide: ChannelBroadcasterService,
+          useValue: mockBroadcasterService,
+        },
       ],
     }).compile();
 
     controller = module.get<ChannelController>(ChannelController);
-    service = module.get<ChannelService>(ChannelService);
-    broadcasterService = module.get<ChannelBroadcasterService>(ChannelBroadcasterService);
     jest.clearAllMocks();
   });
 
@@ -41,10 +41,12 @@ describe('ChannelController', () => {
 
   describe('getUserChannels', () => {
     it('should return user channels', async () => {
-      const channels = [{ id: '1', name: 'Public', type: 'public', ownerId: null }];
+      const channels = [
+        { id: '1', name: 'Public', type: 'public', ownerId: null },
+      ];
       mockChannelService.getUserChannels.mockResolvedValue(channels);
 
-      const req = { user: { id: 'user-1' } };
+      const req = { user: { id: 'user-1' } } as unknown as Request;
       const result = await controller.getUserChannels(req);
 
       expect(mockChannelService.getUserChannels).toHaveBeenCalledWith('user-1');
@@ -55,13 +57,21 @@ describe('ChannelController', () => {
   describe('configureChannel', () => {
     it('should configure channel and return response', async () => {
       const dto: ConfigureChannelDto = { name: 'My Radio', type: 'private' };
-      const channel = { id: 'chan-1', name: 'My Radio', type: 'private', ownerId: 'user-1' };
+      const channel = {
+        id: 'chan-1',
+        name: 'My Radio',
+        type: 'private',
+        ownerId: 'user-1',
+      };
       mockChannelService.configureChannel.mockResolvedValue(channel);
 
-      const req = { user: { id: 'user-1' } };
+      const req = { user: { id: 'user-1' } } as unknown as Request;
       const result = await controller.configureChannel(dto, req);
 
-      expect(mockChannelService.configureChannel).toHaveBeenCalledWith(dto, 'user-1');
+      expect(mockChannelService.configureChannel).toHaveBeenCalledWith(
+        dto,
+        'user-1',
+      );
       expect(result).toEqual(channel);
     });
   });
@@ -70,9 +80,14 @@ describe('ChannelController', () => {
     it('should subscribe subreddit to channel', async () => {
       mockChannelService.subscribeToSubreddit.mockResolvedValue(undefined);
 
-      await controller.subscribeToSubreddit('chan-1', { subredditName: 'AskReddit' });
+      await controller.subscribeToSubreddit('chan-1', {
+        subredditName: 'AskReddit',
+      });
 
-      expect(mockChannelService.subscribeToSubreddit).toHaveBeenCalledWith('chan-1', 'AskReddit');
+      expect(mockChannelService.subscribeToSubreddit).toHaveBeenCalledWith(
+        'chan-1',
+        'AskReddit',
+      );
     });
   });
 
@@ -82,18 +97,24 @@ describe('ChannelController', () => {
 
       await controller.unsubscribeFromSubreddit('chan-1', 'AskReddit');
 
-      expect(mockChannelService.unsubscribeFromSubreddit).toHaveBeenCalledWith('chan-1', 'AskReddit');
+      expect(mockChannelService.unsubscribeFromSubreddit).toHaveBeenCalledWith(
+        'chan-1',
+        'AskReddit',
+      );
     });
   });
 
   describe('streamChannel', () => {
     it('should register client response for live streaming', async () => {
-      const mockRes = {} as any;
+      const mockRes = {} as unknown as Response;
       mockBroadcasterService.registerClient.mockResolvedValue(undefined);
 
       await controller.streamChannel('chan-1', mockRes);
 
-      expect(mockBroadcasterService.registerClient).toHaveBeenCalledWith('chan-1', mockRes);
+      expect(mockBroadcasterService.registerClient).toHaveBeenCalledWith(
+        'chan-1',
+        mockRes,
+      );
     });
   });
 });

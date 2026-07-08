@@ -60,7 +60,8 @@ export class QueueGeneratorService {
       const savedTalkItem = await this.playlistItemRepo.save(talkItem);
 
       // Trigger background voice generation (asynchronous)
-      this.radioService.getTopicVoiceTrack(topic.id)
+      this.radioService
+        .getTopicVoiceTrack(topic.id)
         .then(async (segment) => {
           savedTalkItem.audioUrl = segment.filePath;
           savedTalkItem.durationSeconds = segment.durationSeconds;
@@ -129,12 +130,12 @@ export class QueueGeneratorService {
     const completedProgress = await this.progressRepo.find({
       where: { channelId, completed: true },
     });
-    const completedTopicIds = completedProgress.map(p => p.topicId);
+    const completedTopicIds = completedProgress.map((p) => p.topicId);
 
-    const subIds = subs.map(s => s.subredditId);
+    const subIds = subs.map((s) => s.subredditId);
     // Find all topics in subscribed subreddits
     const topics = await this.topicRepo.find({
-      where: subIds.map(subredditId => ({ subredditId })),
+      where: subIds.map((subredditId) => ({ subredditId })),
       order: { createdAt: 'ASC' },
     });
 

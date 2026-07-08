@@ -1,6 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { ScraperService } from './scraper.service';
 import { RedditApiService } from './reddit-api.service';
 import { TopicService } from './topic.service';
@@ -16,8 +15,6 @@ jest.mock('@huggingface/transformers', () => ({
 
 describe('ScraperService', () => {
   let service: ScraperService;
-  let redditApi: RedditApiService;
-  let topicService: TopicService;
 
   const mockSubredditRepo = {
     findOneBy: jest.fn(),
@@ -64,8 +61,6 @@ describe('ScraperService', () => {
     }).compile();
 
     service = module.get<ScraperService>(ScraperService);
-    redditApi = module.get<RedditApiService>(RedditApiService);
-    topicService = module.get<TopicService>(TopicService);
     jest.clearAllMocks();
   });
 
@@ -116,12 +111,21 @@ describe('ScraperService', () => {
       mockPostRepo.create.mockReturnValue(createdPost);
       mockPostRepo.save.mockImplementation((p) => Promise.resolve(p));
 
-      await (service as any).scrapeSubreddit(subName);
+      await service.scrapeSubreddit(subName);
 
-      expect(mockSubredditRepo.findOneBy).toHaveBeenCalledWith({ name: subName });
+      expect(mockSubredditRepo.findOneBy).toHaveBeenCalledWith({
+        name: subName,
+      });
       expect(mockRedditApi.fetchTopPosts).toHaveBeenCalledWith(subName, 10);
-      expect(mockRedditApi.fetchPostComments).toHaveBeenCalledWith(subName, 'post1', 5);
-      expect(topicService.categorizeNewPosts).toHaveBeenCalledWith('sub-uuid', [createdPost]);
+      expect(mockRedditApi.fetchPostComments).toHaveBeenCalledWith(
+        subName,
+        'post1',
+        5,
+      );
+      expect(mockTopicService.categorizeNewPosts).toHaveBeenCalledWith(
+        'sub-uuid',
+        [createdPost],
+      );
     });
   });
 
@@ -130,7 +134,7 @@ describe('ScraperService', () => {
       mockPostRepo.delete.mockResolvedValue({ affected: 5 });
       mockTopicRepo.delete.mockResolvedValue({ affected: 2 });
 
-      await (service as any).cleanupOldData();
+      await service.cleanupOldData();
 
       expect(mockPostRepo.delete).toHaveBeenCalled();
       expect(mockTopicRepo.delete).toHaveBeenCalled();

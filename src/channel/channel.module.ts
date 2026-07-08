@@ -15,7 +15,12 @@ import { PassportModule } from '@nestjs/passport';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Channel, ChannelSubreddit, ChannelTopicProgress, ChannelPlaylistItem]),
+    TypeOrmModule.forFeature([
+      Channel,
+      ChannelSubreddit,
+      ChannelTopicProgress,
+      ChannelPlaylistItem,
+    ]),
     DomainModule,
     RadioModule,
     MediaModule,

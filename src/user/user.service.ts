@@ -12,7 +12,10 @@ export class UserService {
     private readonly userRepo: Repository<User>,
   ) {}
 
-  async create(dto: RegisterDto, passwordHash: string): Promise<UserResponseDto> {
+  async create(
+    dto: RegisterDto,
+    passwordHash: string,
+  ): Promise<UserResponseDto> {
     const existing = await this.userRepo.findOneBy({ email: dto.email });
     if (existing) {
       throw new ConflictException('Email already registered');

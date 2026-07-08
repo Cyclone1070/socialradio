@@ -5,9 +5,14 @@ import { Post } from './entities/post.entity';
 import { Topic } from '../domain/entities/topic.entity';
 import { pipeline } from '@huggingface/transformers';
 
+type FeatureExtractionPipeline = (
+  text: string,
+  options?: { pooling?: string; normalize?: boolean },
+) => Promise<{ data: number[] | Float32Array }>;
+
 @Injectable()
 export class TopicService {
-  private extractor: any = null;
+  private extractor: FeatureExtractionPipeline | null = null;
 
   constructor(
     @InjectRepository(Post)
@@ -16,9 +21,12 @@ export class TopicService {
     private readonly topicRepo: Repository<Topic>,
   ) {}
 
-  private async getExtractor() {
+  private async getExtractor(): Promise<FeatureExtractionPipeline> {
     if (!this.extractor) {
-      this.extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+      this.extractor = (await pipeline(
+        'feature-extraction',
+        'Xenova/all-MiniLM-L6-v2',
+      )) as FeatureExtractionPipeline;
     }
     return this.extractor;
   }
@@ -36,7 +44,10 @@ export class TopicService {
     return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
   }
 
-  async categorizeNewPosts(subredditId: string, newPosts: Post[]): Promise<void> {
+  async categorizeNewPosts(
+    subredditId: string,
+    newPosts: Post[],
+  ): Promise<void> {
     const activePosts = await this.postRepo.find({
       where: {
         subredditId,
@@ -47,8 +58,11 @@ export class TopicService {
     const embedder = await this.getExtractor();
 
     for (const post of newPosts) {
-      const output = await embedder(post.title, { pooling: 'mean', normalize: true });
-      const embedding = Array.from(output.data) as number[];
+      const output = await embedder(post.title, {
+        pooling: 'mean',
+        normalize: true,
+      });
+      const embedding = Array.from(output.data as ArrayLike<number>);
       post.titleEmbedding = embedding;
 
       let bestMatch: Post | null = null;

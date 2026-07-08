@@ -42,11 +42,3 @@ import { ChannelModule } from './channel/channel.module';
   providers: [],
 })
 export class AppModule {}
-
-
-
-
-
-
-
-

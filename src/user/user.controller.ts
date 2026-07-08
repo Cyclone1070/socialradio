@@ -1,7 +1,14 @@
-import { Controller, Get, Req, UseGuards, NotFoundException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Req,
+  UseGuards,
+  NotFoundException,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { UserService } from './user.service';
 import { UserResponseDto } from './dto/user-response.dto';
+import { Request } from 'express';
 
 @Controller('users')
 export class UserController {
@@ -9,7 +16,9 @@ export class UserController {
 
   @Get('me')
   @UseGuards(AuthGuard('jwt'))
-  async getMe(@Req() req: any): Promise<UserResponseDto> {
+  async getMe(
+    @Req() req: Request & { user?: { id: string } },
+  ): Promise<UserResponseDto> {
     const userId = req.user?.id;
     if (!userId) {
       throw new NotFoundException('User not found');

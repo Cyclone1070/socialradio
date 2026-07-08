@@ -1,10 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ScriptService } from './script.service';
 import { LlmService } from '../llm/llm.service';
+import { Post } from '../feed/entities/post.entity';
+import { Comment } from '../feed/entities/comment.entity';
 
 describe('ScriptService', () => {
   let service: ScriptService;
-  let llmService: LlmService;
 
   const mockLlmService = {
     generateText: jest.fn(),
@@ -19,7 +20,6 @@ describe('ScriptService', () => {
     }).compile();
 
     service = module.get<ScriptService>(ScriptService);
-    llmService = module.get<LlmService>(LlmService);
     jest.clearAllMocks();
   });
 
@@ -30,16 +30,23 @@ describe('ScriptService', () => {
   describe('generateScript', () => {
     it('should format posts and comments, call LlmService, and return script text', async () => {
       const posts = [
-        { title: 'Post Title 1', body: 'Post Body 1', author: 'author1' },
-      ] as any[];
+        {
+          id: 'post-1',
+          title: 'Post Title 1',
+          body: 'Post Body 1',
+          author: 'author1',
+        },
+      ] as unknown as Post[];
 
       const comments = [
         { body: 'Comment Body 1', author: 'user1', postId: 'post-1' },
-      ] as any[];
+      ] as unknown as Comment[];
 
-      mockLlmService.generateText.mockResolvedValue('Mocked radio script text.');
+      mockLlmService.generateText.mockResolvedValue(
+        'Mocked radio script text.',
+      );
 
-      const result = await (service as any).generateScript(posts, comments);
+      const result = await service.generateScript(posts, comments);
 
       expect(mockLlmService.generateText).toHaveBeenCalledWith(
         expect.stringContaining('You are a professional radio news anchor'),

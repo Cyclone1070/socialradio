@@ -6,7 +6,6 @@ import { LoginDto } from './dto/login.dto';
 
 describe('AuthController', () => {
   let controller: AuthController;
-  let service: AuthService;
 
   const mockAuthService = {
     register: jest.fn(),
@@ -25,7 +24,6 @@ describe('AuthController', () => {
     }).compile();
 
     controller = module.get<AuthController>(AuthController);
-    service = module.get<AuthService>(AuthService);
     jest.clearAllMocks();
   });
 
@@ -35,12 +33,19 @@ describe('AuthController', () => {
 
   describe('register', () => {
     it('should register a new user and return response', async () => {
-      const registerDto: RegisterDto = { email: 'test@example.com', password: 'password123' };
-      const createdUser = { id: 'uuid', email: 'test@example.com', createdAt: new Date() };
+      const registerDto: RegisterDto = {
+        email: 'test@example.com',
+        password: 'password123',
+      };
+      const createdUser = {
+        id: 'uuid',
+        email: 'test@example.com',
+        createdAt: new Date(),
+      };
 
       mockAuthService.register.mockResolvedValue(createdUser);
 
-      const result = await (controller as any).register(registerDto);
+      const result = await controller.register(registerDto);
 
       expect(mockAuthService.register).toHaveBeenCalledWith(registerDto);
       expect(result).toEqual(createdUser);
@@ -49,12 +54,15 @@ describe('AuthController', () => {
 
   describe('login', () => {
     it('should login user and return token response', async () => {
-      const loginDto: LoginDto = { email: 'test@example.com', password: 'password123' };
+      const loginDto: LoginDto = {
+        email: 'test@example.com',
+        password: 'password123',
+      };
       const tokenResponse = { accessToken: 'jwt_token' };
 
       mockAuthService.login.mockResolvedValue(tokenResponse);
 
-      const result = await (controller as any).login(loginDto);
+      const result = await controller.login(loginDto);
 
       expect(mockAuthService.login).toHaveBeenCalledWith(loginDto);
       expect(result).toEqual(tokenResponse);

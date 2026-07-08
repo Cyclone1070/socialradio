@@ -1,6 +1,16 @@
-import { Controller, Get, Post, Delete, Body, Param, Req, Res, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Delete,
+  Body,
+  Param,
+  Req,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { Response } from 'express';
+import { Response, Request } from 'express';
 import { ChannelService } from './channel.service';
 import { ChannelBroadcasterService } from './channel-broadcaster.service';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
@@ -15,7 +25,9 @@ export class ChannelController {
 
   @Get()
   @UseGuards(AuthGuard('jwt'))
-  async getUserChannels(@Req() req: any): Promise<ChannelResponseDto[]> {
+  async getUserChannels(
+    @Req() req: Request & { user: { id: string } },
+  ): Promise<ChannelResponseDto[]> {
     return this.channelService.getUserChannels(req.user.id);
   }
 
@@ -23,7 +35,7 @@ export class ChannelController {
   @UseGuards(AuthGuard('jwt'))
   async configureChannel(
     @Body() dto: ConfigureChannelDto,
-    @Req() req: any,
+    @Req() req: Request & { user: { id: string } },
   ): Promise<ChannelResponseDto> {
     return this.channelService.configureChannel(dto, req.user.id);
   }

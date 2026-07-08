@@ -7,7 +7,6 @@ import { ConfigService } from '@nestjs/config';
 
 describe('LlmService', () => {
   let service: LlmService;
-  let http: HttpService;
 
   const mockHttpService = {
     post: jest.fn(),
@@ -30,7 +29,6 @@ describe('LlmService', () => {
     }).compile();
 
     service = module.get<LlmService>(LlmService);
-    http = module.get<HttpService>(HttpService);
     jest.clearAllMocks();
   });
 
@@ -60,18 +58,20 @@ describe('LlmService', () => {
 
       mockHttpService.post.mockReturnValue(of(response));
 
-      const result = await (service as any).generateText(
+      const result = await service.generateText(
         'You are an editor.',
         'Write a news script about bananas.',
       );
 
       expect(mockHttpService.post).toHaveBeenCalledWith(
-        expect.stringContaining('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent'),
+        expect.stringContaining(
+          'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent',
+        ),
         expect.objectContaining({
-          contents: expect.any(Array),
-          systemInstruction: expect.any(Object),
-        }),
-        expect.any(Object),
+          contents: expect.any(Array) as unknown,
+          systemInstruction: expect.any(Object) as unknown,
+        }) as unknown,
+        expect.any(Object) as unknown,
       );
       expect(result).toBe('Here is your radio script.');
     });

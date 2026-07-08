@@ -1,13 +1,16 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { HttpService } from '@nestjs/axios';
-import { of, throwError } from 'rxjs';
+import { of } from 'rxjs';
 import { AxiosResponse, InternalAxiosRequestConfig } from 'axios';
-import { RedditApiService } from './reddit-api.service';
+import {
+  RedditApiService,
+  RedditPostData,
+  RedditCommentData,
+} from './reddit-api.service';
 import { ConfigService } from '@nestjs/config';
 
 describe('RedditApiService', () => {
   let service: RedditApiService;
-  let http: HttpService;
 
   const mockHttpService = {
     post: jest.fn(),
@@ -33,7 +36,6 @@ describe('RedditApiService', () => {
     }).compile();
 
     service = module.get<RedditApiService>(RedditApiService);
-    http = module.get<HttpService>(HttpService);
     jest.clearAllMocks();
   });
 
@@ -54,7 +56,7 @@ describe('RedditApiService', () => {
 
       mockHttpService.post.mockReturnValue(of(response));
 
-      await (service as any).authenticate();
+      await service.authenticate();
 
       expect(mockHttpService.post).toHaveBeenCalledWith(
         'https://www.reddit.com/api/v1/access_token',
@@ -62,18 +64,18 @@ describe('RedditApiService', () => {
         expect.objectContaining({
           headers: expect.objectContaining({
             Authorization: 'Basic Y2xpZW50X2lkOmNsaWVudF9zZWNyZXQ=', // base64 of client_id:client_secret
-          }),
-        }),
+          }) as unknown,
+        }) as unknown,
       );
-      expect((service as any).accessToken).toBe('mock_token');
+      expect(service['accessToken']).toBe('mock_token');
     });
   });
 
   describe('fetchTopPosts', () => {
     it('should fetch top posts from subreddit', async () => {
       // Setup auth state
-      (service as any).accessToken = 'mock_token';
-      (service as any).tokenExpiresAt = new Date(Date.now() + 100000);
+      service['accessToken'] = 'mock_token';
+      service['tokenExpiresAt'] = new Date(Date.now() + 100000);
 
       const listingData = {
         kind: 'Listing',
@@ -108,15 +110,18 @@ describe('RedditApiService', () => {
 
       mockHttpService.get.mockReturnValue(of(response));
 
-      const result = await (service as any).fetchTopPosts('AskReddit', 10);
+      const result: RedditPostData[] = await service.fetchTopPosts(
+        'AskReddit',
+        10,
+      );
 
       expect(mockHttpService.get).toHaveBeenCalledWith(
         'https://oauth.reddit.com/r/AskReddit/top?t=day&limit=10',
         expect.objectContaining({
           headers: expect.objectContaining({
             Authorization: 'Bearer mock_token',
-          }),
-        }),
+          }) as unknown,
+        }) as unknown,
       );
       expect(result).toHaveLength(1);
       expect(result[0].id).toBe('abc123');
@@ -125,8 +130,8 @@ describe('RedditApiService', () => {
 
   describe('fetchPostComments', () => {
     it('should fetch comments for a post', async () => {
-      (service as any).accessToken = 'mock_token';
-      (service as any).tokenExpiresAt = new Date(Date.now() + 100000);
+      service['accessToken'] = 'mock_token';
+      service['tokenExpiresAt'] = new Date(Date.now() + 100000);
 
       const commentData = [
         { kind: 'Listing', data: { children: [] } }, // Post listing
@@ -161,15 +166,19 @@ describe('RedditApiService', () => {
 
       mockHttpService.get.mockReturnValue(of(response));
 
-      const result = await (service as any).fetchPostComments('AskReddit', 'abc123', 20);
+      const result: RedditCommentData[] = await service.fetchPostComments(
+        'AskReddit',
+        'abc123',
+        20,
+      );
 
       expect(mockHttpService.get).toHaveBeenCalledWith(
         'https://oauth.reddit.com/r/AskReddit/comments/abc123?sort=top&limit=20&depth=1',
         expect.objectContaining({
           headers: expect.objectContaining({
             Authorization: 'Bearer mock_token',
-          }),
-        }),
+          }) as unknown,
+        }) as unknown,
       );
       expect(result).toHaveLength(1);
       expect(result[0].id).toBe('xyz789');

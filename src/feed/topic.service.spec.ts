@@ -1,6 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { TopicService } from './topic.service';
 import { Post } from './entities/post.entity';
 import { Topic } from '../domain/entities/topic.entity';
@@ -21,8 +20,6 @@ jest.mock('@huggingface/transformers', () => ({
 
 describe('TopicService', () => {
   let service: TopicService;
-  let postRepo: Repository<Post>;
-  let topicRepo: Repository<Topic>;
 
   const mockPostRepo = {
     find: jest.fn(),
@@ -45,8 +42,6 @@ describe('TopicService', () => {
     }).compile();
 
     service = module.get<TopicService>(TopicService);
-    postRepo = module.get<Repository<Post>>(getRepositoryToken(Post));
-    topicRepo = module.get<Repository<Topic>>(getRepositoryToken(Topic));
     jest.clearAllMocks();
   });
 
@@ -66,14 +61,14 @@ describe('TopicService', () => {
         commentCount: 5,
         permalink: 'link',
         redditCreatedAt: new Date(),
-      } as any;
+      } as unknown as Post;
 
       mockPostRepo.find.mockResolvedValue([]); // No existing active posts in last 24h
       const mockTopic = { id: 'topic-uuid-1', subredditId };
       mockTopicRepo.create.mockReturnValue(mockTopic);
       mockTopicRepo.save.mockResolvedValue(mockTopic);
 
-      await (service as any).categorizeNewPosts(subredditId, [newPost]);
+      await service.categorizeNewPosts(subredditId, [newPost]);
 
       expect(mockPostRepo.find).toHaveBeenCalled();
       expect(mockTopicRepo.create).toHaveBeenCalledWith({ subredditId });
@@ -95,7 +90,7 @@ describe('TopicService', () => {
         title: 'SpaceX launches Falcon Heavy',
         topicId: 'topic-existing-123',
         titleEmbedding: existingEmbedding,
-      } as any;
+      } as unknown as Post;
 
       const newPost = {
         title: 'SpaceX launches Falcon Heavy', // exact same title
@@ -106,12 +101,12 @@ describe('TopicService', () => {
         commentCount: 5,
         permalink: 'link',
         redditCreatedAt: new Date(),
-      } as any;
+      } as unknown as Post;
 
       mockPostRepo.find.mockResolvedValue([existingPost]);
       mockTopicRepo.save.mockImplementation((t) => Promise.resolve(t));
 
-      await (service as any).categorizeNewPosts(subredditId, [newPost]);
+      await service.categorizeNewPosts(subredditId, [newPost]);
 
       expect(mockTopicRepo.create).not.toHaveBeenCalled();
       expect(newPost.topicId).toBe('topic-existing-123');

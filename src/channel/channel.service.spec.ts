@@ -1,11 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { ChannelService } from './channel.service';
 import { Channel } from './entities/channel.entity';
 import { ChannelSubreddit } from './entities/channel-subreddit.entity';
 import { Subreddit } from '../domain/entities/subreddit.entity';
-import { NotFoundException } from '@nestjs/common';
 
 describe('ChannelService', () => {
   let service: ChannelService;
@@ -35,7 +33,10 @@ describe('ChannelService', () => {
       providers: [
         ChannelService,
         { provide: getRepositoryToken(Channel), useValue: mockChannelRepo },
-        { provide: getRepositoryToken(ChannelSubreddit), useValue: mockChannelSubredditRepo },
+        {
+          provide: getRepositoryToken(ChannelSubreddit),
+          useValue: mockChannelSubredditRepo,
+        },
         { provide: getRepositoryToken(Subreddit), useValue: mockSubredditRepo },
       ],
     }).compile();
@@ -52,14 +53,25 @@ describe('ChannelService', () => {
     it('should create and return a private channel', async () => {
       const dto = { name: 'My Radio', type: 'private' as const };
       const ownerId = 'user-1';
-      const channel = { id: 'chan-1', name: 'My Radio', type: 'private', ownerId, isPaused: true, createdAt: new Date() };
+      const channel = {
+        id: 'chan-1',
+        name: 'My Radio',
+        type: 'private',
+        ownerId,
+        isPaused: true,
+        createdAt: new Date(),
+      };
 
       mockChannelRepo.create.mockReturnValue(channel);
       mockChannelRepo.save.mockResolvedValue(channel);
 
-      const result = await (service as any).configureChannel(dto, ownerId);
+      const result = await service.configureChannel(dto, ownerId);
 
-      expect(mockChannelRepo.create).toHaveBeenCalledWith({ name: 'My Radio', type: 'private', ownerId });
+      expect(mockChannelRepo.create).toHaveBeenCalledWith({
+        name: 'My Radio',
+        type: 'private',
+        ownerId,
+      });
       expect(mockChannelRepo.save).toHaveBeenCalledWith(channel);
       expect(result).toEqual({
         id: channel.id,
@@ -86,10 +98,15 @@ describe('ChannelService', () => {
       mockChannelSubredditRepo.create.mockReturnValue(subscription);
       mockChannelSubredditRepo.save.mockResolvedValue(subscription);
 
-      await (service as any).subscribeToSubreddit(channelId, subName);
+      await service.subscribeToSubreddit(channelId, subName);
 
-      expect(mockSubredditRepo.findOneBy).toHaveBeenCalledWith({ name: subName });
-      expect(mockChannelSubredditRepo.create).toHaveBeenCalledWith({ channelId, subredditId: 'sub-1' });
+      expect(mockSubredditRepo.findOneBy).toHaveBeenCalledWith({
+        name: subName,
+      });
+      expect(mockChannelSubredditRepo.create).toHaveBeenCalledWith({
+        channelId,
+        subredditId: 'sub-1',
+      });
       expect(mockChannelSubredditRepo.save).toHaveBeenCalled();
     });
   });

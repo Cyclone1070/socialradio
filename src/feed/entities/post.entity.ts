@@ -1,4 +1,13 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, JoinColumn, OneToMany, Index } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  ManyToOne,
+  JoinColumn,
+  OneToMany,
+  Index,
+} from 'typeorm';
 import { Subreddit } from '../../domain/entities/subreddit.entity';
 import { Topic } from '../../domain/entities/topic.entity';
 import { Comment } from './comment.entity';
@@ -55,6 +64,6 @@ export class Post {
   @CreateDateColumn()
   scrapedAt: Date;
 
-  @OneToMany(() => Comment, comment => comment.post)
+  @OneToMany(() => Comment, (comment) => comment.post)
   comments: Comment[];
 }

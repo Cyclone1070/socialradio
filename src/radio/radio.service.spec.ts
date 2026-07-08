@@ -1,18 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { RadioService } from './radio.service';
-import { ScriptService } from './script.service';
-import { AudioService } from './audio.service';
 import { TopicScript } from './entities/topic-script.entity';
 import { TopicAudio } from './entities/topic-audio.entity';
 import { Post } from '../feed/entities/post.entity';
 import { Comment } from '../feed/entities/comment.entity';
+import { ScriptService } from './script.service';
+import { AudioService } from './audio.service';
 
 describe('RadioService', () => {
   let service: RadioService;
-  let scriptService: ScriptService;
-  let audioService: AudioService;
 
   const mockScriptRepo = {
     findOneBy: jest.fn(),
@@ -56,8 +53,6 @@ describe('RadioService', () => {
     }).compile();
 
     service = module.get<RadioService>(RadioService);
-    scriptService = module.get<ScriptService>(ScriptService);
-    audioService = module.get<AudioService>(AudioService);
     jest.clearAllMocks();
   });
 
@@ -68,11 +63,15 @@ describe('RadioService', () => {
   describe('getTopicVoiceTrack', () => {
     it('should return cached audio if it exists', async () => {
       const topicId = 'topic-123';
-      const cachedAudio = { topicId, filePath: 'cache/topic-123.mp3', durationSeconds: 45.5 };
+      const cachedAudio = {
+        topicId,
+        filePath: 'cache/topic-123.mp3',
+        durationSeconds: 45.5,
+      };
 
       mockAudioRepo.findOneBy.mockResolvedValue(cachedAudio);
 
-      const result = await (service as any).getTopicVoiceTrack(topicId);
+      const result = await service.getTopicVoiceTrack(topicId);
 
       expect(mockAudioRepo.findOneBy).toHaveBeenCalledWith({ topicId });
       expect(mockScriptService.generateScript).not.toHaveBeenCalled();
@@ -87,8 +86,10 @@ describe('RadioService', () => {
       const topicId = 'topic-123';
       mockAudioRepo.findOneBy.mockResolvedValue(null);
 
-      const posts = [{ id: 'post-1', title: 'SpaceX' }] as any[];
-      const comments = [{ id: 'comment-1', body: 'Wow' }] as any[];
+      const posts = [{ id: 'post-1', title: 'SpaceX' }] as unknown as Post[];
+      const comments = [
+        { id: 'comment-1', body: 'Wow', postId: 'post-1' },
+      ] as unknown as Comment[];
       mockPostRepo.find.mockResolvedValue(posts);
       mockCommentRepo.find.mockResolvedValue(comments);
 
@@ -104,23 +105,31 @@ describe('RadioService', () => {
       mockAudioRepo.create.mockReturnValue(topicAudio);
       mockAudioRepo.save.mockResolvedValue(topicAudio);
 
-      const result = await (service as any).getTopicVoiceTrack(topicId);
+      const result = await service.getTopicVoiceTrack(topicId);
 
       expect(mockPostRepo.find).toHaveBeenCalledWith({ where: { topicId } });
-      expect(mockCommentRepo.find).toHaveBeenCalledWith({ where: [{ postId: 'post-1' }] });
-      expect(mockScriptService.generateScript).toHaveBeenCalledWith(posts, comments);
+      expect(mockCommentRepo.find).toHaveBeenCalledWith({
+        where: [{ postId: 'post-1' }],
+      });
+      expect(mockScriptService.generateScript).toHaveBeenCalledWith(
+        posts,
+        comments,
+      );
       expect(mockAudioService.generateSpeech).toHaveBeenCalledWith(
         'Script content',
         expect.stringContaining('topic-123.mp3'),
       );
-      expect(mockScriptRepo.create).toHaveBeenCalledWith({ topicId, scriptText: 'Script content' });
+      expect(mockScriptRepo.create).toHaveBeenCalledWith({
+        topicId,
+        scriptText: 'Script content',
+      });
       expect(mockAudioRepo.create).toHaveBeenCalledWith({
         topicId,
-        filePath: expect.stringContaining('topic-123.mp3'),
+        filePath: expect.stringContaining('topic-123.mp3') as unknown,
         durationSeconds: 30.0,
       });
       expect(result).toEqual({
-        filePath: expect.stringContaining('topic-123.mp3'),
+        filePath: expect.stringContaining('topic-123.mp3') as unknown,
         durationSeconds: 30.0,
       });
     });

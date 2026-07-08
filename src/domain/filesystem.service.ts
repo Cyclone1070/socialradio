@@ -26,7 +26,10 @@ export class FilesystemService {
     }
   }
 
-  createReadStream(filePath: string, options?: any): fs.ReadStream {
+  createReadStream(
+    filePath: string,
+    options?: Parameters<typeof fs.createReadStream>[1],
+  ): fs.ReadStream {
     return fs.createReadStream(filePath, options);
   }
 }

@@ -18,7 +18,10 @@ export class ChannelService {
     private readonly subredditRepo: Repository<Subreddit>,
   ) {}
 
-  async configureChannel(dto: ConfigureChannelDto, ownerId: string): Promise<ChannelResponseDto> {
+  async configureChannel(
+    dto: ConfigureChannelDto,
+    ownerId: string,
+  ): Promise<ChannelResponseDto> {
     const channel = this.channelRepo.create({
       name: dto.name,
       type: dto.type || 'private',
@@ -36,7 +39,10 @@ export class ChannelService {
     };
   }
 
-  async subscribeToSubreddit(channelId: string, subredditName: string): Promise<void> {
+  async subscribeToSubreddit(
+    channelId: string,
+    subredditName: string,
+  ): Promise<void> {
     let subreddit = await this.subredditRepo.findOneBy({ name: subredditName });
     if (!subreddit) {
       subreddit = this.subredditRepo.create({ name: subredditName });
@@ -50,8 +56,13 @@ export class ChannelService {
     await this.channelSubredditRepo.save(subscription);
   }
 
-  async unsubscribeFromSubreddit(channelId: string, subredditName: string): Promise<void> {
-    const subreddit = await this.subredditRepo.findOneBy({ name: subredditName });
+  async unsubscribeFromSubreddit(
+    channelId: string,
+    subredditName: string,
+  ): Promise<void> {
+    const subreddit = await this.subredditRepo.findOneBy({
+      name: subredditName,
+    });
     if (!subreddit) {
       throw new NotFoundException('Subreddit not found');
     }
@@ -64,13 +75,10 @@ export class ChannelService {
 
   async getUserChannels(userId: string): Promise<ChannelResponseDto[]> {
     const channels = await this.channelRepo.find({
-      where: [
-        { ownerId: userId },
-        { type: 'public' },
-      ],
+      where: [{ ownerId: userId }, { type: 'public' }],
     });
 
-    return channels.map(c => ({
+    return channels.map((c) => ({
       id: c.id,
       name: c.name,
       type: c.type,

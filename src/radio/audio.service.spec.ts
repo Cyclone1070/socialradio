@@ -8,8 +8,6 @@ import { ConfigService } from '@nestjs/config';
 
 describe('AudioService', () => {
   let service: AudioService;
-  let http: HttpService;
-  let fsService: FilesystemService;
 
   const mockHttpService = {
     post: jest.fn(),
@@ -37,8 +35,6 @@ describe('AudioService', () => {
     }).compile();
 
     service = module.get<AudioService>(AudioService);
-    http = module.get<HttpService>(HttpService);
-    fsService = module.get<FilesystemService>(FilesystemService);
     jest.clearAllMocks();
   });
 
@@ -61,7 +57,7 @@ describe('AudioService', () => {
       mockHttpService.post.mockReturnValue(of(response));
       mockFsService.write.mockResolvedValue(undefined);
 
-      const result = await (service as any).generateSpeech(
+      const result = await service.generateSpeech(
         'Hello from social radio',
         'cache/test.mp3',
       );
@@ -76,7 +72,10 @@ describe('AudioService', () => {
         }),
         expect.any(Object),
       );
-      expect(mockFsService.write).toHaveBeenCalledWith('cache/test.mp3', mockAudioBuffer);
+      expect(mockFsService.write).toHaveBeenCalledWith(
+        'cache/test.mp3',
+        mockAudioBuffer,
+      );
       expect(result).toBe(1.0); // 16000 / 16000 = 1.0s
     });
   });

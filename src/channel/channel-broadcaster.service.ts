@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, LessThan } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Channel } from './entities/channel.entity';
 import { ChannelPlaylistItem } from './entities/channel-playlist-item.entity';
 import { ChannelTopicProgress } from './entities/channel-topic-progress.entity';
@@ -8,11 +8,12 @@ import { QueueGeneratorService } from './queue-generator.service';
 import { FilesystemService } from '../domain/filesystem.service';
 import { MediaService } from '../media/media.service';
 import { Response } from 'express';
+import { ReadStream } from 'fs';
 
 export class ChannelBroadcaster {
   private clients: Response[] = [];
   private isStreaming = false;
-  private currentStream: any = null;
+  private currentStream: ReadStream | null = null;
   private elapsedSeconds = 0;
 
   constructor(
@@ -28,16 +29,16 @@ export class ChannelBroadcaster {
   async addClient(res: Response) {
     res.writeHead(200, {
       'Content-Type': 'audio/mpeg',
-      'Connection': 'keep-alive',
+      Connection: 'keep-alive',
       'Transfer-Encoding': 'chunked',
     });
 
     this.clients.push(res);
 
-    res.on('close', async () => {
-      this.clients = this.clients.filter(c => c !== res);
+    res.on('close', () => {
+      this.clients = this.clients.filter((c) => c !== res);
       if (this.clients.length === 0) {
-        await this.pauseTransmission();
+        void this.pauseTransmission();
       }
     });
 
@@ -59,7 +60,7 @@ export class ChannelBroadcaster {
     await this.channelRepo.save(channel);
 
     // Run async loop
-    this.transmissionLoop().catch(err => {
+    this.transmissionLoop().catch(() => {
       this.isStreaming = false;
     });
   }
@@ -80,10 +81,10 @@ export class ChannelBroadcaster {
   }
 
   private broadcast(chunk: Buffer) {
-    this.clients.forEach(client => {
+    this.clients.forEach((client) => {
       try {
         client.write(chunk);
-      } catch (err) {
+      } catch {
         // Client might have disconnected silently
       }
     });
@@ -168,7 +169,10 @@ export class ChannelBroadcaster {
     if (item.status === 'failed') {
       // Skip failed talk segments
       const nextItem = await this.playlistItemRepo.findOne({
-        where: { channelId: this.channelId, sequenceOrder: item.sequenceOrder + 1 },
+        where: {
+          channelId: this.channelId,
+          sequenceOrder: item.sequenceOrder + 1,
+        },
       });
       if (nextItem) {
         channel.currentPlaylistItemId = nextItem.id;
@@ -182,31 +186,45 @@ export class ChannelBroadcaster {
     }
 
     const startOffset = Math.floor(this.elapsedSeconds * 16000);
-    this.currentStream = this.fsService.createReadStream(item.audioUrl, { start: startOffset });
+    this.currentStream = this.fsService.createReadStream(item.audioUrl, {
+      start: startOffset,
+    });
 
     const playPromise = new Promise<void>((resolve, reject) => {
-      this.currentStream.on('data', async (chunk: Buffer) => {
-        this.currentStream.pause();
-        const duration = chunk.length / 16000;
-        const delayMs = duration * 1000;
-        await new Promise(r => setTimeout(r, delayMs));
-        this.broadcast(chunk);
-        this.elapsedSeconds += duration;
-        this.currentStream.resume();
-      });
-
-      this.currentStream.on('end', () => {
+      if (!this.currentStream) {
         resolve();
+        return;
+      }
+      this.currentStream.on('data', (chunk: Buffer) => {
+        void (async () => {
+          if (this.currentStream) {
+            this.currentStream.pause();
+          }
+          const duration = chunk.length / 16000;
+          const delayMs = duration * 1000;
+          await new Promise((r) => setTimeout(r, delayMs));
+          this.broadcast(chunk);
+          this.elapsedSeconds += duration;
+          if (this.currentStream) {
+            this.currentStream.resume();
+          }
+        })();
       });
 
-      this.currentStream.on('error', (err: any) => {
-        reject(err);
-      });
+      if (this.currentStream) {
+        this.currentStream.on('end', () => {
+          resolve();
+        });
+
+        this.currentStream.on('error', (err: Error) => {
+          reject(err);
+        });
+      }
     });
 
     try {
       await playPromise;
-    } catch (err) {
+    } catch {
       // Handle stream reading error
     }
 
@@ -224,7 +242,10 @@ export class ChannelBroadcaster {
 
     // Transition to next item
     const nextItem = await this.playlistItemRepo.findOne({
-      where: { channelId: this.channelId, sequenceOrder: item.sequenceOrder + 1 },
+      where: {
+        channelId: this.channelId,
+        sequenceOrder: item.sequenceOrder + 1,
+      },
     });
 
     if (nextItem) {

@@ -30,7 +30,10 @@ export class ScraperService {
       subreddit = await this.subredditRepo.save(subreddit);
     }
 
-    const rawPosts = await this.redditApiService.fetchTopPosts(subredditName, 10);
+    const rawPosts = await this.redditApiService.fetchTopPosts(
+      subredditName,
+      10,
+    );
     const newPostEntities: Post[] = [];
 
     for (const rawPost of rawPosts) {
@@ -52,8 +55,12 @@ export class ScraperService {
       // Save post first so comments can reference its ID via database relation
       const savedPost = await this.postRepo.save(post);
 
-      const rawComments = await this.redditApiService.fetchPostComments(subredditName, rawPost.id, 5);
-      const comments = rawComments.map(rawComment => 
+      const rawComments = await this.redditApiService.fetchPostComments(
+        subredditName,
+        rawPost.id,
+        5,
+      );
+      const comments = rawComments.map((rawComment) =>
         this.commentRepo.create({
           postId: savedPost.id,
           redditId: rawComment.id,
@@ -62,7 +69,7 @@ export class ScraperService {
           score: rawComment.score,
           parentCommentId: null, // depth=1 flat structure
           redditCreatedAt: new Date(rawComment.created_utc * 1000),
-        })
+        }),
       );
       await this.commentRepo.save(comments);
 

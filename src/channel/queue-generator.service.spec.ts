@@ -1,6 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { QueueGeneratorService } from './queue-generator.service';
 import { ChannelPlaylistItem } from './entities/channel-playlist-item.entity';
 import { ChannelSubreddit } from './entities/channel-subreddit.entity';
@@ -11,8 +10,6 @@ import { MediaService } from '../media/media.service';
 
 describe('QueueGeneratorService', () => {
   let service: QueueGeneratorService;
-  let radioService: RadioService;
-  let mediaService: MediaService;
 
   const mockPlaylistItemRepo = {
     count: jest.fn(),
@@ -48,9 +45,18 @@ describe('QueueGeneratorService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         QueueGeneratorService,
-        { provide: getRepositoryToken(ChannelPlaylistItem), useValue: mockPlaylistItemRepo },
-        { provide: getRepositoryToken(ChannelSubreddit), useValue: mockSubredditRepo },
-        { provide: getRepositoryToken(ChannelTopicProgress), useValue: mockProgressRepo },
+        {
+          provide: getRepositoryToken(ChannelPlaylistItem),
+          useValue: mockPlaylistItemRepo,
+        },
+        {
+          provide: getRepositoryToken(ChannelSubreddit),
+          useValue: mockSubredditRepo,
+        },
+        {
+          provide: getRepositoryToken(ChannelTopicProgress),
+          useValue: mockProgressRepo,
+        },
         { provide: getRepositoryToken(Topic), useValue: mockTopicRepo },
         { provide: RadioService, useValue: mockRadioService },
         { provide: MediaService, useValue: mockMediaService },
@@ -58,8 +64,6 @@ describe('QueueGeneratorService', () => {
     }).compile();
 
     service = module.get<QueueGeneratorService>(QueueGeneratorService);
-    radioService = module.get<RadioService>(RadioService);
-    mediaService = module.get<MediaService>(MediaService);
     jest.clearAllMocks();
   });
 
@@ -87,29 +91,48 @@ describe('QueueGeneratorService', () => {
       mockTopicRepo.find.mockResolvedValue([topic]);
 
       // Mock MediaService helper responses
-      mockMediaService.getRandomJingle.mockResolvedValue({ filePath: 'jingle.mp3', durationSeconds: 5 });
-      mockMediaService.getRandomMusic.mockResolvedValue({ filePath: 'song.mp3', durationSeconds: 180 });
-      mockMediaService.getRandomAd.mockResolvedValue({ filePath: 'ad.mp3', durationSeconds: 30 });
+      mockMediaService.getRandomJingle.mockResolvedValue({
+        filePath: 'jingle.mp3',
+        durationSeconds: 5,
+      });
+      mockMediaService.getRandomMusic.mockResolvedValue({
+        filePath: 'song.mp3',
+        durationSeconds: 180,
+      });
+      mockMediaService.getRandomAd.mockResolvedValue({
+        filePath: 'ad.mp3',
+        durationSeconds: 30,
+      });
 
       // Mock RadioService voice generation
-      mockRadioService.getTopicVoiceTrack.mockResolvedValue({ filePath: 'tts.mp3', durationSeconds: 60 });
+      mockRadioService.getTopicVoiceTrack.mockResolvedValue({
+        filePath: 'tts.mp3',
+        durationSeconds: 60,
+      });
 
       // We expect it to save items sequentially:
       // Jingle (ready) -> Talk (generating) -> Song (ready) -> Ad (ready) -> Song (ready)
-      const mockSavedItems: any[] = [];
-      mockPlaylistItemRepo.create.mockImplementation((dto) => dto);
+      const mockSavedItems: ChannelPlaylistItem[] = [];
+      mockPlaylistItemRepo.create.mockImplementation(
+        (dto) => dto as ChannelPlaylistItem,
+      );
       mockPlaylistItemRepo.save.mockImplementation((item) => {
-        mockSavedItems.push(item);
-        return Promise.resolve({ id: 'uuid-' + mockSavedItems.length, ...item });
+        mockSavedItems.push(item as ChannelPlaylistItem);
+        return Promise.resolve({
+          id: 'uuid-' + mockSavedItems.length,
+          ...(item as Record<string, unknown>),
+        } as ChannelPlaylistItem);
       });
 
-      await (service as any).bufferAhead(channelId);
+      await service.bufferAhead(channelId);
 
       expect(mockPlaylistItemRepo.count).toHaveBeenCalled();
       expect(mockMediaService.getRandomJingle).toHaveBeenCalled();
       expect(mockMediaService.getRandomMusic).toHaveBeenCalled();
       expect(mockMediaService.getRandomAd).toHaveBeenCalled();
-      expect(mockRadioService.getTopicVoiceTrack).toHaveBeenCalledWith('topic-123');
+      expect(mockRadioService.getTopicVoiceTrack).toHaveBeenCalledWith(
+        'topic-123',
+      );
 
       // Check queued items order:
       expect(mockSavedItems[0].type).toBe('jingle');

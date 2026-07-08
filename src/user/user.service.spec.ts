@@ -1,13 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { UserService } from './user.service';
 import { User } from './entities/user.entity';
 import { ConflictException } from '@nestjs/common';
 
 describe('UserService', () => {
   let service: UserService;
-  let repo: Repository<User>;
 
   const mockUserRepo = {
     create: jest.fn(),
@@ -28,7 +26,6 @@ describe('UserService', () => {
     }).compile();
 
     service = module.get<UserService>(UserService);
-    repo = module.get<Repository<User>>(getRepositoryToken(User));
     jest.clearAllMocks();
   });
 
@@ -46,7 +43,10 @@ describe('UserService', () => {
       mockUserRepo.create.mockReturnValue(user);
       mockUserRepo.save.mockResolvedValue(user);
 
-      const result = await (service as any).create({ email, password: 'password123' }, passwordHash);
+      const result = await service.create(
+        { email, password: 'password123' },
+        passwordHash,
+      );
 
       expect(mockUserRepo.findOneBy).toHaveBeenCalledWith({ email });
       expect(mockUserRepo.create).toHaveBeenCalledWith({ email, passwordHash });
@@ -61,12 +61,17 @@ describe('UserService', () => {
     it('should throw ConflictException if email is already registered', async () => {
       const email = 'existing@example.com';
       const passwordHash = 'hashed_password';
-      const existingUser = { id: 'uuid', email, passwordHash, createdAt: new Date() };
+      const existingUser = {
+        id: 'uuid',
+        email,
+        passwordHash,
+        createdAt: new Date(),
+      };
 
       mockUserRepo.findOneBy.mockResolvedValue(existingUser);
 
       await expect(
-        (service as any).create({ email, password: 'password123' }, passwordHash)
+        service.create({ email, password: 'password123' }, passwordHash),
       ).rejects.toThrow(ConflictException);
 
       expect(mockUserRepo.findOneBy).toHaveBeenCalledWith({ email });
@@ -76,10 +81,15 @@ describe('UserService', () => {
 
   describe('findById', () => {
     it('should return user when found by ID', async () => {
-      const user = { id: 'uuid', email: 'test@example.com', passwordHash: 'hash', createdAt: new Date() };
+      const user = {
+        id: 'uuid',
+        email: 'test@example.com',
+        passwordHash: 'hash',
+        createdAt: new Date(),
+      };
       mockUserRepo.findOneBy.mockResolvedValue(user);
 
-      const result = await (service as any).findById('uuid');
+      const result = await service.findById('uuid');
 
       expect(mockUserRepo.findOneBy).toHaveBeenCalledWith({ id: 'uuid' });
       expect(result).toEqual(user);
@@ -88,7 +98,7 @@ describe('UserService', () => {
     it('should return null when user is not found by ID', async () => {
       mockUserRepo.findOneBy.mockResolvedValue(null);
 
-      const result = await (service as any).findById('uuid');
+      const result = await service.findById('uuid');
 
       expect(mockUserRepo.findOneBy).toHaveBeenCalledWith({ id: 'uuid' });
       expect(result).toBeNull();
@@ -97,21 +107,30 @@ describe('UserService', () => {
 
   describe('findByEmail', () => {
     it('should return user when found by email', async () => {
-      const user = { id: 'uuid', email: 'test@example.com', passwordHash: 'hash', createdAt: new Date() };
+      const user = {
+        id: 'uuid',
+        email: 'test@example.com',
+        passwordHash: 'hash',
+        createdAt: new Date(),
+      };
       mockUserRepo.findOneBy.mockResolvedValue(user);
 
-      const result = await (service as any).findByEmail('test@example.com');
+      const result = await service.findByEmail('test@example.com');
 
-      expect(mockUserRepo.findOneBy).toHaveBeenCalledWith({ email: 'test@example.com' });
+      expect(mockUserRepo.findOneBy).toHaveBeenCalledWith({
+        email: 'test@example.com',
+      });
       expect(result).toEqual(user);
     });
 
     it('should return null when user is not found by email', async () => {
       mockUserRepo.findOneBy.mockResolvedValue(null);
 
-      const result = await (service as any).findByEmail('test@example.com');
+      const result = await service.findByEmail('test@example.com');
 
-      expect(mockUserRepo.findOneBy).toHaveBeenCalledWith({ email: 'test@example.com' });
+      expect(mockUserRepo.findOneBy).toHaveBeenCalledWith({
+        email: 'test@example.com',
+      });
       expect(result).toBeNull();
     });
   });

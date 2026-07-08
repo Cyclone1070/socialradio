@@ -5,7 +5,6 @@ import { UserService } from '../user/user.service';
 
 describe('JwtStrategy', () => {
   let strategy: JwtStrategy;
-  let userService: UserService;
 
   const mockUserService = {
     findById: jest.fn(),
@@ -20,7 +19,6 @@ describe('JwtStrategy', () => {
     }).compile();
 
     strategy = module.get<JwtStrategy>(JwtStrategy);
-    userService = module.get<UserService>(UserService);
     jest.clearAllMocks();
   });
 
@@ -46,7 +44,9 @@ describe('JwtStrategy', () => {
 
       mockUserService.findById.mockResolvedValue(null);
 
-      await expect(strategy.validate(payload)).rejects.toThrow(UnauthorizedException);
+      await expect(strategy.validate(payload)).rejects.toThrow(
+        UnauthorizedException,
+      );
       expect(mockUserService.findById).toHaveBeenCalledWith('uuid-123');
     });
   });
