@@ -1,0 +1,139 @@
+import { Test, TestingModule } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { ScraperService } from './scraper.service';
+import { RedditApiService } from './reddit-api.service';
+import { TopicService } from './topic.service';
+import { Subreddit } from '../domain/entities/subreddit.entity';
+import { Post } from './entities/post.entity';
+import { Comment } from './entities/comment.entity';
+import { Topic } from '../domain/entities/topic.entity';
+
+// Mock the huggingface transformers library to avoid native binary loading issues in Jest
+jest.mock('@huggingface/transformers', () => ({
+  pipeline: jest.fn().mockResolvedValue(jest.fn()),
+}));
+
+describe('ScraperService', () => {
+  let service: ScraperService;
+  let redditApi: RedditApiService;
+  let topicService: TopicService;
+
+  const mockSubredditRepo = {
+    findOneBy: jest.fn(),
+    create: jest.fn(),
+    save: jest.fn(),
+  };
+
+  const mockPostRepo = {
+    findOneBy: jest.fn(),
+    create: jest.fn(),
+    save: jest.fn(),
+    delete: jest.fn(),
+  };
+
+  const mockCommentRepo = {
+    create: jest.fn(),
+    save: jest.fn(),
+  };
+
+  const mockTopicRepo = {
+    delete: jest.fn(),
+  };
+
+  const mockRedditApi = {
+    fetchTopPosts: jest.fn(),
+    fetchPostComments: jest.fn(),
+  };
+
+  const mockTopicService = {
+    categorizeNewPosts: jest.fn(),
+  };
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ScraperService,
+        { provide: getRepositoryToken(Subreddit), useValue: mockSubredditRepo },
+        { provide: getRepositoryToken(Post), useValue: mockPostRepo },
+        { provide: getRepositoryToken(Comment), useValue: mockCommentRepo },
+        { provide: getRepositoryToken(Topic), useValue: mockTopicRepo },
+        { provide: RedditApiService, useValue: mockRedditApi },
+        { provide: TopicService, useValue: mockTopicService },
+      ],
+    }).compile();
+
+    service = module.get<ScraperService>(ScraperService);
+    redditApi = module.get<RedditApiService>(RedditApiService);
+    topicService = module.get<TopicService>(TopicService);
+    jest.clearAllMocks();
+  });
+
+  it('should be defined', () => {
+    expect(service).toBeDefined();
+  });
+
+  describe('scrapeSubreddit', () => {
+    it('should scrape new posts and comments, then categorize them', async () => {
+      const subName = 'AskReddit';
+      const subEntity = { id: 'sub-uuid', name: subName, lastScrapedAt: null };
+
+      mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
+      mockSubredditRepo.save.mockResolvedValue(subEntity);
+
+      const rawPosts = [
+        {
+          id: 'post1',
+          title: 'Title 1',
+          selftext: 'Body 1',
+          author: 'user1',
+          score: 100,
+          num_comments: 10,
+          permalink: '/link1',
+          created_utc: 1719999999,
+        },
+      ];
+      mockRedditApi.fetchTopPosts.mockResolvedValue(rawPosts);
+      mockPostRepo.findOneBy.mockResolvedValue(null); // Post doesn't exist yet
+
+      const rawComments = [
+        {
+          id: 'comment1',
+          body: 'Comment Body',
+          author: 'commenter1',
+          score: 5,
+          parent_id: 't3_post1',
+          created_utc: 1719999999,
+        },
+      ];
+      mockRedditApi.fetchPostComments.mockResolvedValue(rawComments);
+
+      const createdComment = { id: 'c-uuid', redditId: 'comment1' };
+      mockCommentRepo.create.mockReturnValue(createdComment);
+      mockCommentRepo.save.mockResolvedValue(createdComment);
+
+      const createdPost = { id: 'p-uuid', redditId: 'post1' };
+      mockPostRepo.create.mockReturnValue(createdPost);
+      mockPostRepo.save.mockImplementation((p) => Promise.resolve(p));
+
+      await (service as any).scrapeSubreddit(subName);
+
+      expect(mockSubredditRepo.findOneBy).toHaveBeenCalledWith({ name: subName });
+      expect(mockRedditApi.fetchTopPosts).toHaveBeenCalledWith(subName, 10);
+      expect(mockRedditApi.fetchPostComments).toHaveBeenCalledWith(subName, 'post1', 5);
+      expect(topicService.categorizeNewPosts).toHaveBeenCalledWith('sub-uuid', [createdPost]);
+    });
+  });
+
+  describe('cleanupOldData', () => {
+    it('should delete posts and topics older than 24 hours', async () => {
+      mockPostRepo.delete.mockResolvedValue({ affected: 5 });
+      mockTopicRepo.delete.mockResolvedValue({ affected: 2 });
+
+      await (service as any).cleanupOldData();
+
+      expect(mockPostRepo.delete).toHaveBeenCalled();
+      expect(mockTopicRepo.delete).toHaveBeenCalled();
+    });
+  });
+});

@@ -1,0 +1,28 @@
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { Channel } from './entities/channel.entity';
+import { ChannelSubreddit } from './entities/channel-subreddit.entity';
+import { ChannelTopicProgress } from './entities/channel-topic-progress.entity';
+import { ChannelPlaylistItem } from './entities/channel-playlist-item.entity';
+import { ChannelService } from './channel.service';
+import { ChannelBroadcasterService } from './channel-broadcaster.service';
+import { QueueGeneratorService } from './queue-generator.service';
+import { ChannelController } from './channel.controller';
+import { DomainModule } from '../domain/domain.module';
+import { RadioModule } from '../radio/radio.module';
+import { MediaModule } from '../media/media.module';
+import { PassportModule } from '@nestjs/passport';
+
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([Channel, ChannelSubreddit, ChannelTopicProgress, ChannelPlaylistItem]),
+    DomainModule,
+    RadioModule,
+    MediaModule,
+    PassportModule,
+  ],
+  controllers: [ChannelController],
+  providers: [ChannelService, ChannelBroadcasterService, QueueGeneratorService],
+  exports: [ChannelService, ChannelBroadcasterService, TypeOrmModule],
+})
+export class ChannelModule {}
