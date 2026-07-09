@@ -4,9 +4,7 @@ import { Repository, LessThan } from 'typeorm';
 import { Subreddit } from '../domain/entities/subreddit.entity';
 import { Post } from './entities/post.entity';
 import { Comment } from './entities/comment.entity';
-import { Topic } from '../domain/entities/topic.entity';
 import { RedditApiService } from './reddit-api.service';
-import { TopicService } from './topic.service';
 
 @Injectable()
 export class ScraperService {
@@ -17,10 +15,7 @@ export class ScraperService {
     private readonly postRepo: Repository<Post>,
     @InjectRepository(Comment)
     private readonly commentRepo: Repository<Comment>,
-    @InjectRepository(Topic)
-    private readonly topicRepo: Repository<Topic>,
     private readonly redditApiService: RedditApiService,
-    private readonly topicService: TopicService,
   ) {}
 
   async scrapeSubreddit(subredditName: string): Promise<void> {
@@ -80,10 +75,6 @@ export class ScraperService {
       newPostEntities.push(savedPost);
     }
 
-    if (newPostEntities.length > 0) {
-      await this.topicService.categorizeNewPosts(subreddit.id, newPostEntities);
-    }
-
     subreddit.lastScrapedAt = new Date();
     await this.subredditRepo.save(subreddit);
   }
@@ -92,7 +83,5 @@ export class ScraperService {
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
     // Deleting posts cascadedly deletes their comments
     await this.postRepo.delete({ scrapedAt: LessThan(cutoff) });
-    // Delete topics that haven't been updated in 24 hours
-    await this.topicRepo.delete({ updatedAt: LessThan(cutoff) });
   }
 }

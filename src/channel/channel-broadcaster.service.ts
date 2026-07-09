@@ -3,7 +3,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Channel } from './entities/channel.entity';
 import { ChannelPlaylistItem } from './entities/channel-playlist-item.entity';
-import { ChannelTopicProgress } from './entities/channel-topic-progress.entity';
 import { QueueGeneratorService } from './queue-generator.service';
 import { FilesystemService } from '../domain/filesystem.service';
 import { MediaService } from '../media/media.service';
@@ -20,7 +19,6 @@ export class ChannelBroadcaster {
     private readonly channelId: string,
     private readonly channelRepo: Repository<Channel>,
     private readonly playlistItemRepo: Repository<ChannelPlaylistItem>,
-    private readonly progressRepo: Repository<ChannelTopicProgress>,
     private readonly queueGen: QueueGeneratorService,
     private readonly mediaService: MediaService,
     private readonly fsService: FilesystemService,
@@ -230,16 +228,6 @@ export class ChannelBroadcaster {
 
     this.currentStream = null;
 
-    if (item.type === 'talk' && item.topicId) {
-      // Mark topic as completed
-      const progress = this.progressRepo.create({
-        channelId: this.channelId,
-        topicId: item.topicId,
-        completed: true,
-      });
-      await this.progressRepo.save(progress);
-    }
-
     // Transition to next item
     const nextItem = await this.playlistItemRepo.findOne({
       where: {
@@ -275,8 +263,6 @@ export class ChannelBroadcasterService {
     private readonly channelRepo: Repository<Channel>,
     @InjectRepository(ChannelPlaylistItem)
     private readonly playlistItemRepo: Repository<ChannelPlaylistItem>,
-    @InjectRepository(ChannelTopicProgress)
-    private readonly progressRepo: Repository<ChannelTopicProgress>,
     private readonly queueGen: QueueGeneratorService,
     private readonly mediaService: MediaService,
     private readonly fsService: FilesystemService,
@@ -289,7 +275,6 @@ export class ChannelBroadcasterService {
         channelId,
         this.channelRepo,
         this.playlistItemRepo,
-        this.progressRepo,
         this.queueGen,
         this.mediaService,
         this.fsService,

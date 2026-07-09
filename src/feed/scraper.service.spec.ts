@@ -2,16 +2,9 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ScraperService } from './scraper.service';
 import { RedditApiService } from './reddit-api.service';
-import { TopicService } from './topic.service';
 import { Subreddit } from '../domain/entities/subreddit.entity';
 import { Post } from './entities/post.entity';
 import { Comment } from './entities/comment.entity';
-import { Topic } from '../domain/entities/topic.entity';
-
-// Mock the huggingface transformers library to avoid native binary loading issues in Jest
-jest.mock('@huggingface/transformers', () => ({
-  pipeline: jest.fn().mockResolvedValue(jest.fn()),
-}));
 
 describe('ScraperService', () => {
   let service: ScraperService;
@@ -34,17 +27,9 @@ describe('ScraperService', () => {
     save: jest.fn(),
   };
 
-  const mockTopicRepo = {
-    delete: jest.fn(),
-  };
-
   const mockRedditApi = {
     fetchTopPosts: jest.fn(),
     fetchPostComments: jest.fn(),
-  };
-
-  const mockTopicService = {
-    categorizeNewPosts: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -54,9 +39,7 @@ describe('ScraperService', () => {
         { provide: getRepositoryToken(Subreddit), useValue: mockSubredditRepo },
         { provide: getRepositoryToken(Post), useValue: mockPostRepo },
         { provide: getRepositoryToken(Comment), useValue: mockCommentRepo },
-        { provide: getRepositoryToken(Topic), useValue: mockTopicRepo },
         { provide: RedditApiService, useValue: mockRedditApi },
-        { provide: TopicService, useValue: mockTopicService },
       ],
     }).compile();
 
@@ -149,22 +132,16 @@ describe('ScraperService', () => {
         'post1',
         5,
       );
-      expect(mockTopicService.categorizeNewPosts).toHaveBeenCalledWith(
-        'sub-uuid',
-        [createdPost],
-      );
     });
   });
 
   describe('cleanupOldData', () => {
-    it('should delete posts and topics older than 24 hours', async () => {
+    it('should delete posts older than 24 hours', async () => {
       mockPostRepo.delete.mockResolvedValue({ affected: 5 });
-      mockTopicRepo.delete.mockResolvedValue({ affected: 2 });
 
       await service.cleanupOldData();
 
       expect(mockPostRepo.delete).toHaveBeenCalled();
-      expect(mockTopicRepo.delete).toHaveBeenCalled();
     });
   });
 });

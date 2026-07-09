@@ -3,10 +3,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ChannelPlaylistItem } from './entities/channel-playlist-item.entity';
 import { ChannelSubreddit } from './entities/channel-subreddit.entity';
-import { ChannelTopicProgress } from './entities/channel-topic-progress.entity';
-import { Topic } from '../domain/entities/topic.entity';
+import { ChannelPostProgress } from './entities/channel-post-progress.entity';
+import { Post } from '../feed/entities/post.entity';
 import { RadioService } from '../radio/radio.service';
 import { MediaService } from '../media/media.service';
+import { clusterPosts } from './utils/topic-clustering.util';
 
 @Injectable()
 export class QueueGeneratorService {
@@ -15,10 +16,10 @@ export class QueueGeneratorService {
     private readonly playlistItemRepo: Repository<ChannelPlaylistItem>,
     @InjectRepository(ChannelSubreddit)
     private readonly channelSubredditRepo: Repository<ChannelSubreddit>,
-    @InjectRepository(ChannelTopicProgress)
-    private readonly progressRepo: Repository<ChannelTopicProgress>,
-    @InjectRepository(Topic)
-    private readonly topicRepo: Repository<Topic>,
+    @InjectRepository(ChannelPostProgress)
+    private readonly progressRepo: Repository<ChannelPostProgress>,
+    @InjectRepository(Post)
+    private readonly postRepo: Repository<Post>,
     private readonly radioService: RadioService,
     private readonly mediaService: MediaService,
   ) {}
@@ -48,20 +49,30 @@ export class QueueGeneratorService {
     await this.playlistItemRepo.save(jingleItem);
 
     // Talk (generating)
-    const topic = await this.findPendingTopic(channelId);
-    if (topic) {
+    const topicSegment = await this.findPendingTopicSegment(channelId);
+    if (topicSegment) {
       const talkItem = this.playlistItemRepo.create({
         channelId,
         sequenceOrder: nextSequence++,
         type: 'talk',
         status: 'generating',
-        topicId: topic.id,
+        topicId: topicSegment.id,
       });
       const savedTalkItem = await this.playlistItemRepo.save(talkItem);
 
+      // Immediately mark posts as completed to prevent double-queuing
+      for (const p of topicSegment.posts) {
+        const progress = this.progressRepo.create({
+          channelId,
+          postId: p.id,
+        });
+        await this.progressRepo.save(progress);
+      }
+
       // Trigger background voice generation (asynchronous)
+      const postIds = topicSegment.posts.map((p) => p.id);
       this.radioService
-        .getTopicVoiceTrack(topic.id)
+        .getSegmentVoiceTrack(postIds)
         .then(async (segment) => {
           savedTalkItem.audioUrl = segment.filePath;
           savedTalkItem.durationSeconds = segment.durationSeconds;
@@ -123,28 +134,27 @@ export class QueueGeneratorService {
     await this.playlistItemRepo.save(songItem2);
   }
 
-  private async findPendingTopic(channelId: string): Promise<Topic | null> {
+  private async findPendingTopicSegment(
+    channelId: string,
+  ): Promise<{ id: string; title: string; posts: Post[] } | null> {
     const subs = await this.channelSubredditRepo.find({ where: { channelId } });
     if (subs.length === 0) return null;
 
     const completedProgress = await this.progressRepo.find({
-      where: { channelId, completed: true },
+      where: { channelId },
     });
-    const completedTopicIds = completedProgress.map((p) => p.topicId);
+    const completedPostIds = completedProgress.map((p) => p.postId);
 
     const subIds = subs.map((s) => s.subredditId);
-    // Find all topics in subscribed subreddits
-    const topics = await this.topicRepo.find({
+    const posts = await this.postRepo.find({
       where: subIds.map((subredditId) => ({ subredditId })),
-      order: { createdAt: 'ASC' },
+      order: { score: 'DESC', redditCreatedAt: 'DESC' },
     });
 
-    // Find first topic not completed
-    for (const topic of topics) {
-      if (!completedTopicIds.includes(topic.id)) {
-        return topic;
-      }
-    }
-    return null;
+    const unplayedPosts = posts.filter((p) => !completedPostIds.includes(p.id));
+    if (unplayedPosts.length === 0) return null;
+
+    const segments = clusterPosts(unplayedPosts);
+    return segments[0] || null;
   }
 }

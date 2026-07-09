@@ -25,8 +25,11 @@ export class RadioService {
     private readonly audioService: AudioService,
   ) {}
 
-  async getTopicVoiceTrack(topicId: string): Promise<Segment> {
-    const cachedAudio = await this.audioRepo.findOneBy({ topicId });
+  async getSegmentVoiceTrack(postIds: string[]): Promise<Segment> {
+    const primaryPostId = postIds[0];
+    const cachedAudio = await this.audioRepo.findOneBy({
+      postId: primaryPostId,
+    });
     if (cachedAudio) {
       return {
         filePath: cachedAudio.filePath,
@@ -34,11 +37,12 @@ export class RadioService {
       };
     }
 
-    const posts = await this.postRepo.find({ where: { topicId } });
-    const postIds = posts.map((p) => p.id);
+    const posts = await this.postRepo.find({
+      where: postIds.map((id) => ({ id })),
+    });
+
     let comments: Comment[] = [];
     if (postIds.length > 0) {
-      // Find all top comments for the posts in this topic
       comments = await this.commentRepo.find({
         where: postIds.map((postId) => ({ postId })),
       });
@@ -48,7 +52,7 @@ export class RadioService {
     const outputFilePath = path.join(
       'assets',
       'cache',
-      `tts-topic-${topicId}.mp3`,
+      `tts-post-${primaryPostId}.mp3`,
     );
 
     const durationSeconds = await this.audioService.generateSpeech(
@@ -57,13 +61,13 @@ export class RadioService {
     );
 
     const script = this.scriptRepo.create({
-      topicId,
+      postId: primaryPostId,
       scriptText,
     });
     await this.scriptRepo.save(script);
 
     const audio = this.audioRepo.create({
-      topicId,
+      postId: primaryPostId,
       filePath: outputFilePath,
       durationSeconds,
     });

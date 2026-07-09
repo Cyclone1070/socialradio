@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Channel } from './entities/channel.entity';
 import { ChannelSubreddit } from './entities/channel-subreddit.entity';
-import { ChannelTopicProgress } from './entities/channel-topic-progress.entity';
+import { ChannelPostProgress } from './entities/channel-post-progress.entity';
 import { ChannelPlaylistItem } from './entities/channel-playlist-item.entity';
 import { ChannelService } from './channel.service';
 import { ChannelBroadcasterService } from './channel-broadcaster.service';
@@ -18,7 +18,7 @@ import { PassportModule } from '@nestjs/passport';
     TypeOrmModule.forFeature([
       Channel,
       ChannelSubreddit,
-      ChannelTopicProgress,
+      ChannelPostProgress,
       ChannelPlaylistItem,
     ]),
     DomainModule,

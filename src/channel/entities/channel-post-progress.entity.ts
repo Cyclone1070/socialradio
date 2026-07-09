@@ -9,12 +9,12 @@ import {
   Index,
 } from 'typeorm';
 import { Channel } from './channel.entity';
-import { Topic } from '../../domain/entities/topic.entity';
+import { Post } from '../../feed/entities/post.entity';
 
 @Entity()
-@Unique(['channelId', 'topicId'])
+@Unique(['channelId', 'postId'])
 @Index(['channelId'])
-export class ChannelTopicProgress {
+export class ChannelPostProgress {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
@@ -26,14 +26,11 @@ export class ChannelTopicProgress {
   channel: Channel;
 
   @Column()
-  topicId: string;
+  postId: string;
 
-  @ManyToOne(() => Topic, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'topicId' })
-  topic: Topic;
-
-  @Column({ default: true })
-  completed: boolean;
+  @ManyToOne(() => Post, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'postId' })
+  post: Post;
 
   @CreateDateColumn()
   createdAt: Date;

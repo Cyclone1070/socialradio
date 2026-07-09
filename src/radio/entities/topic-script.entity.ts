@@ -6,7 +6,7 @@ import {
   JoinColumn,
   CreateDateColumn,
 } from 'typeorm';
-import { Topic } from '../../domain/entities/topic.entity';
+import { Post } from '../../feed/entities/post.entity';
 
 @Entity()
 export class TopicScript {
@@ -14,11 +14,11 @@ export class TopicScript {
   id: string;
 
   @Column()
-  topicId: string;
+  postId: string;
 
-  @OneToOne(() => Topic, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'topicId' })
-  topic: Topic;
+  @OneToOne(() => Post, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'postId' })
+  post: Post;
 
   @Column('text')
   scriptText: string;

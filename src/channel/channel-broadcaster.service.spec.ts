@@ -5,7 +5,6 @@ import { FilesystemService } from '../domain/filesystem.service';
 import { QueueGeneratorService } from './queue-generator.service';
 import { ChannelPlaylistItem } from './entities/channel-playlist-item.entity';
 import { Channel } from './entities/channel.entity';
-import { ChannelTopicProgress } from './entities/channel-topic-progress.entity';
 import { MediaService } from '../media/media.service';
 import { Response } from 'express';
 
@@ -35,11 +34,6 @@ describe('ChannelBroadcasterService', () => {
     create: jest.fn(),
   };
 
-  const mockProgressRepo = {
-    create: jest.fn(),
-    save: jest.fn(),
-  };
-
   beforeEach(async () => {
     jest.useFakeTimers();
     const module: TestingModule = await Test.createTestingModule({
@@ -52,10 +46,6 @@ describe('ChannelBroadcasterService', () => {
         {
           provide: getRepositoryToken(ChannelPlaylistItem),
           useValue: mockPlaylistItemRepo,
-        },
-        {
-          provide: getRepositoryToken(ChannelTopicProgress),
-          useValue: mockProgressRepo,
         },
       ],
     }).compile();

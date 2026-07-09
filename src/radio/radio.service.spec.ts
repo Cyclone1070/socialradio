@@ -60,35 +60,37 @@ describe('RadioService', () => {
     expect(service).toBeDefined();
   });
 
-  describe('getTopicVoiceTrack', () => {
+  describe('getSegmentVoiceTrack', () => {
     it('should return cached audio if it exists', async () => {
-      const topicId = 'topic-123';
+      const postIds = ['post-123'];
       const cachedAudio = {
-        topicId,
-        filePath: 'cache/topic-123.mp3',
+        postId: 'post-123',
+        filePath: 'cache/post-123.mp3',
         durationSeconds: 45.5,
       };
 
       mockAudioRepo.findOneBy.mockResolvedValue(cachedAudio);
 
-      const result = await service.getTopicVoiceTrack(topicId);
+      const result = await service.getSegmentVoiceTrack(postIds);
 
-      expect(mockAudioRepo.findOneBy).toHaveBeenCalledWith({ topicId });
+      expect(mockAudioRepo.findOneBy).toHaveBeenCalledWith({
+        postId: 'post-123',
+      });
       expect(mockScriptService.generateScript).not.toHaveBeenCalled();
       expect(mockAudioService.generateSpeech).not.toHaveBeenCalled();
       expect(result).toEqual({
-        filePath: 'cache/topic-123.mp3',
+        filePath: 'cache/post-123.mp3',
         durationSeconds: 45.5,
       });
     });
 
     it('should generate, cache, and return voice track on cache miss', async () => {
-      const topicId = 'topic-123';
+      const postIds = ['post-123'];
       mockAudioRepo.findOneBy.mockResolvedValue(null);
 
-      const posts = [{ id: 'post-1', title: 'SpaceX' }] as unknown as Post[];
+      const posts = [{ id: 'post-123', title: 'SpaceX' }] as unknown as Post[];
       const comments = [
-        { id: 'comment-1', body: 'Wow', postId: 'post-1' },
+        { id: 'comment-1', body: 'Wow', postId: 'post-123' },
       ] as unknown as Comment[];
       mockPostRepo.find.mockResolvedValue(posts);
       mockCommentRepo.find.mockResolvedValue(comments);
@@ -96,20 +98,26 @@ describe('RadioService', () => {
       mockScriptService.generateScript.mockResolvedValue('Script content');
       mockAudioService.generateSpeech.mockResolvedValue(30.0); // 30 seconds
 
-      const topicScript = { topicId, scriptText: 'Script content' };
-      const filePath = 'assets/cache/tts-topic-topic-123.mp3';
-      const topicAudio = { topicId, filePath, durationSeconds: 30.0 };
+      const topicScript = { postId: 'post-123', scriptText: 'Script content' };
+      const filePath = 'assets/cache/tts-post-post-123.mp3';
+      const topicAudio = {
+        postId: 'post-123',
+        filePath,
+        durationSeconds: 30.0,
+      };
 
       mockScriptRepo.create.mockReturnValue(topicScript);
       mockScriptRepo.save.mockResolvedValue(topicScript);
       mockAudioRepo.create.mockReturnValue(topicAudio);
       mockAudioRepo.save.mockResolvedValue(topicAudio);
 
-      const result = await service.getTopicVoiceTrack(topicId);
+      const result = await service.getSegmentVoiceTrack(postIds);
 
-      expect(mockPostRepo.find).toHaveBeenCalledWith({ where: { topicId } });
+      expect(mockPostRepo.find).toHaveBeenCalledWith({
+        where: [{ id: 'post-123' }],
+      });
       expect(mockCommentRepo.find).toHaveBeenCalledWith({
-        where: [{ postId: 'post-1' }],
+        where: [{ postId: 'post-123' }],
       });
       expect(mockScriptService.generateScript).toHaveBeenCalledWith(
         posts,
@@ -117,19 +125,19 @@ describe('RadioService', () => {
       );
       expect(mockAudioService.generateSpeech).toHaveBeenCalledWith(
         'Script content',
-        expect.stringContaining('topic-123.mp3'),
+        expect.stringContaining('post-123.mp3'),
       );
       expect(mockScriptRepo.create).toHaveBeenCalledWith({
-        topicId,
+        postId: 'post-123',
         scriptText: 'Script content',
       });
       expect(mockAudioRepo.create).toHaveBeenCalledWith({
-        topicId,
-        filePath: expect.stringContaining('topic-123.mp3') as unknown,
+        postId: 'post-123',
+        filePath: expect.stringContaining('post-123.mp3') as unknown,
         durationSeconds: 30.0,
       });
       expect(result).toEqual({
-        filePath: expect.stringContaining('topic-123.mp3') as unknown,
+        filePath: expect.stringContaining('post-123.mp3') as unknown,
         durationSeconds: 30.0,
       });
     });
