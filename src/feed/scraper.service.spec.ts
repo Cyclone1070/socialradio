@@ -73,6 +73,10 @@ describe('ScraperService', () => {
       const subName = 'AskReddit';
       const subEntity = { id: 'sub-uuid', name: subName, lastScrapedAt: null };
 
+      const cleanupSpy = jest
+        .spyOn(service, 'cleanupOldData')
+        .mockResolvedValue(undefined);
+
       mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
       mockSubredditRepo.save.mockResolvedValue(subEntity);
 
@@ -81,10 +85,8 @@ describe('ScraperService', () => {
           id: 'post1',
           title: 'Title 1',
           selftext: 'Body 1',
-          author: 'user1',
+          author: 'caller_user',
           score: 100,
-          num_comments: 10,
-          permalink: '/link1',
           created_utc: 1719999999,
         },
       ];
@@ -95,10 +97,18 @@ describe('ScraperService', () => {
         {
           id: 'comment1',
           body: 'Comment Body',
-          author: 'commenter1',
+          author: 'caller_user', // OP
           score: 5,
           parent_id: 't3_post1',
           created_utc: 1719999999,
+        },
+        {
+          id: 'reply1',
+          body: 'Reply Body',
+          author: 'other_user', // Not OP
+          score: 2,
+          parent_id: 't1_comment1', // replies to comment1
+          created_utc: 1720000000,
         },
       ];
       mockRedditApi.fetchPostComments.mockResolvedValue(rawComments);
@@ -113,6 +123,23 @@ describe('ScraperService', () => {
 
       await service.scrapeSubreddit(subName);
 
+      expect(cleanupSpy).toHaveBeenCalled();
+      expect(mockCommentRepo.create).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          redditId: 'comment1',
+          isOp: true,
+          parentRedditId: null,
+        }) as unknown,
+      );
+      expect(mockCommentRepo.create).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          redditId: 'reply1',
+          isOp: false,
+          parentRedditId: 'comment1',
+        }) as unknown,
+      );
       expect(mockSubredditRepo.findOneBy).toHaveBeenCalledWith({
         name: subName,
       });

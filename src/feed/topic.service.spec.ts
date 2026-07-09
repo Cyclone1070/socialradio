@@ -58,8 +58,6 @@ describe('TopicService', () => {
         redditId: 'reddit-1',
         subredditId,
         score: 10,
-        commentCount: 5,
-        permalink: 'link',
         redditCreatedAt: new Date(),
       } as unknown as Post;
 
@@ -98,8 +96,6 @@ describe('TopicService', () => {
         redditId: 'reddit-2',
         subredditId,
         score: 10,
-        commentCount: 5,
-        permalink: 'link',
         redditCreatedAt: new Date(),
       } as unknown as Post;
 

@@ -27,18 +27,14 @@ export class Comment {
   @Column('text')
   body: string;
 
-  @Column()
-  author: string;
-
   @Column('int')
   score: number;
 
   @Column({ nullable: true })
-  parentCommentId: string | null;
+  parentRedditId: string | null;
 
-  @ManyToOne(() => Comment, { nullable: true, onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'parentCommentId' })
-  parentComment: Comment | null;
+  @Column({ default: false })
+  isOp: boolean;
 
   @Column('timestamptz')
   redditCreatedAt: Date;

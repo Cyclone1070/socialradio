@@ -24,6 +24,8 @@ export class ScraperService {
   ) {}
 
   async scrapeSubreddit(subredditName: string): Promise<void> {
+    await this.cleanupOldData();
+
     let subreddit = await this.subredditRepo.findOneBy({ name: subredditName });
     if (!subreddit) {
       subreddit = this.subredditRepo.create({ name: subredditName });
@@ -45,10 +47,7 @@ export class ScraperService {
         redditId: rawPost.id,
         title: rawPost.title,
         body: rawPost.selftext || '',
-        author: rawPost.author,
         score: rawPost.score,
-        commentCount: rawPost.num_comments,
-        permalink: rawPost.permalink,
         redditCreatedAt: new Date(rawPost.created_utc * 1000),
       });
 
@@ -60,17 +59,22 @@ export class ScraperService {
         rawPost.id,
         5,
       );
-      const comments = rawComments.map((rawComment) =>
-        this.commentRepo.create({
+      const comments = rawComments.map((rawComment) => {
+        const isOp = rawComment.author === rawPost.author;
+        const parentRedditId = rawComment.parent_id.startsWith('t1_')
+          ? rawComment.parent_id.replace('t1_', '')
+          : null;
+
+        return this.commentRepo.create({
           postId: savedPost.id,
           redditId: rawComment.id,
           body: rawComment.body,
-          author: rawComment.author,
           score: rawComment.score,
-          parentCommentId: null, // depth=1 flat structure
+          parentRedditId,
+          isOp,
           redditCreatedAt: new Date(rawComment.created_utc * 1000),
-        }),
-      );
+        });
+      });
       await this.commentRepo.save(comments);
 
       newPostEntities.push(savedPost);

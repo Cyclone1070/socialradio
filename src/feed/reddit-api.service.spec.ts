@@ -88,10 +88,7 @@ describe('RedditApiService', () => {
                 name: 't3_abc123',
                 title: 'Test Post',
                 selftext: 'Body of post',
-                author: 'author1',
                 score: 100,
-                num_comments: 50,
-                permalink: '/r/AskReddit/comments/abc123/test_post/',
                 created_utc: 1719999999,
               },
             },
@@ -129,10 +126,11 @@ describe('RedditApiService', () => {
   });
 
   describe('fetchPostComments', () => {
-    it('should fetch comments for a post', async () => {
+    it('should recursively fetch comments and their replies for a post', async () => {
       service['accessToken'] = 'mock_token';
       service['tokenExpiresAt'] = new Date(Date.now() + 100000);
 
+      // Mock nested comment structure where comment1 has a reply comment2
       const commentData = [
         { kind: 'Listing', data: { children: [] } }, // Post listing
         {
@@ -143,12 +141,30 @@ describe('RedditApiService', () => {
                 kind: 't1',
                 data: {
                   id: 'xyz789',
-                  name: 't1_xyz789',
                   body: 'comment body',
                   author: 'commenter1',
                   score: 10,
                   parent_id: 't3_abc123',
                   created_utc: 1719999999,
+                  replies: {
+                    kind: 'Listing',
+                    data: {
+                      children: [
+                        {
+                          kind: 't1',
+                          data: {
+                            id: 'reply123',
+                            body: 'reply body',
+                            author: 'commenter2',
+                            score: 3,
+                            parent_id: 't1_xyz789',
+                            created_utc: 1720000000,
+                            replies: '', // no replies
+                          },
+                        },
+                      ],
+                    },
+                  },
                 },
               },
             ],
@@ -173,15 +189,18 @@ describe('RedditApiService', () => {
       );
 
       expect(mockHttpService.get).toHaveBeenCalledWith(
-        'https://oauth.reddit.com/r/AskReddit/comments/abc123?sort=top&limit=20&depth=1',
+        'https://oauth.reddit.com/r/AskReddit/comments/abc123?sort=top&limit=20',
         expect.objectContaining({
           headers: expect.objectContaining({
             Authorization: 'Bearer mock_token',
           }) as unknown,
         }) as unknown,
       );
-      expect(result).toHaveLength(1);
+      expect(result).toHaveLength(2);
       expect(result[0].id).toBe('xyz789');
+      expect(result[1].id).toBe('reply123');
+      expect(result[1].parent_id).toBe('t1_xyz789');
+      expect(result[1].author).toBe('commenter2');
     });
   });
 });

@@ -43,17 +43,8 @@ export class Post {
   @Column('text')
   body: string;
 
-  @Column()
-  author: string;
-
   @Column('int')
   score: number;
-
-  @Column('int')
-  commentCount: number;
-
-  @Column()
-  permalink: string;
 
   @Column('simple-json', { nullable: true })
   titleEmbedding: number[] | null;

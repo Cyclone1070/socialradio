@@ -34,12 +34,18 @@ describe('ScriptService', () => {
           id: 'post-1',
           title: 'Post Title 1',
           body: 'Post Body 1',
-          author: 'author1',
         },
       ] as unknown as Post[];
 
       const comments = [
-        { body: 'Comment Body 1', author: 'user1', postId: 'post-1' },
+        {
+          body: 'Comment Body 1',
+          postId: 'post-1',
+          redditId: 'comment-1',
+          parentRedditId: null,
+          isOp: false,
+          score: 10,
+        },
       ] as unknown as Comment[];
 
       mockLlmService.generateText.mockResolvedValue(
@@ -49,7 +55,9 @@ describe('ScriptService', () => {
       const result = await service.generateScript(posts, comments);
 
       expect(mockLlmService.generateText).toHaveBeenCalledWith(
-        expect.stringContaining('You are a professional radio news anchor'),
+        expect.stringContaining(
+          'You are a professional script writer for a call-in',
+        ),
         expect.stringContaining('Post Title 1'),
       );
       expect(result).toBe('Mocked radio script text.');

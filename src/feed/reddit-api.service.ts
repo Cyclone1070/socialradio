@@ -9,8 +9,6 @@ export interface RedditPostData {
   selftext?: string;
   author: string;
   score: number;
-  num_comments: number;
-  permalink: string;
   created_utc: number;
 }
 
@@ -36,11 +34,22 @@ interface RedditPostListingResponse {
   };
 }
 
-interface RedditCommentListingResponse {
-  data?: {
-    children?: Array<{
-      data: RedditCommentData;
-    }>;
+export interface RedditCommentNode {
+  kind: string;
+  data: {
+    id: string;
+    body?: string;
+    author?: string;
+    score?: number;
+    parent_id: string;
+    created_utc?: number;
+    replies?:
+      | {
+          data?: {
+            children?: RedditCommentNode[];
+          };
+        }
+      | string;
   };
 }
 
@@ -140,7 +149,7 @@ export class RedditApiService {
 
     const response = await lastValueFrom(
       this.httpService.get(
-        `https://oauth.reddit.com/r/${subredditName}/comments/${postRedditId}?sort=top&limit=${limit}&depth=1`,
+        `https://oauth.reddit.com/r/${subredditName}/comments/${postRedditId}?sort=top&limit=${limit}`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -150,8 +159,37 @@ export class RedditApiService {
       ),
     );
 
-    const data = response.data as [unknown, RedditCommentListingResponse];
-    // Reddit comments API returns an array: [postListing, commentsListing]
-    return data?.[1]?.data?.children?.map((child) => child.data) || [];
+    const data = response.data as [
+      unknown,
+      { data?: { children?: RedditCommentNode[] } },
+    ];
+    const topLevelChildren = data?.[1]?.data?.children || [];
+    const results: RedditCommentData[] = [];
+
+    const walk = (nodes: RedditCommentNode[]) => {
+      for (const node of nodes) {
+        if (node.kind === 't1') {
+          results.push({
+            id: node.data.id,
+            body: node.data.body || '',
+            author: node.data.author || '[deleted]',
+            score: node.data.score || 0,
+            parent_id: node.data.parent_id,
+            created_utc: node.data.created_utc || 0,
+          });
+          const replies = node.data.replies;
+          if (
+            replies &&
+            typeof replies === 'object' &&
+            replies.data?.children
+          ) {
+            walk(replies.data.children);
+          }
+        }
+      }
+    };
+
+    walk(topLevelChildren);
+    return results;
   }
 }
