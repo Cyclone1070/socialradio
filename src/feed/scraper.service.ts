@@ -29,7 +29,7 @@ export class ScraperService {
 
     const rawPosts = await this.redditApiService.fetchTopPosts(
       subredditName,
-      10,
+      20,
     );
     const newPostEntities: Post[] = [];
 
@@ -80,7 +80,7 @@ export class ScraperService {
   }
 
   async cleanupOldData(): Promise<void> {
-    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const cutoff = new Date(Date.now() - 72 * 60 * 60 * 1000);
     // Deleting posts cascadedly deletes their comments
     await this.postRepo.delete({ scrapedAt: LessThan(cutoff) });
   }

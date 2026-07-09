@@ -12,6 +12,7 @@ import { DomainModule } from '../domain/domain.module';
 import { RadioModule } from '../radio/radio.module';
 import { MediaModule } from '../media/media.module';
 import { PassportModule } from '@nestjs/passport';
+import { FeedModule } from '../feed/feed.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { PassportModule } from '@nestjs/passport';
     RadioModule,
     MediaModule,
     PassportModule,
+    FeedModule,
   ],
   controllers: [ChannelController],
   providers: [ChannelService, ChannelBroadcasterService, QueueGeneratorService],

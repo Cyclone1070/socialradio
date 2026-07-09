@@ -8,6 +8,7 @@ import { Post } from '../feed/entities/post.entity';
 import { RadioService } from '../radio/radio.service';
 import { MediaService } from '../media/media.service';
 import { clusterPosts } from './utils/topic-clustering.util';
+import { ScraperService } from '../feed/scraper.service';
 
 @Injectable()
 export class QueueGeneratorService {
@@ -22,6 +23,7 @@ export class QueueGeneratorService {
     private readonly postRepo: Repository<Post>,
     private readonly radioService: RadioService,
     private readonly mediaService: MediaService,
+    private readonly scraperService: ScraperService,
   ) {}
 
   async bufferAhead(channelId: string): Promise<void> {
@@ -137,7 +139,10 @@ export class QueueGeneratorService {
   private async findPendingTopicSegment(
     channelId: string,
   ): Promise<{ id: string; title: string; posts: Post[] } | null> {
-    const subs = await this.channelSubredditRepo.find({ where: { channelId } });
+    const subs = await this.channelSubredditRepo.find({
+      where: { channelId },
+      relations: { subreddit: true },
+    });
     if (subs.length === 0) return null;
 
     const completedProgress = await this.progressRepo.find({
@@ -146,6 +151,40 @@ export class QueueGeneratorService {
     const completedPostIds = completedProgress.map((p) => p.postId);
 
     const subIds = subs.map((s) => s.subredditId);
+    const allPosts = await this.postRepo.find({
+      where: subIds.map((subredditId) => ({ subredditId })),
+    });
+
+    const subsToScrape: string[] = [];
+    const ttlMs = 72 * 60 * 60 * 1000; // 72 hours cache TTL
+
+    for (const subRelation of subs) {
+      const sub = subRelation.subreddit;
+      if (!sub) continue;
+
+      const isStale =
+        !sub.lastScrapedAt || Date.now() - sub.lastScrapedAt.getTime() > ttlMs;
+
+      // Exhaustion: check if there are 0 unplayed posts remaining in DB for this sub
+      const postsInSub = allPosts.filter((p) => p.subredditId === sub.id);
+      const unplayedInSub = postsInSub.filter(
+        (p) => !completedPostIds.includes(p.id),
+      );
+      const isExhausted = unplayedInSub.length === 0;
+
+      if (isStale || isExhausted) {
+        subsToScrape.push(sub.name);
+      }
+    }
+
+    if (subsToScrape.length > 0) {
+      // Execute scrapes in parallel (controlled concurrency handled by Axios/RedditApiService)
+      await Promise.all(
+        subsToScrape.map((name) => this.scraperService.scrapeSubreddit(name)),
+      );
+    }
+
+    // Fetch again after potentially scraping new posts
     const posts = await this.postRepo.find({
       where: subIds.map((subredditId) => ({ subredditId })),
       order: { score: 'DESC', redditCreatedAt: 'DESC' },

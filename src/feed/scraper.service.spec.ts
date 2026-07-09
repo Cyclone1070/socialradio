@@ -126,7 +126,7 @@ describe('ScraperService', () => {
       expect(mockSubredditRepo.findOneBy).toHaveBeenCalledWith({
         name: subName,
       });
-      expect(mockRedditApi.fetchTopPosts).toHaveBeenCalledWith(subName, 10);
+      expect(mockRedditApi.fetchTopPosts).toHaveBeenCalledWith(subName, 20);
       expect(mockRedditApi.fetchPostComments).toHaveBeenCalledWith(
         subName,
         'post1',
@@ -136,12 +136,23 @@ describe('ScraperService', () => {
   });
 
   describe('cleanupOldData', () => {
-    it('should delete posts older than 24 hours', async () => {
+    it('should delete posts older than 72 hours', async () => {
       mockPostRepo.delete.mockResolvedValue({ affected: 5 });
 
       await service.cleanupOldData();
 
       expect(mockPostRepo.delete).toHaveBeenCalled();
+
+      const deleteMock = mockPostRepo.delete;
+      const calls = deleteMock.mock.calls as unknown[][];
+      const deleteArg = calls[0][0] as {
+        scrapedAt: { _value: Date };
+      };
+      const passedDate = deleteArg.scrapedAt._value;
+      const expectedCutoff = Date.now() - 72 * 60 * 60 * 1000;
+
+      // Assert it is within 5 seconds of our calculated cutoff
+      expect(passedDate.getTime()).toBeCloseTo(expectedCutoff, -4);
     });
   });
 });

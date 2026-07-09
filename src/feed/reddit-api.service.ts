@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { lastValueFrom } from 'rxjs';
+import axios from 'axios';
 
 export interface RedditPostData {
   id: string;
@@ -57,11 +58,49 @@ export interface RedditCommentNode {
 export class RedditApiService {
   private accessToken: string | null = null;
   private tokenExpiresAt: Date | null = null;
+  private rateLimitResetPromise: Promise<void> | null = null;
 
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
   ) {}
+
+  private async requestWithRetry<T>(requestFn: () => Promise<T>): Promise<T> {
+    if (this.rateLimitResetPromise) {
+      await this.rateLimitResetPromise;
+    }
+
+    try {
+      return await requestFn();
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        const isRateLimit = error.response && error.response.status === 429;
+        if (isRateLimit) {
+          if (!this.rateLimitResetPromise) {
+            const headers = (error.response?.headers || {}) as Record<
+              string,
+              unknown
+            >;
+            const resetHeader =
+              headers['x-ratelimit-reset'] || headers['X-Ratelimit-Reset'];
+            const resetSec = parseInt((resetHeader as string) || '60', 10);
+            const delayMs = (resetSec + 2) * 1000;
+
+            this.rateLimitResetPromise = new Promise<void>((resolve) => {
+              setTimeout(() => {
+                this.rateLimitResetPromise = null;
+                resolve();
+              }, delayMs);
+            });
+          }
+
+          await this.rateLimitResetPromise;
+          return this.requestWithRetry(requestFn);
+        }
+      }
+      throw error;
+    }
+  }
 
   async authenticate(): Promise<void> {
     const clientId = this.configService.get<string>('REDDIT_CLIENT_ID');
@@ -120,15 +159,17 @@ export class RedditApiService {
       'SocialRadio/1.0.0',
     );
 
-    const response = await lastValueFrom(
-      this.httpService.get(
-        `https://oauth.reddit.com/r/${subredditName}/top?t=day&limit=${limit}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'User-Agent': userAgent,
+    const response = await this.requestWithRetry(() =>
+      lastValueFrom(
+        this.httpService.get(
+          `https://oauth.reddit.com/r/${subredditName}/top?t=day&limit=${limit}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'User-Agent': userAgent,
+            },
           },
-        },
+        ),
       ),
     );
 
@@ -147,15 +188,17 @@ export class RedditApiService {
       'SocialRadio/1.0.0',
     );
 
-    const response = await lastValueFrom(
-      this.httpService.get(
-        `https://oauth.reddit.com/r/${subredditName}/comments/${postRedditId}?sort=top&limit=${limit}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'User-Agent': userAgent,
+    const response = await this.requestWithRetry(() =>
+      lastValueFrom(
+        this.httpService.get(
+          `https://oauth.reddit.com/r/${subredditName}/comments/${postRedditId}?sort=top&limit=${limit}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'User-Agent': userAgent,
+            },
           },
-        },
+        ),
       ),
     );
 

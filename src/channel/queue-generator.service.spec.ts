@@ -7,6 +7,7 @@ import { ChannelPostProgress } from './entities/channel-post-progress.entity';
 import { Post } from '../feed/entities/post.entity';
 import { RadioService } from '../radio/radio.service';
 import { MediaService } from '../media/media.service';
+import { ScraperService } from '../feed/scraper.service';
 
 describe('QueueGeneratorService', () => {
   let service: QueueGeneratorService;
@@ -43,6 +44,10 @@ describe('QueueGeneratorService', () => {
     getRandomJingle: jest.fn(),
   };
 
+  const mockScraperService = {
+    scrapeSubreddit: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -62,15 +67,124 @@ describe('QueueGeneratorService', () => {
         { provide: getRepositoryToken(Post), useValue: mockPostRepo },
         { provide: RadioService, useValue: mockRadioService },
         { provide: MediaService, useValue: mockMediaService },
+        { provide: ScraperService, useValue: mockScraperService },
       ],
     }).compile();
 
     service = module.get<QueueGeneratorService>(QueueGeneratorService);
     jest.clearAllMocks();
+
+    mockMediaService.getRandomJingle.mockResolvedValue({
+      filePath: 'jingle.mp3',
+      durationSeconds: 5,
+    });
+    mockMediaService.getRandomMusic.mockResolvedValue({
+      filePath: 'song.mp3',
+      durationSeconds: 180,
+    });
+    mockMediaService.getRandomAd.mockResolvedValue({
+      filePath: 'ad.mp3',
+      durationSeconds: 30,
+    });
+    mockRadioService.getSegmentVoiceTrack.mockResolvedValue({
+      filePath: 'tts.mp3',
+      durationSeconds: 60,
+    });
+    mockPlaylistItemRepo.create.mockImplementation(
+      (dto) => dto as ChannelPlaylistItem,
+    );
+    mockPlaylistItemRepo.save.mockImplementation((item) =>
+      Promise.resolve({
+        id: 'uuid-1',
+        ...(item as Record<string, unknown>),
+      } as ChannelPlaylistItem),
+    );
   });
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  describe('bufferAhead (Lazy & Reactive Scraping)', () => {
+    it('should trigger scraping if subreddit lastScrapedAt is null', async () => {
+      const channelId = 'chan-1';
+      mockPlaylistItemRepo.count.mockResolvedValue(0);
+      mockSubredditRepo.find.mockResolvedValue([
+        {
+          subredditId: 'sub-1',
+          subreddit: { name: 'AskReddit', lastScrapedAt: null },
+        },
+      ]);
+      mockProgressRepo.find.mockResolvedValue([]);
+      mockPostRepo.find.mockResolvedValue([]);
+      mockScraperService.scrapeSubreddit.mockResolvedValue(undefined);
+
+      await service.bufferAhead(channelId);
+
+      expect(mockScraperService.scrapeSubreddit).toHaveBeenCalledWith(
+        'AskReddit',
+      );
+    });
+
+    it('should trigger scraping if lastScrapedAt is older than 72 hours', async () => {
+      const channelId = 'chan-1';
+      const staleDate = new Date(Date.now() - 73 * 60 * 60 * 1000); // 73 hours ago
+      mockPlaylistItemRepo.count.mockResolvedValue(0);
+      mockSubredditRepo.find.mockResolvedValue([
+        {
+          subredditId: 'sub-1',
+          subreddit: { name: 'news', lastScrapedAt: staleDate },
+        },
+      ]);
+      mockProgressRepo.find.mockResolvedValue([]);
+      mockPostRepo.find.mockResolvedValue([]);
+
+      await service.bufferAhead(channelId);
+
+      expect(mockScraperService.scrapeSubreddit).toHaveBeenCalledWith('news');
+    });
+
+    it('should trigger scraping if channel has 0 unplayed posts (exhausted)', async () => {
+      const channelId = 'chan-1';
+      const freshDate = new Date(Date.now() - 5 * 60 * 60 * 1000); // 5 hours ago (fresh)
+      mockPlaylistItemRepo.count.mockResolvedValue(0);
+      mockSubredditRepo.find.mockResolvedValue([
+        {
+          subredditId: 'sub-1',
+          subreddit: { id: 'sub-1', name: 'pics', lastScrapedAt: freshDate },
+        },
+      ]);
+      // We have post-1, but channel already completed post-1 (exhausted!)
+      mockProgressRepo.find.mockResolvedValue([{ postId: 'post-1' }]);
+      mockPostRepo.find.mockResolvedValue([
+        { id: 'post-1', subredditId: 'sub-1', title: 'pics title' },
+      ]);
+
+      await service.bufferAhead(channelId);
+
+      expect(mockScraperService.scrapeSubreddit).toHaveBeenCalledWith('pics');
+    });
+
+    it('should NOT trigger scraping if cache is fresh and there are unplayed posts', async () => {
+      const channelId = 'chan-1';
+      const freshDate = new Date(Date.now() - 5 * 60 * 60 * 1000); // 5 hours ago
+      mockPlaylistItemRepo.count.mockResolvedValue(0);
+      mockSubredditRepo.find.mockResolvedValue([
+        {
+          subredditId: 'sub-1',
+          subreddit: { id: 'sub-1', name: 'funny', lastScrapedAt: freshDate },
+        },
+      ]);
+      // post-1 exists, and progress has no record of post-1 (unplayed exists)
+      mockProgressRepo.find.mockResolvedValue([]);
+      mockPostRepo.find.mockResolvedValue([
+        { id: 'post-1', subredditId: 'sub-1', title: 'funny post title' },
+      ]);
+
+      await service.bufferAhead(channelId);
+
+      expect(mockScraperService.scrapeSubreddit).not.toHaveBeenCalled();
+    });
   });
 
   describe('bufferAhead', () => {

@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { HttpService } from '@nestjs/axios';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
 import { AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import {
   RedditApiService,
@@ -201,6 +201,58 @@ describe('RedditApiService', () => {
       expect(result[1].id).toBe('reply123');
       expect(result[1].parent_id).toBe('t1_xyz789');
       expect(result[1].author).toBe('commenter2');
+    });
+  });
+
+  describe('Rate Limiting and Retries', () => {
+    let setTimeoutSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      setTimeoutSpy = jest
+        .spyOn(global, 'setTimeout')
+        .mockImplementation((cb: () => void) => {
+          cb();
+          return 0 as unknown as NodeJS.Timeout;
+        });
+    });
+
+    afterEach(() => {
+      setTimeoutSpy.mockRestore();
+    });
+
+    it('should catch HTTP 429, wait for the reset duration, and retry successfully', async () => {
+      service['accessToken'] = 'mock_token';
+      service['tokenExpiresAt'] = new Date(Date.now() + 100000);
+
+      // First call throws 429
+      const error429 = {
+        isAxiosError: true,
+        response: {
+          status: 429,
+          headers: {
+            'x-ratelimit-reset': '3', // 3 seconds
+          },
+        },
+      };
+
+      // Second call returns success
+      const successResponse: AxiosResponse = {
+        data: { data: { children: [] } },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config: {} as InternalAxiosRequestConfig,
+      };
+
+      mockHttpService.get
+        .mockReturnValueOnce(throwError(() => error429))
+        .mockReturnValueOnce(of(successResponse));
+
+      const result = await service.fetchTopPosts('AskReddit', 10);
+
+      expect(result).toEqual([]);
+      expect(mockHttpService.get).toHaveBeenCalledTimes(2);
+      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 5000); // 3s reset + 2s buffer = 5000ms
     });
   });
 });
