@@ -7,6 +7,21 @@ import { Comment } from '../feed/entities/comment.entity';
 export class ScriptService {
   constructor(private readonly llmService: LlmService) {}
 
+  private collectChain(
+    c: Comment,
+    repliesMap: Map<string, Comment[]>,
+    chainList: Comment[],
+  ): number {
+    chainList.push(c);
+    const words = c.body.split(/\s+/).filter(Boolean).length;
+    let totalWords = words;
+    const replies = repliesMap.get(c.redditId) || [];
+    for (const reply of replies) {
+      totalWords += this.collectChain(reply, repliesMap, chainList);
+    }
+    return totalWords;
+  }
+
   async generateScript(posts: Post[], comments: Comment[]): Promise<string> {
     const systemPrompt = `You are a professional script writer for a call-in talk radio show called "Social Radio". 
 Your job is to write a highly engaging, natural-sounding dialogue script for a segment.
@@ -45,19 +60,52 @@ Deliver it smoothly. Do not mention Reddit terms (like "OP", "upvote", "subreddi
           }
         }
 
+        // Calculate base word count for the post
+        const postBaseWords = (post.title + ' ' + (post.body || ''))
+          .split(/\s+/)
+          .filter(Boolean).length;
+        let currentWordCount = postBaseWords;
+        const selectedComments: Comment[] = [];
+
+        // Sort top-level comments by score descending
+        const sortedTopLevel = [...topLevel].sort((a, b) => b.score - a.score);
+
+        for (const topComment of sortedTopLevel) {
+          if (currentWordCount >= 1500) {
+            break;
+          }
+          const chainList: Comment[] = [];
+          const chainWords = this.collectChain(
+            topComment,
+            repliesMap,
+            chainList,
+          );
+          selectedComments.push(...chainList);
+          currentWordCount += chainWords;
+        }
+
+        const selectedIds = new Set(selectedComments.map((c) => c.id));
+        const filteredTopLevel = sortedTopLevel.filter((c) =>
+          selectedIds.has(c.id),
+        );
+
         const renderThread = (c: Comment, depth: number) => {
           const indent = '  '.repeat(depth);
           const label = c.isOp ? '[Caller Reply]' : '[Public Stance]';
           userPrompt += `${indent}- ${label}: "${c.body}" (Score: ${c.score})\n`;
+
           const replies = repliesMap.get(c.redditId) || [];
-          replies.sort((a, b) => b.score - a.score);
-          for (const reply of replies) {
+          const filteredReplies = replies.filter((reply) =>
+            selectedIds.has(reply.id),
+          );
+          filteredReplies.sort((a, b) => b.score - a.score);
+
+          for (const reply of filteredReplies) {
             renderThread(reply, depth + 1);
           }
         };
 
-        topLevel.sort((a, b) => b.score - a.score);
-        for (const c of topLevel) {
+        for (const c of filteredTopLevel) {
           renderThread(c, 0);
         }
       }

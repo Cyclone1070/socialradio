@@ -52,7 +52,7 @@ export class ScraperService {
       const rawComments = await this.redditApiService.fetchPostComments(
         subredditName,
         rawPost.id,
-        5,
+        50,
       );
       const comments = rawComments.map((rawComment) => {
         const isOp = rawComment.author === rawPost.author;

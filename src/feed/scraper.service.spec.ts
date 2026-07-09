@@ -130,7 +130,7 @@ describe('ScraperService', () => {
       expect(mockRedditApi.fetchPostComments).toHaveBeenCalledWith(
         subName,
         'post1',
-        5,
+        50,
       );
     });
   });
