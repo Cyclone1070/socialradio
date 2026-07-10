@@ -24,7 +24,7 @@ export class ChannelService {
   ): Promise<ChannelResponseDto> {
     const channel = this.channelRepo.create({
       name: dto.name,
-      type: dto.type || 'private',
+      visibility: dto.visibility || 'private',
       ownerId,
     });
     const saved = await this.channelRepo.save(channel);
@@ -32,7 +32,7 @@ export class ChannelService {
     return {
       id: saved.id,
       name: saved.name,
-      type: saved.type,
+      visibility: saved.visibility,
       ownerId: saved.ownerId,
       isPaused: saved.isPaused,
       createdAt: saved.createdAt,
@@ -75,13 +75,13 @@ export class ChannelService {
 
   async getUserChannels(userId: string): Promise<ChannelResponseDto[]> {
     const channels = await this.channelRepo.find({
-      where: [{ ownerId: userId }, { type: 'public' }],
+      where: [{ ownerId: userId }, { visibility: 'public' }],
     });
 
     return channels.map((c) => ({
       id: c.id,
       name: c.name,
-      type: c.type,
+      visibility: c.visibility,
       ownerId: c.ownerId,
       isPaused: c.isPaused,
       createdAt: c.createdAt,

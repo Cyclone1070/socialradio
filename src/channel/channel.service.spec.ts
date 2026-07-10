@@ -51,12 +51,12 @@ describe('ChannelService', () => {
 
   describe('configureChannel', () => {
     it('should create and return a private channel', async () => {
-      const dto = { name: 'My Radio', type: 'private' as const };
+      const dto = { name: 'My Radio', visibility: 'private' as const };
       const ownerId = 'user-1';
       const channel = {
         id: 'chan-1',
         name: 'My Radio',
-        type: 'private',
+        visibility: 'private',
         ownerId,
         isPaused: true,
         createdAt: new Date(),
@@ -69,14 +69,14 @@ describe('ChannelService', () => {
 
       expect(mockChannelRepo.create).toHaveBeenCalledWith({
         name: 'My Radio',
-        type: 'private',
+        visibility: 'private',
         ownerId,
       });
       expect(mockChannelRepo.save).toHaveBeenCalledWith(channel);
       expect(result).toEqual({
         id: channel.id,
         name: channel.name,
-        type: channel.type,
+        visibility: channel.visibility,
         ownerId: channel.ownerId,
         isPaused: channel.isPaused,
         createdAt: channel.createdAt,

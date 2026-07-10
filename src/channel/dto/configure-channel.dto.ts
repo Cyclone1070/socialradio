@@ -7,5 +7,5 @@ export class ConfigureChannelDto {
 
   @IsEnum(['public', 'private'])
   @IsOptional()
-  type?: 'public' | 'private';
+  visibility?: 'public' | 'private';
 }

@@ -14,7 +14,7 @@ export class Channel {
   name: string;
 
   @Column({ default: 'public' })
-  type: 'public' | 'private';
+  visibility: 'public' | 'private';
 
   @Column({ nullable: true })
   ownerId: string | null;

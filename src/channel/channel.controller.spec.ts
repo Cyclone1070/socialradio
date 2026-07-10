@@ -42,7 +42,7 @@ describe('ChannelController', () => {
   describe('getUserChannels', () => {
     it('should return user channels', async () => {
       const channels = [
-        { id: '1', name: 'Public', type: 'public', ownerId: null },
+        { id: '1', name: 'Public', visibility: 'public', ownerId: null },
       ];
       mockChannelService.getUserChannels.mockResolvedValue(channels);
 
@@ -56,11 +56,14 @@ describe('ChannelController', () => {
 
   describe('configureChannel', () => {
     it('should configure channel and return response', async () => {
-      const dto: ConfigureChannelDto = { name: 'My Radio', type: 'private' };
+      const dto: ConfigureChannelDto = {
+        name: 'My Radio',
+        visibility: 'private',
+      };
       const channel = {
         id: 'chan-1',
         name: 'My Radio',
-        type: 'private',
+        visibility: 'private',
         ownerId: 'user-1',
       };
       mockChannelService.configureChannel.mockResolvedValue(channel);
