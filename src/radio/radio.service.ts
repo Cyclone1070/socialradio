@@ -7,7 +7,7 @@ import { Post } from '../feed/entities/post.entity';
 import { Comment } from '../feed/entities/comment.entity';
 import { ScriptService } from './script.service';
 import { AudioService } from './audio.service';
-import { Segment } from '../domain/types/segment.interface';
+import { TalkRef } from '../domain/types/audio-file-ref.interface';
 import * as path from 'path';
 
 @Injectable()
@@ -25,7 +25,7 @@ export class RadioService {
     private readonly audioService: AudioService,
   ) {}
 
-  async getSegmentVoiceTrack(postIds: string[]): Promise<Segment> {
+  async getSegmentVoiceTrack(postIds: string[]): Promise<TalkRef> {
     const primaryPostId = postIds[0];
     const cachedAudio = await this.audioRepo.findOneBy({
       postId: primaryPostId,
@@ -34,6 +34,7 @@ export class RadioService {
       return {
         filePath: cachedAudio.filePath,
         durationSeconds: cachedAudio.durationSeconds,
+        postIds,
       };
     }
 
@@ -76,6 +77,7 @@ export class RadioService {
     return {
       filePath: savedAudio.filePath,
       durationSeconds: savedAudio.durationSeconds,
+      postIds,
     };
   }
 }

@@ -4,7 +4,11 @@ import { Repository } from 'typeorm';
 import { MusicTrack } from './entities/music-track.entity';
 import { AdTrack } from './entities/ad-track.entity';
 import { Jingle } from './entities/jingle.entity';
-import { Segment } from '../domain/types/segment.interface';
+import {
+  SongRef,
+  AdRef,
+  JingleRef,
+} from '../domain/types/audio-file-ref.interface';
 
 @Injectable()
 export class MediaService {
@@ -17,7 +21,7 @@ export class MediaService {
     private readonly jingleRepo: Repository<Jingle>,
   ) {}
 
-  async getRandomMusic(): Promise<Segment> {
+  async getRandomMusic(): Promise<SongRef> {
     const tracks = await this.musicRepo.find();
     if (tracks.length === 0) {
       throw new NotFoundException('No music tracks found');
@@ -26,10 +30,12 @@ export class MediaService {
     return {
       filePath: track.filePath,
       durationSeconds: track.durationSeconds,
+      title: track.title,
+      artist: track.artist,
     };
   }
 
-  async getRandomAd(): Promise<Segment> {
+  async getRandomAd(): Promise<AdRef> {
     const ads = await this.adRepo.find();
     if (ads.length === 0) {
       throw new NotFoundException('No ads found');
@@ -38,10 +44,11 @@ export class MediaService {
     return {
       filePath: ad.filePath,
       durationSeconds: ad.durationSeconds,
+      advertiser: ad.advertiser,
     };
   }
 
-  async getRandomJingle(): Promise<Segment> {
+  async getRandomJingle(): Promise<JingleRef> {
     const jingles = await this.jingleRepo.find();
     if (jingles.length === 0) {
       throw new NotFoundException('No jingles found');
@@ -50,6 +57,7 @@ export class MediaService {
     return {
       filePath: jingle.filePath,
       durationSeconds: jingle.durationSeconds,
+      name: jingle.name,
     };
   }
 }

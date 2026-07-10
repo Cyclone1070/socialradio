@@ -1,9 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { ChannelPlaylistItem } from './entities/channel-playlist-item.entity';
 import { ChannelSubreddit } from './entities/channel-subreddit.entity';
 import { ChannelPostProgress } from './entities/channel-post-progress.entity';
+import {
+  Segment,
+  SongSegment,
+  TalkSegment,
+  AdSegment,
+  JingleSegment,
+} from './entities/segment.entity';
 import { Post } from '../feed/entities/post.entity';
 import { RadioService } from '../radio/radio.service';
 import { MediaService } from '../media/media.service';
@@ -13,8 +19,8 @@ import { ScraperService } from '../feed/scraper.service';
 @Injectable()
 export class QueueGeneratorService {
   constructor(
-    @InjectRepository(ChannelPlaylistItem)
-    private readonly playlistItemRepo: Repository<ChannelPlaylistItem>,
+    @InjectRepository(Segment)
+    private readonly segmentRepo: Repository<Segment>,
     @InjectRepository(ChannelSubreddit)
     private readonly channelSubredditRepo: Repository<ChannelSubreddit>,
     @InjectRepository(ChannelPostProgress)
@@ -27,40 +33,37 @@ export class QueueGeneratorService {
   ) {}
 
   async bufferAhead(channelId: string): Promise<void> {
-    const count = await this.playlistItemRepo.count({ where: { channelId } });
+    const count = await this.segmentRepo.count({ where: { channelId } });
     if (count >= 5) {
       return; // Already has enough items buffered
     }
 
-    const lastItem = await this.playlistItemRepo.findOne({
+    const lastItem = await this.segmentRepo.findOne({
       where: { channelId },
-      order: { sequenceOrder: 'DESC' },
+      order: { playOrder: 'DESC' },
     });
-    let nextSequence = lastItem ? lastItem.sequenceOrder + 1 : 1;
+    let nextPlayOrder = lastItem ? lastItem.playOrder + 1 : 1;
 
     // Jingle (ready)
     const jingleSegment = await this.mediaService.getRandomJingle();
-    const jingleItem = this.playlistItemRepo.create({
+    const jingleItem = Object.assign(new JingleSegment(), {
       channelId,
-      sequenceOrder: nextSequence++,
-      type: 'jingle',
+      playOrder: nextPlayOrder++,
       audioUrl: jingleSegment.filePath,
       durationSeconds: jingleSegment.durationSeconds,
-      status: 'ready',
     });
-    await this.playlistItemRepo.save(jingleItem);
+    await this.segmentRepo.save(jingleItem);
 
     // Talk (generating)
     const topicSegment = await this.findPendingTopicSegment(channelId);
     if (topicSegment) {
-      const talkItem = this.playlistItemRepo.create({
+      const talkItem = Object.assign(new TalkSegment(), {
         channelId,
-        sequenceOrder: nextSequence++,
-        type: 'talk',
+        playOrder: nextPlayOrder++,
         status: 'generating',
         topicId: topicSegment.id,
       });
-      const savedTalkItem = await this.playlistItemRepo.save(talkItem);
+      const savedTalkItem = await this.segmentRepo.save(talkItem);
 
       // Immediately mark posts as completed to prevent double-queuing
       for (const p of topicSegment.posts) {
@@ -75,65 +78,63 @@ export class QueueGeneratorService {
       const postIds = topicSegment.posts.map((p) => p.id);
       this.radioService
         .getSegmentVoiceTrack(postIds)
-        .then(async (segment) => {
-          savedTalkItem.audioUrl = segment.filePath;
-          savedTalkItem.durationSeconds = segment.durationSeconds;
+        .then(async (voiceTrack) => {
+          savedTalkItem.audioUrl = voiceTrack.filePath;
+          savedTalkItem.durationSeconds = voiceTrack.durationSeconds;
           savedTalkItem.status = 'ready';
-          await this.playlistItemRepo.save(savedTalkItem);
+          await this.segmentRepo.save(savedTalkItem);
         })
         .catch(async () => {
           savedTalkItem.status = 'failed';
-          await this.playlistItemRepo.save(savedTalkItem);
+          await this.segmentRepo.save(savedTalkItem);
         });
     } else {
       // Fallback if no topics: insert extra song instead
       const fallbackSong = await this.mediaService.getRandomMusic();
-      const songItem = this.playlistItemRepo.create({
+      const songItem = Object.assign(new SongSegment(), {
         channelId,
-        sequenceOrder: nextSequence++,
-        type: 'song',
+        playOrder: nextPlayOrder++,
         audioUrl: fallbackSong.filePath,
         durationSeconds: fallbackSong.durationSeconds,
-        status: 'ready',
+        title: fallbackSong.title,
+        artist: fallbackSong.artist,
       });
-      await this.playlistItemRepo.save(songItem);
+      await this.segmentRepo.save(songItem);
     }
 
     // Song (ready)
     const songSegment1 = await this.mediaService.getRandomMusic();
-    const songItem1 = this.playlistItemRepo.create({
+    const songItem1 = Object.assign(new SongSegment(), {
       channelId,
-      sequenceOrder: nextSequence++,
-      type: 'song',
+      playOrder: nextPlayOrder++,
       audioUrl: songSegment1.filePath,
       durationSeconds: songSegment1.durationSeconds,
-      status: 'ready',
+      title: songSegment1.title,
+      artist: songSegment1.artist,
     });
-    await this.playlistItemRepo.save(songItem1);
+    await this.segmentRepo.save(songItem1);
 
     // Ad (ready)
     const adSegment = await this.mediaService.getRandomAd();
-    const adItem = this.playlistItemRepo.create({
+    const adItem = Object.assign(new AdSegment(), {
       channelId,
-      sequenceOrder: nextSequence++,
-      type: 'ad',
+      playOrder: nextPlayOrder++,
       audioUrl: adSegment.filePath,
       durationSeconds: adSegment.durationSeconds,
-      status: 'ready',
     });
-    await this.playlistItemRepo.save(adItem);
+    await this.segmentRepo.save(adItem);
 
     // Song (ready)
     const songSegment2 = await this.mediaService.getRandomMusic();
-    const songItem2 = this.playlistItemRepo.create({
+    const songItem2 = Object.assign(new SongSegment(), {
       channelId,
-      sequenceOrder: nextSequence++,
-      type: 'song',
+      playOrder: nextPlayOrder++,
       audioUrl: songSegment2.filePath,
       durationSeconds: songSegment2.durationSeconds,
-      status: 'ready',
+      title: songSegment2.title,
+      artist: songSegment2.artist,
     });
-    await this.playlistItemRepo.save(songItem2);
+    await this.segmentRepo.save(songItem2);
   }
 
   private async findPendingTopicSegment(

@@ -1,10 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Channel } from './entities/channel.entity';
-import { ChannelPlaylistItem } from './entities/channel-playlist-item.entity';
+import { Segment, TalkSegment, AdSegment } from './entities/segment.entity';
 import { QueueGeneratorService } from './queue-generator.service';
-import { FilesystemService } from '../domain/filesystem.service';
+import type { StorageService } from '../domain/types/storage.interface';
 import { MediaService } from '../media/media.service';
 import { Response } from 'express';
 import { ReadStream } from 'fs';
@@ -18,10 +18,10 @@ export class ChannelBroadcaster {
   constructor(
     private readonly channelId: string,
     private readonly channelRepo: Repository<Channel>,
-    private readonly playlistItemRepo: Repository<ChannelPlaylistItem>,
+    private readonly segmentRepo: Repository<Segment>,
     private readonly queueGen: QueueGeneratorService,
     private readonly mediaService: MediaService,
-    private readonly fsService: FilesystemService,
+    private readonly storageService: StorageService,
   ) {}
 
   async addClient(res: Response) {
@@ -94,86 +94,82 @@ export class ChannelBroadcaster {
     const channel = await this.channelRepo.findOneBy({ id: this.channelId });
     if (!channel) return;
 
-    let item: ChannelPlaylistItem | null = null;
-    if (channel.currentPlaylistItemId) {
-      item = await this.playlistItemRepo.findOne({
-        where: { id: channel.currentPlaylistItemId },
+    let item: Segment | null = null;
+    if (channel.currentSegmentId) {
+      item = await this.segmentRepo.findOne({
+        where: { id: channel.currentSegmentId },
       });
     }
 
     if (!item) {
       // Find first item in sequence
-      item = await this.playlistItemRepo.findOne({
+      item = await this.segmentRepo.findOne({
         where: { channelId: this.channelId },
-        order: { sequenceOrder: 'ASC' },
+        order: { playOrder: 'ASC' },
       });
     }
 
     if (!item) {
       // Queue is empty, seed it
       await this.queueGen.bufferAhead(this.channelId);
-      item = await this.playlistItemRepo.findOne({
+      item = await this.segmentRepo.findOne({
         where: { channelId: this.channelId },
-        order: { sequenceOrder: 'ASC' },
+        order: { playOrder: 'ASC' },
       });
     }
 
     if (!item) {
       // Double check fail: fallback to song break
       const fallback = await this.mediaService.getRandomAd();
-      const fallbackItem = this.playlistItemRepo.create({
+      const fallbackItem = Object.assign(new AdSegment(), {
         channelId: this.channelId,
-        sequenceOrder: 1,
-        type: 'ad',
+        playOrder: 1,
         audioUrl: fallback.filePath,
         durationSeconds: fallback.durationSeconds,
-        status: 'ready',
       });
-      item = await this.playlistItemRepo.save(fallbackItem);
+      item = await this.segmentRepo.save(fallbackItem);
     }
 
-    channel.currentPlaylistItemId = item.id;
+    channel.currentSegmentId = item.id;
     await this.channelRepo.save(channel);
 
-    if (item.status === 'generating') {
-      // Dynamic Ad/Song Break Fallback: Inject a 30s ad or 3m song ahead
+    if (item instanceof TalkSegment && item.status === 'generating') {
+      // Dynamic Ad/Song Break Fallback: Inject a 30s ad ahead
       const breakSegment = await this.mediaService.getRandomAd();
-      const breakItem = this.playlistItemRepo.create({
+      const breakItem = Object.assign(new AdSegment(), {
         channelId: this.channelId,
-        sequenceOrder: item.sequenceOrder,
-        type: 'ad',
+        playOrder: item.playOrder,
         audioUrl: breakSegment.filePath,
         durationSeconds: breakSegment.durationSeconds,
-        status: 'ready',
       });
 
-      // Shift subsequence orders up by 1
-      const subItems = await this.playlistItemRepo.find({
+      // Shift subsequence playOrders up by 1
+      const subItems = await this.segmentRepo.find({
         where: { channelId: this.channelId },
       });
       for (const sub of subItems) {
-        if (sub.sequenceOrder >= item.sequenceOrder) {
-          sub.sequenceOrder += 1;
-          await this.playlistItemRepo.save(sub);
+        if (sub.playOrder >= item.playOrder) {
+          sub.playOrder += 1;
+          await this.segmentRepo.save(sub);
         }
       }
 
-      const savedBreakItem = await this.playlistItemRepo.save(breakItem);
-      channel.currentPlaylistItemId = savedBreakItem.id;
+      const savedBreakItem = await this.segmentRepo.save(breakItem);
+      channel.currentSegmentId = savedBreakItem.id;
       await this.channelRepo.save(channel);
       item = savedBreakItem;
     }
 
-    if (item.status === 'failed') {
+    if (item instanceof TalkSegment && item.status === 'failed') {
       // Skip failed talk segments
-      const nextItem = await this.playlistItemRepo.findOne({
+      const nextItem = await this.segmentRepo.findOne({
         where: {
           channelId: this.channelId,
-          sequenceOrder: item.sequenceOrder + 1,
+          playOrder: item.playOrder + 1,
         },
       });
       if (nextItem) {
-        channel.currentPlaylistItemId = nextItem.id;
+        channel.currentSegmentId = nextItem.id;
         await this.channelRepo.save(channel);
       }
       return this.transmissionLoop();
@@ -184,7 +180,7 @@ export class ChannelBroadcaster {
     }
 
     const startOffset = Math.floor(this.elapsedSeconds * 16000);
-    this.currentStream = this.fsService.createReadStream(item.audioUrl, {
+    this.currentStream = this.storageService.createReadStream(item.audioUrl, {
       start: startOffset,
     });
 
@@ -229,19 +225,19 @@ export class ChannelBroadcaster {
     this.currentStream = null;
 
     // Transition to next item
-    const nextItem = await this.playlistItemRepo.findOne({
+    const nextItem = await this.segmentRepo.findOne({
       where: {
         channelId: this.channelId,
-        sequenceOrder: item.sequenceOrder + 1,
+        playOrder: item.playOrder + 1,
       },
     });
 
     if (nextItem) {
-      channel.currentPlaylistItemId = nextItem.id;
+      channel.currentSegmentId = nextItem.id;
       this.elapsedSeconds = 0;
       await this.channelRepo.save(channel);
     } else {
-      channel.currentPlaylistItemId = null;
+      channel.currentSegmentId = null;
       this.elapsedSeconds = 0;
       await this.channelRepo.save(channel);
     }
@@ -261,11 +257,12 @@ export class ChannelBroadcasterService {
   constructor(
     @InjectRepository(Channel)
     private readonly channelRepo: Repository<Channel>,
-    @InjectRepository(ChannelPlaylistItem)
-    private readonly playlistItemRepo: Repository<ChannelPlaylistItem>,
+    @InjectRepository(Segment)
+    private readonly segmentRepo: Repository<Segment>,
     private readonly queueGen: QueueGeneratorService,
     private readonly mediaService: MediaService,
-    private readonly fsService: FilesystemService,
+    @Inject('StorageService')
+    private readonly storageService: StorageService,
   ) {}
 
   private getBroadcaster(channelId: string): ChannelBroadcaster {
@@ -274,10 +271,10 @@ export class ChannelBroadcasterService {
       broadcaster = new ChannelBroadcaster(
         channelId,
         this.channelRepo,
-        this.playlistItemRepo,
+        this.segmentRepo,
         this.queueGen,
         this.mediaService,
-        this.fsService,
+        this.storageService,
       );
       this.broadcasters.set(channelId, broadcaster);
     }

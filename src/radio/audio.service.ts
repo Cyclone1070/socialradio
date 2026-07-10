@@ -1,7 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
-import { FilesystemService } from '../domain/filesystem.service';
+import type { StorageService } from '../domain/types/storage.interface';
 import { lastValueFrom } from 'rxjs';
 
 @Injectable()
@@ -9,7 +9,8 @@ export class AudioService {
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
-    private readonly fsService: FilesystemService,
+    @Inject('StorageService')
+    private readonly storageService: StorageService,
   ) {}
 
   async generateSpeech(text: string, outputFilePath: string): Promise<number> {
@@ -38,7 +39,7 @@ export class AudioService {
     );
 
     const buffer = Buffer.from(response.data);
-    await this.fsService.write(outputFilePath, buffer);
+    await this.storageService.write(outputFilePath, buffer);
 
     // 128kbps CBR MP3 math: 128,000 bits/sec = 16,000 bytes/sec
     const durationSeconds = buffer.length / 16000;

@@ -40,7 +40,7 @@ describe('MediaService', () => {
   });
 
   describe('getRandomMusic', () => {
-    it('should return a random music track as a Segment', async () => {
+    it('should return a random music track as a AudioFileRef', async () => {
       const tracks = [
         {
           id: '1',
@@ -74,7 +74,7 @@ describe('MediaService', () => {
   });
 
   describe('getRandomAd', () => {
-    it('should return a random ad track as a Segment', async () => {
+    it('should return a random ad track as a AudioFileRef', async () => {
       const ads = [
         {
           id: '1',
@@ -88,7 +88,11 @@ describe('MediaService', () => {
       const result = await service.getRandomAd();
 
       expect(mockAdRepo.find).toHaveBeenCalled();
-      expect(result).toEqual({ filePath: 'ad1.mp3', durationSeconds: 30 });
+      expect(result).toEqual({
+        filePath: 'ad1.mp3',
+        durationSeconds: 30,
+        advertiser: 'Brand 1',
+      });
     });
 
     it('should throw NotFoundException if no ads exist', async () => {
@@ -99,7 +103,7 @@ describe('MediaService', () => {
   });
 
   describe('getRandomJingle', () => {
-    it('should return a random jingle track as a Segment', async () => {
+    it('should return a random jingle track as a AudioFileRef', async () => {
       const jingles = [
         {
           id: '1',
@@ -113,7 +117,11 @@ describe('MediaService', () => {
       const result = await service.getRandomJingle();
 
       expect(mockJingleRepo.find).toHaveBeenCalled();
-      expect(result).toEqual({ filePath: 'jingle1.mp3', durationSeconds: 5 });
+      expect(result).toEqual({
+        filePath: 'jingle1.mp3',
+        durationSeconds: 5,
+        name: 'Jingle 1',
+      });
     });
 
     it('should throw NotFoundException if no jingles exist', async () => {

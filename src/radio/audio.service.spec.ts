@@ -3,7 +3,6 @@ import { HttpService } from '@nestjs/axios';
 import { of } from 'rxjs';
 import { AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import { AudioService } from './audio.service';
-import { FilesystemService } from '../domain/filesystem.service';
 import { ConfigService } from '@nestjs/config';
 
 describe('AudioService', () => {
@@ -13,7 +12,7 @@ describe('AudioService', () => {
     post: jest.fn(),
   };
 
-  const mockFsService = {
+  const mockStorageService = {
     write: jest.fn(),
   };
 
@@ -29,7 +28,7 @@ describe('AudioService', () => {
       providers: [
         AudioService,
         { provide: HttpService, useValue: mockHttpService },
-        { provide: FilesystemService, useValue: mockFsService },
+        { provide: 'StorageService', useValue: mockStorageService },
         { provide: ConfigService, useValue: mockConfigService },
       ],
     }).compile();
@@ -55,7 +54,7 @@ describe('AudioService', () => {
       };
 
       mockHttpService.post.mockReturnValue(of(response));
-      mockFsService.write.mockResolvedValue(undefined);
+      mockStorageService.write.mockResolvedValue(undefined);
 
       const result = await service.generateSpeech(
         'Hello from social radio',
@@ -72,7 +71,7 @@ describe('AudioService', () => {
         }),
         expect.any(Object),
       );
-      expect(mockFsService.write).toHaveBeenCalledWith(
+      expect(mockStorageService.write).toHaveBeenCalledWith(
         'cache/test.mp3',
         mockAudioBuffer,
       );

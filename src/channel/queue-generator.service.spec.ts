@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { QueueGeneratorService } from './queue-generator.service';
-import { ChannelPlaylistItem } from './entities/channel-playlist-item.entity';
+import { Segment, TalkSegment, JingleSegment } from './entities/segment.entity';
 import { ChannelSubreddit } from './entities/channel-subreddit.entity';
 import { ChannelPostProgress } from './entities/channel-post-progress.entity';
 import { Post } from '../feed/entities/post.entity';
@@ -12,7 +12,7 @@ import { ScraperService } from '../feed/scraper.service';
 describe('QueueGeneratorService', () => {
   let service: QueueGeneratorService;
 
-  const mockPlaylistItemRepo = {
+  const mockSegmentRepo = {
     count: jest.fn(),
     find: jest.fn(),
     findOne: jest.fn(),
@@ -53,8 +53,8 @@ describe('QueueGeneratorService', () => {
       providers: [
         QueueGeneratorService,
         {
-          provide: getRepositoryToken(ChannelPlaylistItem),
-          useValue: mockPlaylistItemRepo,
+          provide: getRepositoryToken(Segment),
+          useValue: mockSegmentRepo,
         },
         {
           provide: getRepositoryToken(ChannelSubreddit),
@@ -77,27 +77,30 @@ describe('QueueGeneratorService', () => {
     mockMediaService.getRandomJingle.mockResolvedValue({
       filePath: 'jingle.mp3',
       durationSeconds: 5,
+      name: 'Jingle Bell',
     });
     mockMediaService.getRandomMusic.mockResolvedValue({
       filePath: 'song.mp3',
       durationSeconds: 180,
+      title: 'Title',
+      artist: 'Artist',
     });
     mockMediaService.getRandomAd.mockResolvedValue({
       filePath: 'ad.mp3',
       durationSeconds: 30,
+      advertiser: 'Advertiser',
     });
     mockRadioService.getSegmentVoiceTrack.mockResolvedValue({
       filePath: 'tts.mp3',
       durationSeconds: 60,
+      postIds: ['post-1'],
     });
-    mockPlaylistItemRepo.create.mockImplementation(
-      (dto) => dto as ChannelPlaylistItem,
-    );
-    mockPlaylistItemRepo.save.mockImplementation((item) =>
+    mockSegmentRepo.create.mockImplementation((dto) => dto as Segment);
+    mockSegmentRepo.save.mockImplementation((item) =>
       Promise.resolve({
         id: 'uuid-1',
         ...(item as Record<string, unknown>),
-      } as ChannelPlaylistItem),
+      } as Segment),
     );
   });
 
@@ -108,7 +111,7 @@ describe('QueueGeneratorService', () => {
   describe('bufferAhead (Lazy & Reactive Scraping)', () => {
     it('should trigger scraping if subreddit lastScrapedAt is null', async () => {
       const channelId = 'chan-1';
-      mockPlaylistItemRepo.count.mockResolvedValue(0);
+      mockSegmentRepo.count.mockResolvedValue(0);
       mockSubredditRepo.find.mockResolvedValue([
         {
           subredditId: 'sub-1',
@@ -129,7 +132,7 @@ describe('QueueGeneratorService', () => {
     it('should trigger scraping if lastScrapedAt is older than 72 hours', async () => {
       const channelId = 'chan-1';
       const staleDate = new Date(Date.now() - 73 * 60 * 60 * 1000); // 73 hours ago
-      mockPlaylistItemRepo.count.mockResolvedValue(0);
+      mockSegmentRepo.count.mockResolvedValue(0);
       mockSubredditRepo.find.mockResolvedValue([
         {
           subredditId: 'sub-1',
@@ -147,7 +150,7 @@ describe('QueueGeneratorService', () => {
     it('should trigger scraping if channel has 0 unplayed posts (exhausted)', async () => {
       const channelId = 'chan-1';
       const freshDate = new Date(Date.now() - 5 * 60 * 60 * 1000); // 5 hours ago (fresh)
-      mockPlaylistItemRepo.count.mockResolvedValue(0);
+      mockSegmentRepo.count.mockResolvedValue(0);
       mockSubredditRepo.find.mockResolvedValue([
         {
           subredditId: 'sub-1',
@@ -168,7 +171,7 @@ describe('QueueGeneratorService', () => {
     it('should NOT trigger scraping if cache is fresh and there are unplayed posts', async () => {
       const channelId = 'chan-1';
       const freshDate = new Date(Date.now() - 5 * 60 * 60 * 1000); // 5 hours ago
-      mockPlaylistItemRepo.count.mockResolvedValue(0);
+      mockSegmentRepo.count.mockResolvedValue(0);
       mockSubredditRepo.find.mockResolvedValue([
         {
           subredditId: 'sub-1',
@@ -192,8 +195,8 @@ describe('QueueGeneratorService', () => {
       const channelId = 'chan-1';
 
       // Mock queue has 0 future items, so it needs to generate more
-      mockPlaylistItemRepo.count.mockResolvedValue(0);
-      mockPlaylistItemRepo.findOne.mockResolvedValue(null);
+      mockSegmentRepo.count.mockResolvedValue(0);
+      mockSegmentRepo.findOne.mockResolvedValue(null);
 
       // Mock subscription to subreddit 'sub-1'
       mockSubredditRepo.find.mockResolvedValue([{ subredditId: 'sub-1' }]);
@@ -220,37 +223,40 @@ describe('QueueGeneratorService', () => {
       mockMediaService.getRandomJingle.mockResolvedValue({
         filePath: 'jingle.mp3',
         durationSeconds: 5,
+        name: 'Jingle Bell',
       });
       mockMediaService.getRandomMusic.mockResolvedValue({
         filePath: 'song.mp3',
         durationSeconds: 180,
+        title: 'Title',
+        artist: 'Artist',
       });
       mockMediaService.getRandomAd.mockResolvedValue({
         filePath: 'ad.mp3',
         durationSeconds: 30,
+        advertiser: 'Advertiser',
       });
 
       // Mock RadioService voice generation
       mockRadioService.getSegmentVoiceTrack.mockResolvedValue({
         filePath: 'tts.mp3',
         durationSeconds: 60,
+        postIds: ['post-1', 'post-2'],
       });
 
-      const mockSavedItems: ChannelPlaylistItem[] = [];
-      mockPlaylistItemRepo.create.mockImplementation(
-        (dto) => dto as ChannelPlaylistItem,
-      );
-      mockPlaylistItemRepo.save.mockImplementation((item) => {
-        mockSavedItems.push(item as ChannelPlaylistItem);
+      const mockSavedItems: Segment[] = [];
+      mockSegmentRepo.create.mockImplementation((dto) => dto as Segment);
+      mockSegmentRepo.save.mockImplementation((item) => {
+        mockSavedItems.push(item as Segment);
         return Promise.resolve({
           id: 'uuid-' + mockSavedItems.length,
           ...(item as Record<string, unknown>),
-        } as ChannelPlaylistItem);
+        } as Segment);
       });
 
       await service.bufferAhead(channelId);
 
-      expect(mockPlaylistItemRepo.count).toHaveBeenCalled();
+      expect(mockSegmentRepo.count).toHaveBeenCalled();
       expect(mockMediaService.getRandomJingle).toHaveBeenCalled();
       expect(mockMediaService.getRandomMusic).toHaveBeenCalled();
       expect(mockMediaService.getRandomAd).toHaveBeenCalled();
@@ -270,13 +276,12 @@ describe('QueueGeneratorService', () => {
         postId: 'post-2',
       });
 
-      // Check queued items order:
-      expect(mockSavedItems[0].type).toBe('jingle');
-      expect(mockSavedItems[0].status).toBe('ready');
+      // Check queued items order and instance type (STI verification):
+      expect(mockSavedItems[0] instanceof JingleSegment).toBe(true);
 
-      expect(mockSavedItems[1].type).toBe('talk');
       // Talk item's topicId should store the primary post ID ('post-1')
-      expect(mockSavedItems[1].topicId).toBe('post-1');
+      expect(mockSavedItems[1] instanceof TalkSegment).toBe(true);
+      expect((mockSavedItems[1] as TalkSegment).topicId).toBe('post-1');
     });
   });
 });

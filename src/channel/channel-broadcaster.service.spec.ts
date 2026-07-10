@@ -1,9 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ChannelBroadcasterService } from './channel-broadcaster.service';
-import { FilesystemService } from '../domain/filesystem.service';
 import { QueueGeneratorService } from './queue-generator.service';
-import { ChannelPlaylistItem } from './entities/channel-playlist-item.entity';
+import { Segment, SongSegment } from './entities/segment.entity';
 import { Channel } from './entities/channel.entity';
 import { MediaService } from '../media/media.service';
 import { Response } from 'express';
@@ -11,7 +10,7 @@ import { Response } from 'express';
 describe('ChannelBroadcasterService', () => {
   let service: ChannelBroadcasterService;
 
-  const mockFsService = {
+  const mockStorageService = {
     createReadStream: jest.fn(),
   };
 
@@ -28,7 +27,7 @@ describe('ChannelBroadcasterService', () => {
     save: jest.fn(),
   };
 
-  const mockPlaylistItemRepo = {
+  const mockSegmentRepo = {
     findOne: jest.fn(),
     save: jest.fn(),
     create: jest.fn(),
@@ -39,13 +38,13 @@ describe('ChannelBroadcasterService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ChannelBroadcasterService,
-        { provide: FilesystemService, useValue: mockFsService },
+        { provide: 'StorageService', useValue: mockStorageService },
         { provide: QueueGeneratorService, useValue: mockQueueGen },
         { provide: MediaService, useValue: mockMediaService },
         { provide: getRepositoryToken(Channel), useValue: mockChannelRepo },
         {
-          provide: getRepositoryToken(ChannelPlaylistItem),
-          useValue: mockPlaylistItemRepo,
+          provide: getRepositoryToken(Segment),
+          useValue: mockSegmentRepo,
         },
       ],
     }).compile();
@@ -76,17 +75,19 @@ describe('ChannelBroadcasterService', () => {
       mockChannelRepo.findOneBy.mockResolvedValue({
         id: channelId,
         isPaused: true,
-        currentPlaylistItemId: 'item-1',
+        currentSegmentId: 'item-1',
         pausedOffsetSeconds: 0,
       });
-      mockPlaylistItemRepo.findOne.mockResolvedValue({
-        id: 'item-1',
-        channelId,
-        type: 'song',
-        audioUrl: 'song.mp3',
-        durationSeconds: 180,
-        status: 'ready',
-      });
+      mockSegmentRepo.findOne.mockResolvedValue(
+        Object.assign(new SongSegment(), {
+          id: 'item-1',
+          channelId,
+          audioUrl: 'song.mp3',
+          durationSeconds: 180,
+          title: 'Title',
+          artist: 'Artist',
+        }),
+      );
 
       const mockStream = {
         on: jest
@@ -103,7 +104,7 @@ describe('ChannelBroadcasterService', () => {
         resume: jest.fn(),
         destroy: jest.fn(),
       };
-      mockFsService.createReadStream.mockReturnValue(mockStream);
+      mockStorageService.createReadStream.mockReturnValue(mockStream);
 
       await service.registerClient(channelId, mockRes);
 

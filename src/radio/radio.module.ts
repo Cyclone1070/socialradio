@@ -9,6 +9,7 @@ import { RadioService } from './radio.service';
 import { LlmModule } from '../llm/llm.module';
 import { DomainModule } from '../domain/domain.module';
 import { FeedModule } from '../feed/feed.module';
+import { StorageModule } from '../storage/storage.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { FeedModule } from '../feed/feed.module';
     DomainModule,
     HttpModule,
     FeedModule,
+    StorageModule,
   ],
   providers: [ScriptService, AudioService, RadioService],
   exports: [RadioService, TypeOrmModule],

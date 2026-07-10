@@ -23,7 +23,7 @@ export class Channel {
   isPaused: boolean;
 
   @Column({ nullable: true })
-  currentPlaylistItemId: string | null;
+  currentSegmentId: string | null;
 
   @Column('float', { default: 0 })
   pausedOffsetSeconds: number;

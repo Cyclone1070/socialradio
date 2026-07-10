@@ -81,6 +81,7 @@ describe('RadioService', () => {
       expect(result).toEqual({
         filePath: 'cache/post-123.mp3',
         durationSeconds: 45.5,
+        postIds,
       });
     });
 
@@ -139,6 +140,7 @@ describe('RadioService', () => {
       expect(result).toEqual({
         filePath: expect.stringContaining('post-123.mp3') as unknown,
         durationSeconds: 30.0,
+        postIds,
       });
     });
   });

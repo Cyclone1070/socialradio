@@ -3,7 +3,13 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Channel } from './entities/channel.entity';
 import { ChannelSubreddit } from './entities/channel-subreddit.entity';
 import { ChannelPostProgress } from './entities/channel-post-progress.entity';
-import { ChannelPlaylistItem } from './entities/channel-playlist-item.entity';
+import {
+  Segment,
+  SongSegment,
+  TalkSegment,
+  AdSegment,
+  JingleSegment,
+} from './entities/segment.entity';
 import { ChannelService } from './channel.service';
 import { ChannelBroadcasterService } from './channel-broadcaster.service';
 import { QueueGeneratorService } from './queue-generator.service';
@@ -13,6 +19,7 @@ import { RadioModule } from '../radio/radio.module';
 import { MediaModule } from '../media/media.module';
 import { PassportModule } from '@nestjs/passport';
 import { FeedModule } from '../feed/feed.module';
+import { StorageModule } from '../storage/storage.module';
 
 @Module({
   imports: [
@@ -20,13 +27,18 @@ import { FeedModule } from '../feed/feed.module';
       Channel,
       ChannelSubreddit,
       ChannelPostProgress,
-      ChannelPlaylistItem,
+      Segment,
+      SongSegment,
+      TalkSegment,
+      AdSegment,
+      JingleSegment,
     ]),
     DomainModule,
     RadioModule,
     MediaModule,
     PassportModule,
     FeedModule,
+    StorageModule,
   ],
   controllers: [ChannelController],
   providers: [ChannelService, ChannelBroadcasterService, QueueGeneratorService],

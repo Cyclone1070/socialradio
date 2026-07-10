@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
+import { StorageService } from '../domain/types/storage.interface';
 
 @Injectable()
-export class FilesystemService {
+export class LocalStorageService implements StorageService {
   async write(filePath: string, content: string | Buffer): Promise<void> {
     const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)) {
