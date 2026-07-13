@@ -1,7 +1,14 @@
 import * as fs from 'fs';
 
+export interface WriteParams {
+  key: string;
+  content: string | Buffer;
+  contentType?: string;
+  cacheControl?: string;
+}
+
 export interface StorageService {
-  write(key: string, content: string | Buffer): Promise<void>;
+  write(params: WriteParams): Promise<void>;
   read(key: string): Promise<Buffer>;
   exists(key: string): boolean;
   delete(key: string): Promise<void>;

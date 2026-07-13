@@ -72,8 +72,10 @@ describe('AudioService', () => {
         expect.any(Object),
       );
       expect(mockStorageService.write).toHaveBeenCalledWith(
-        'cache/test.mp3',
-        mockAudioBuffer,
+        expect.objectContaining({
+          key: 'cache/test.mp3',
+          content: mockAudioBuffer,
+        }) as unknown,
       );
       expect(result).toBe(1.0); // 16000 / 16000 = 1.0s
     });

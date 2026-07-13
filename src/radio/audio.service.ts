@@ -39,7 +39,10 @@ export class AudioService {
     );
 
     const buffer = Buffer.from(response.data);
-    await this.storageService.write(outputFilePath, buffer);
+    await this.storageService.write({
+      key: outputFilePath,
+      content: buffer,
+    });
 
     // 128kbps CBR MP3 math: 128,000 bits/sec = 16,000 bytes/sec
     const durationSeconds = buffer.length / 16000;

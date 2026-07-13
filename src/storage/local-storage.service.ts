@@ -1,16 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
-import { StorageService } from '../domain/types/storage.interface';
+import { StorageService, WriteParams } from '../domain/types/storage.interface';
 
 @Injectable()
 export class LocalStorageService implements StorageService {
-  async write(filePath: string, content: string | Buffer): Promise<void> {
-    const dir = path.dirname(filePath);
+  async write(params: WriteParams): Promise<void> {
+    const dir = path.dirname(params.key);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    await fs.promises.writeFile(filePath, content);
+    await fs.promises.writeFile(params.key, params.content);
   }
 
   async read(filePath: string): Promise<Buffer> {

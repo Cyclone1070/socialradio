@@ -1,51 +1,35 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ChannelBroadcasterService } from './channel-broadcaster.service';
-import { QueueGeneratorService } from './queue-generator.service';
-import { Segment, SongSegment } from './entities/segment.entity';
+import { HlsGeneratorService } from './hls-generator.service';
 import { Channel } from './entities/channel.entity';
-import { MediaService } from '../media/media.service';
-import { Response } from 'express';
 
 describe('ChannelBroadcasterService', () => {
   let service: ChannelBroadcasterService;
 
-  const mockStorageService = {
-    createReadStream: jest.fn(),
-  };
-
-  const mockQueueGen = {
-    bufferAhead: jest.fn(),
-  };
-
-  const mockMediaService = {
-    getRandomAd: jest.fn(),
-  };
-
   const mockChannelRepo = {
+    find: jest.fn(),
     findOneBy: jest.fn(),
     save: jest.fn(),
   };
 
-  const mockSegmentRepo = {
-    findOne: jest.fn(),
-    save: jest.fn(),
-    create: jest.fn(),
+  const mockHlsGen = {
+    generateNextChunk: jest.fn(),
+    fastForwardChannel: jest.fn(),
+  };
+
+  const mockStorageService = {
+    exists: jest.fn(),
+    read: jest.fn(),
   };
 
   beforeEach(async () => {
-    jest.useFakeTimers();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ChannelBroadcasterService,
-        { provide: 'StorageService', useValue: mockStorageService },
-        { provide: QueueGeneratorService, useValue: mockQueueGen },
-        { provide: MediaService, useValue: mockMediaService },
         { provide: getRepositoryToken(Channel), useValue: mockChannelRepo },
-        {
-          provide: getRepositoryToken(Segment),
-          useValue: mockSegmentRepo,
-        },
+        { provide: HlsGeneratorService, useValue: mockHlsGen },
+        { provide: 'StorageService', useValue: mockStorageService },
       ],
     }).compile();
 
@@ -53,72 +37,70 @@ describe('ChannelBroadcasterService', () => {
     jest.clearAllMocks();
   });
 
-  afterEach(() => {
-    jest.useRealTimers();
-  });
-
   it('should be defined', () => {
     expect(service).toBeDefined();
   });
 
-  describe('registerClient', () => {
-    it('should set headers, register client, and start transmission if first client', async () => {
-      const channelId = 'chan-1';
-      const writeHead = jest.fn();
-      const onClose = jest.fn();
-      const mockRes = {
-        writeHead,
-        write: jest.fn(),
-        on: onClose,
-      } as unknown as Response;
-
-      mockChannelRepo.findOneBy.mockResolvedValue({
-        id: channelId,
-        isPaused: true,
-        currentSegmentId: 'item-1',
-        pausedOffsetSeconds: 0,
+  describe('tickActiveChannels', () => {
+    it('should tick active and public channels, and auto-pause idle ones', async () => {
+      const activeChannel = Object.assign(new Channel(), {
+        id: 'chan-1',
+        visibility: 'private',
+        isPaused: false,
+        lastRequestedAt: new Date(Date.now() - 5000), // active within 25s
       });
-      mockSegmentRepo.findOne.mockResolvedValue(
-        Object.assign(new SongSegment(), {
-          id: 'item-1',
-          channelId,
-          audioUrl: 'song.mp3',
-          durationSeconds: 180,
-          title: 'Title',
-          artist: 'Artist',
-        }),
+      const idleChannel = Object.assign(new Channel(), {
+        id: 'chan-2',
+        visibility: 'private',
+        isPaused: false,
+        lastRequestedAt: new Date(Date.now() - 40000), // idle (> 25s)
+      });
+      const publicChannel = Object.assign(new Channel(), {
+        id: 'chan-3',
+        visibility: 'public',
+        isPaused: false,
+        lastRequestedAt: null, // public is always active
+      });
+
+      mockChannelRepo.find.mockResolvedValue([
+        activeChannel,
+        idleChannel,
+        publicChannel,
+      ]);
+
+      await service.tickActiveChannels();
+
+      expect(mockHlsGen.generateNextChunk).toHaveBeenCalledWith('chan-1');
+      expect(mockHlsGen.generateNextChunk).toHaveBeenCalledWith('chan-3');
+      expect(mockHlsGen.generateNextChunk).not.toHaveBeenCalledWith('chan-2');
+
+      expect(idleChannel.isPaused).toBe(true);
+      expect(mockChannelRepo.save).toHaveBeenCalledWith(idleChannel);
+    });
+  });
+
+  describe('getPlaylistManifest', () => {
+    it('should resume private channel, fast forward if paused, and return manifest', async () => {
+      const channelId = 'chan-1';
+      const lastRequestedAt = new Date(Date.now() - 60000); // 1 min ago
+      const channel = Object.assign(new Channel(), {
+        id: channelId,
+        visibility: 'private',
+        isPaused: true,
+        lastRequestedAt,
+      });
+
+      mockChannelRepo.findOneBy.mockResolvedValue(channel);
+      mockStorageService.exists.mockReturnValue(true);
+      mockStorageService.read.mockResolvedValue(
+        Buffer.from('#EXTM3U\n#EXT-X-TARGETDURATION:6'),
       );
 
-      const mockStream = {
-        on: jest
-          .fn()
-          .mockImplementation(
-            (event: string, callback: (chunk: Buffer) => void) => {
-              if (event === 'data') {
-                callback(Buffer.alloc(16000));
-              }
-              return mockStream;
-            },
-          ),
-        pause: jest.fn(),
-        resume: jest.fn(),
-        destroy: jest.fn(),
-      };
-      mockStorageService.createReadStream.mockReturnValue(mockStream);
+      const result = await service.getPlaylistManifest(channelId);
 
-      await service.registerClient(channelId, mockRes);
-
-      expect(writeHead).toHaveBeenCalledWith(
-        200,
-        expect.objectContaining({
-          'Content-Type': 'audio/mpeg',
-          Connection: 'keep-alive',
-        }) as unknown,
-      );
-      expect(onClose).toHaveBeenCalledWith(
-        'close',
-        expect.any(Function) as unknown,
-      );
+      expect(mockHlsGen.fastForwardChannel).toHaveBeenCalledWith(channelId, 60);
+      expect(channel.isPaused).toBe(false);
+      expect(result).toContain('#EXT-X-TARGETDURATION:6');
     });
   });
 });

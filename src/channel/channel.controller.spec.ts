@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/unbound-method */
 import { Test, TestingModule } from '@nestjs/testing';
 import { ChannelController } from './channel.controller';
 import { ChannelService } from './channel.service';
@@ -16,7 +17,12 @@ describe('ChannelController', () => {
   };
 
   const mockBroadcasterService = {
-    registerClient: jest.fn(),
+    getPlaylistManifest: jest.fn(),
+  };
+
+  const mockStorageService = {
+    exists: jest.fn(),
+    createReadStream: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -27,6 +33,10 @@ describe('ChannelController', () => {
         {
           provide: ChannelBroadcasterService,
           useValue: mockBroadcasterService,
+        },
+        {
+          provide: 'StorageService',
+          useValue: mockStorageService,
         },
       ],
     }).compile();
@@ -107,17 +117,52 @@ describe('ChannelController', () => {
     });
   });
 
-  describe('streamChannel', () => {
-    it('should register client response for live streaming', async () => {
-      const mockRes = {} as unknown as Response;
-      mockBroadcasterService.registerClient.mockResolvedValue(undefined);
+  describe('getPlaylistManifest', () => {
+    it('should return playlist manifest', async () => {
+      const mockRes = {
+        setHeader: jest.fn(),
+        send: jest.fn(),
+      } as unknown as Response;
+      mockBroadcasterService.getPlaylistManifest.mockResolvedValue('#EXTM3U');
 
-      await controller.streamChannel('chan-1', mockRes);
+      await controller.getPlaylistManifest('chan-1', mockRes);
 
-      expect(mockBroadcasterService.registerClient).toHaveBeenCalledWith(
+      expect(mockBroadcasterService.getPlaylistManifest).toHaveBeenCalledWith(
         'chan-1',
-        mockRes,
       );
+      expect(mockRes.setHeader).toHaveBeenCalledWith(
+        'Content-Type',
+        'application/vnd.apple.mpegurl',
+      );
+      expect(mockRes.send).toHaveBeenCalledWith('#EXTM3U');
+    });
+  });
+
+  describe('getAudioChunk', () => {
+    it('should stream audio chunk if it exists', () => {
+      const pipe = jest.fn();
+      const mockRes = {
+        setHeader: jest.fn(),
+        status: jest.fn().mockReturnThis(),
+        send: jest.fn(),
+      } as unknown as Response;
+      const mockStream = { pipe };
+      mockStorageService.exists.mockReturnValue(true);
+      mockStorageService.createReadStream.mockReturnValue(mockStream);
+
+      controller.getAudioChunk('chan-1', 'chunk_1.mp3', mockRes);
+
+      expect(mockStorageService.exists).toHaveBeenCalledWith(
+        'channels/chan-1/chunks/chunk_1.mp3',
+      );
+      expect(mockStorageService.createReadStream).toHaveBeenCalledWith(
+        'channels/chan-1/chunks/chunk_1.mp3',
+      );
+      expect(mockRes.setHeader).toHaveBeenCalledWith(
+        'Content-Type',
+        'audio/mpeg',
+      );
+      expect(pipe).toHaveBeenCalledWith(mockRes);
     });
   });
 });

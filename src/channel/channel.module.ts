@@ -13,6 +13,7 @@ import {
 import { ChannelService } from './channel.service';
 import { ChannelBroadcasterService } from './channel-broadcaster.service';
 import { QueueGeneratorService } from './queue-generator.service';
+import { HlsGeneratorService } from './hls-generator.service';
 import { ChannelController } from './channel.controller';
 import { DomainModule } from '../domain/domain.module';
 import { RadioModule } from '../radio/radio.module';
@@ -41,7 +42,17 @@ import { StorageModule } from '../storage/storage.module';
     StorageModule,
   ],
   controllers: [ChannelController],
-  providers: [ChannelService, ChannelBroadcasterService, QueueGeneratorService],
-  exports: [ChannelService, ChannelBroadcasterService, TypeOrmModule],
+  providers: [
+    ChannelService,
+    ChannelBroadcasterService,
+    QueueGeneratorService,
+    HlsGeneratorService,
+  ],
+  exports: [
+    ChannelService,
+    ChannelBroadcasterService,
+    HlsGeneratorService,
+    TypeOrmModule,
+  ],
 })
 export class ChannelModule {}

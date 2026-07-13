@@ -28,6 +28,12 @@ export class Channel {
   @Column('float', { default: 0 })
   pausedOffsetSeconds: number;
 
+  @Column({ type: 'timestamp', nullable: true })
+  lastRequestedAt: Date | null;
+
+  @Column('float', { default: 0 })
+  playheadOffsetSeconds: number;
+
   @CreateDateColumn()
   createdAt: Date;
 }
