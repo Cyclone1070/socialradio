@@ -3,6 +3,5 @@ export class ChannelResponseDto {
   name: string;
   visibility: 'public' | 'private';
   ownerId: string | null;
-  isPaused: boolean;
   createdAt: Date;
 }

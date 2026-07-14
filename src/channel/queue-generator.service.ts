@@ -15,6 +15,7 @@ import { RadioService } from '../radio/radio.service';
 import { MediaService } from '../media/media.service';
 import { clusterPosts } from './utils/topic-clustering.util';
 import { ScraperService } from '../feed/scraper.service';
+import { HlsGeneratorService } from './hls-generator.service';
 
 @Injectable()
 export class QueueGeneratorService {
@@ -30,6 +31,7 @@ export class QueueGeneratorService {
     private readonly radioService: RadioService,
     private readonly mediaService: MediaService,
     private readonly scraperService: ScraperService,
+    private readonly hlsGen: HlsGeneratorService,
   ) {}
 
   async bufferAhead(channelId: string): Promise<void> {
@@ -52,7 +54,12 @@ export class QueueGeneratorService {
       audioUrl: jingleSegment.filePath,
       durationSeconds: jingleSegment.durationSeconds,
     });
-    await this.segmentRepo.save(jingleItem);
+    const savedJingle = await this.segmentRepo.save(jingleItem);
+    await this.hlsGen.sliceAndUpload(
+      channelId,
+      savedJingle.id,
+      jingleSegment.filePath,
+    );
 
     // Talk (generating)
     const topicSegment = await this.findPendingTopicSegment(channelId);
@@ -83,6 +90,12 @@ export class QueueGeneratorService {
           savedTalkItem.durationSeconds = voiceTrack.durationSeconds;
           savedTalkItem.status = 'ready';
           await this.segmentRepo.save(savedTalkItem);
+
+          await this.hlsGen.sliceAndUpload(
+            channelId,
+            savedTalkItem.id,
+            voiceTrack.filePath,
+          );
         })
         .catch(async () => {
           savedTalkItem.status = 'failed';
@@ -99,7 +112,12 @@ export class QueueGeneratorService {
         title: fallbackSong.title,
         artist: fallbackSong.artist,
       });
-      await this.segmentRepo.save(songItem);
+      const savedSong = await this.segmentRepo.save(songItem);
+      await this.hlsGen.sliceAndUpload(
+        channelId,
+        savedSong.id,
+        fallbackSong.filePath,
+      );
     }
 
     // Song (ready)
@@ -112,7 +130,12 @@ export class QueueGeneratorService {
       title: songSegment1.title,
       artist: songSegment1.artist,
     });
-    await this.segmentRepo.save(songItem1);
+    const savedSong1 = await this.segmentRepo.save(songItem1);
+    await this.hlsGen.sliceAndUpload(
+      channelId,
+      savedSong1.id,
+      songSegment1.filePath,
+    );
 
     // Ad (ready)
     const adSegment = await this.mediaService.getRandomAd();
@@ -122,7 +145,8 @@ export class QueueGeneratorService {
       audioUrl: adSegment.filePath,
       durationSeconds: adSegment.durationSeconds,
     });
-    await this.segmentRepo.save(adItem);
+    const savedAd = await this.segmentRepo.save(adItem);
+    await this.hlsGen.sliceAndUpload(channelId, savedAd.id, adSegment.filePath);
 
     // Song (ready)
     const songSegment2 = await this.mediaService.getRandomMusic();
@@ -134,7 +158,12 @@ export class QueueGeneratorService {
       title: songSegment2.title,
       artist: songSegment2.artist,
     });
-    await this.segmentRepo.save(songItem2);
+    const savedSong2 = await this.segmentRepo.save(songItem2);
+    await this.hlsGen.sliceAndUpload(
+      channelId,
+      savedSong2.id,
+      songSegment2.filePath,
+    );
   }
 
   private async findPendingTopicSegment(

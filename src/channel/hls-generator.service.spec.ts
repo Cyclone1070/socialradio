@@ -2,14 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { HlsGeneratorService } from './hls-generator.service';
 import { Channel } from './entities/channel.entity';
-import {
-  Segment,
-  SongSegment,
-  TalkSegment,
-  AdSegment,
-  JingleSegment,
-} from './entities/segment.entity';
-import { QueueGeneratorService } from './queue-generator.service';
+import { Segment, SongSegment } from './entities/segment.entity';
 
 describe('HlsGeneratorService', () => {
   let service: HlsGeneratorService;
@@ -21,20 +14,12 @@ describe('HlsGeneratorService', () => {
 
   const mockSegmentRepo = {
     findOne: jest.fn(),
-    find: jest.fn(),
     save: jest.fn(),
-    count: jest.fn(),
   };
 
   const mockStorageService = {
-    createReadStream: jest.fn(),
+    read: jest.fn(),
     write: jest.fn(),
-    delete: jest.fn(),
-    exists: jest.fn(),
-  };
-
-  const mockQueueGen = {
-    bufferAhead: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -44,7 +29,6 @@ describe('HlsGeneratorService', () => {
         { provide: getRepositoryToken(Channel), useValue: mockChannelRepo },
         { provide: getRepositoryToken(Segment), useValue: mockSegmentRepo },
         { provide: 'StorageService', useValue: mockStorageService },
-        { provide: QueueGeneratorService, useValue: mockQueueGen },
       ],
     }).compile();
 
@@ -56,189 +40,113 @@ describe('HlsGeneratorService', () => {
     expect(service).toBeDefined();
   });
 
-  describe('generateNextChunk', () => {
-    it('should generate a 6s chunk and update sliding-window manifest', async () => {
+  describe('sliceAndUpload', () => {
+    it('should slice file buffer into 10s chunks and write to storage', async () => {
       const channelId = 'chan-123';
-      const channel = Object.assign(new Channel(), {
-        id: channelId,
-        visibility: 'public',
-        isPaused: false,
-        currentSegmentId: 'seg-1',
-        playheadOffsetSeconds: 0,
-      });
+      const segmentId = 'seg-456';
+      const sourceFilePath = 'audio.mp3';
 
-      const segment = Object.assign(new SongSegment(), {
-        id: 'seg-1',
+      // 360,000 bytes = two 160KB chunks and one 40KB chunk
+      const mockBuffer = Buffer.alloc(360000);
+      mockStorageService.read.mockResolvedValue(mockBuffer);
+      mockStorageService.write.mockResolvedValue(undefined);
+
+      const totalChunks = await service.sliceAndUpload(
         channelId,
-        audioUrl: 'song.mp3',
-        durationSeconds: 180,
-        playOrder: 1,
-        title: 'Song A',
-        artist: 'Artist A',
+        segmentId,
+        sourceFilePath,
+      );
+
+      expect(totalChunks).toBe(3);
+      expect(mockStorageService.read).toHaveBeenCalledWith(sourceFilePath);
+
+      // Verify the three chunks
+      expect(mockStorageService.write).toHaveBeenNthCalledWith(1, {
+        key: `channels/${channelId}/chunks/${segmentId}_0.mp3`,
+        content: mockBuffer.subarray(0, 160000),
+        contentType: 'audio/mpeg',
+        cacheControl: 'public, max-age=31536000, immutable',
       });
 
-      mockChannelRepo.findOneBy.mockResolvedValue(channel);
-      mockSegmentRepo.findOne.mockResolvedValue(segment);
-
-      const mockStream = {
-        pipe: jest
-          .fn()
-          .mockImplementation(
-            (dest: { write: (b: Buffer) => void; end: () => void }) => {
-              dest.write(Buffer.alloc(160000));
-              dest.end();
-              return mockStream;
-            },
-          ),
-        on: jest.fn().mockImplementation((event: string, cb: () => void) => {
-          if (event === 'end') cb();
-          return mockStream;
-        }),
-      };
-      mockStorageService.createReadStream.mockReturnValue(mockStream);
-      mockStorageService.exists.mockReturnValue(false); // No manifest exists yet, write a new one
-
-      await service.generateNextChunk(channelId);
-
-      expect(mockStorageService.createReadStream).toHaveBeenCalledWith(
-        'song.mp3',
-        {
-          start: 0,
-          end: 159999,
-        },
-      );
-      expect(mockStorageService.write).toHaveBeenCalledWith(
-        expect.objectContaining({
-          key: expect.stringContaining('chunk_') as unknown,
-          content: expect.any(Buffer) as unknown,
-          cacheControl: expect.any(String) as unknown,
-        }) as unknown,
-      );
-      expect(mockStorageService.write).toHaveBeenCalledWith(
-        expect.objectContaining({
-          key: `channels/${channelId}/playlist.m3u8`,
-          content: expect.any(String) as unknown,
-          cacheControl: expect.any(String) as unknown,
-        }) as unknown,
-      );
-    });
-
-    it('should inject AdSegment fallback if next segment is a generating TalkSegment', async () => {
-      const channelId = 'chan-123';
-      const channel = Object.assign(new Channel(), {
-        id: channelId,
-        visibility: 'public',
-        isPaused: false,
-        currentSegmentId: 'seg-talk',
-        playheadOffsetSeconds: 0,
+      expect(mockStorageService.write).toHaveBeenNthCalledWith(2, {
+        key: `channels/${channelId}/chunks/${segmentId}_1.mp3`,
+        content: mockBuffer.subarray(160000, 320000),
+        contentType: 'audio/mpeg',
+        cacheControl: 'public, max-age=31536000, immutable',
       });
 
-      const segment = Object.assign(new TalkSegment(), {
-        id: 'seg-talk',
-        channelId,
-        audioUrl: null,
-        durationSeconds: null,
-        playOrder: 2,
-        topicId: 'topic-1',
-        status: 'generating',
+      expect(mockStorageService.write).toHaveBeenNthCalledWith(3, {
+        key: `channels/${channelId}/chunks/${segmentId}_2.mp3`,
+        content: mockBuffer.subarray(320000, 360000),
+        contentType: 'audio/mpeg',
+        cacheControl: 'public, max-age=31536000, immutable',
       });
-
-      mockChannelRepo.findOneBy.mockResolvedValue(channel);
-      mockSegmentRepo.findOne.mockResolvedValue(segment);
-      mockSegmentRepo.find.mockResolvedValue([segment]); // list for playOrder shifting
-      mockSegmentRepo.save.mockImplementation((item) =>
-        Promise.resolve({ id: 'fallback-ad-id', ...item }),
-      );
-
-      await service.generateNextChunk(channelId);
-
-      // Verify that segment shifting and AdSegment insertion occurred
-      expect(mockSegmentRepo.save).toHaveBeenCalledWith(expect.any(AdSegment));
-      expect(segment.playOrder).toBe(3); // Shifted up by 1
     });
   });
 
   describe('fastForwardChannel', () => {
-    it('should keep playhead position if idleTime is less than remaining segment duration', async () => {
+    it('should NOT advance playhead if idleTime is less than remaining segment duration', async () => {
       const channelId = 'chan-123';
       const channel = Object.assign(new Channel(), {
         id: channelId,
-        visibility: 'private',
-        isPaused: true,
         currentSegmentId: 'seg-1',
         playheadOffsetSeconds: 10,
       });
 
-      const seg1 = Object.assign(new SongSegment(), {
+      const segment = Object.assign(new SongSegment(), {
         id: 'seg-1',
-        channelId,
         durationSeconds: 180,
-        playOrder: 1,
       });
 
       mockChannelRepo.findOneBy.mockResolvedValue(channel);
-      mockSegmentRepo.findOne.mockResolvedValue(seg1);
+      mockSegmentRepo.findOne.mockResolvedValue(segment);
 
-      // Idle for 100 seconds (remaining = 180 - 10 = 170s. 100 < 170 -> short idle)
-      await service.fastForwardChannel(channelId, 100);
+      await service.fastForwardChannel(channelId, 100); // 100s idle < 170s remaining
 
-      expect(channel.currentSegmentId).toBe('seg-1');
-      expect(channel.playheadOffsetSeconds).toBe(10);
+      expect(channel.playheadOffsetSeconds).toBe(10); // Unchanged
       expect(mockChannelRepo.save).toHaveBeenCalledWith(channel);
     });
 
-    it('should jump to the last 10s of the segment if idleTime is greater than or equal to remaining duration (segment > 10s)', async () => {
+    it('should jump to the last 10 seconds if idleTime is greater than remaining segment duration', async () => {
       const channelId = 'chan-123';
       const channel = Object.assign(new Channel(), {
         id: channelId,
-        visibility: 'private',
-        isPaused: true,
         currentSegmentId: 'seg-1',
         playheadOffsetSeconds: 10,
       });
 
-      const seg1 = Object.assign(new SongSegment(), {
+      const segment = Object.assign(new SongSegment(), {
         id: 'seg-1',
-        channelId,
         durationSeconds: 180,
-        playOrder: 1,
       });
 
       mockChannelRepo.findOneBy.mockResolvedValue(channel);
-      mockSegmentRepo.findOne.mockResolvedValue(seg1);
+      mockSegmentRepo.findOne.mockResolvedValue(segment);
 
-      // Idle for 200 seconds (remaining = 170s. 200 >= 170 -> long idle)
-      await service.fastForwardChannel(channelId, 200);
+      await service.fastForwardChannel(channelId, 200); // 200s idle >= 170s remaining
 
-      expect(channel.currentSegmentId).toBe('seg-1');
-      expect(channel.playheadOffsetSeconds).toBe(170); // 180 - 10 = 170s
+      expect(channel.playheadOffsetSeconds).toBe(170); // 180 - 10
       expect(mockChannelRepo.save).toHaveBeenCalledWith(channel);
     });
 
-    it('should jump to offset 0 of the segment if idleTime is greater than or equal to remaining duration and segment duration <= 10s', async () => {
+    it('should jump to 0 seconds if the segment duration is 10 seconds or shorter', async () => {
       const channelId = 'chan-123';
       const channel = Object.assign(new Channel(), {
         id: channelId,
-        visibility: 'private',
-        isPaused: true,
-        currentSegmentId: 'seg-2',
+        currentSegmentId: 'seg-1',
         playheadOffsetSeconds: 1,
       });
 
-      const seg2 = Object.assign(new JingleSegment(), {
-        id: 'seg-2',
-        channelId,
-        durationSeconds: 8,
-        playOrder: 1,
+      const segment = Object.assign(new SongSegment(), {
+        id: 'seg-1',
+        durationSeconds: 8, // <= 10s
       });
 
       mockChannelRepo.findOneBy.mockResolvedValue(channel);
-      mockSegmentRepo.findOne.mockResolvedValue(seg2);
+      mockSegmentRepo.findOne.mockResolvedValue(segment);
 
-      // Idle for 15 seconds (remaining = 7s. 15 >= 7 -> long idle)
-      await service.fastForwardChannel(channelId, 15);
+      await service.fastForwardChannel(channelId, 15); // 15s idle >= 7s remaining
 
-      expect(channel.currentSegmentId).toBe('seg-2');
       expect(channel.playheadOffsetSeconds).toBe(0);
       expect(mockChannelRepo.save).toHaveBeenCalledWith(channel);
     });

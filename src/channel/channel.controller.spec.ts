@@ -2,7 +2,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ChannelController } from './channel.controller';
 import { ChannelService } from './channel.service';
-import { ChannelBroadcasterService } from './channel-broadcaster.service';
+import { ChannelPlaybackService } from './channel-playback.service';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { Request, Response } from 'express';
 
@@ -16,7 +16,7 @@ describe('ChannelController', () => {
     unsubscribeFromSubreddit: jest.fn(),
   };
 
-  const mockBroadcasterService = {
+  const mockPlaybackService = {
     getPlaylistManifest: jest.fn(),
   };
 
@@ -31,8 +31,8 @@ describe('ChannelController', () => {
       providers: [
         { provide: ChannelService, useValue: mockChannelService },
         {
-          provide: ChannelBroadcasterService,
-          useValue: mockBroadcasterService,
+          provide: ChannelPlaybackService,
+          useValue: mockPlaybackService,
         },
         {
           provide: 'StorageService',
@@ -123,11 +123,11 @@ describe('ChannelController', () => {
         setHeader: jest.fn(),
         send: jest.fn(),
       } as unknown as Response;
-      mockBroadcasterService.getPlaylistManifest.mockResolvedValue('#EXTM3U');
+      mockPlaybackService.getPlaylistManifest.mockResolvedValue('#EXTM3U');
 
       await controller.getPlaylistManifest('chan-1', mockRes);
 
-      expect(mockBroadcasterService.getPlaylistManifest).toHaveBeenCalledWith(
+      expect(mockPlaybackService.getPlaylistManifest).toHaveBeenCalledWith(
         'chan-1',
       );
       expect(mockRes.setHeader).toHaveBeenCalledWith(

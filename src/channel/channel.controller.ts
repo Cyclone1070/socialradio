@@ -13,7 +13,7 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 import * as express from 'express';
 import { ChannelService } from './channel.service';
-import { ChannelBroadcasterService } from './channel-broadcaster.service';
+import { ChannelPlaybackService } from './channel-playback.service';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { ChannelResponseDto } from './dto/channel-response.dto';
 import type { StorageService } from '../domain/types/storage.interface';
@@ -22,7 +22,7 @@ import type { StorageService } from '../domain/types/storage.interface';
 export class ChannelController {
   constructor(
     private readonly channelService: ChannelService,
-    private readonly broadcasterService: ChannelBroadcasterService,
+    private readonly playbackService: ChannelPlaybackService,
     @Inject('StorageService')
     private readonly storageService: StorageService,
   ) {}
@@ -68,7 +68,7 @@ export class ChannelController {
     @Res() res: express.Response,
   ): Promise<void> {
     try {
-      const manifest = await this.broadcasterService.getPlaylistManifest(id);
+      const manifest = await this.playbackService.getPlaylistManifest(id);
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       res.send(manifest);

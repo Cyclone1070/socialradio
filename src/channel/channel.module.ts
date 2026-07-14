@@ -11,7 +11,7 @@ import {
   JingleSegment,
 } from './entities/segment.entity';
 import { ChannelService } from './channel.service';
-import { ChannelBroadcasterService } from './channel-broadcaster.service';
+import { ChannelPlaybackService } from './channel-playback.service';
 import { QueueGeneratorService } from './queue-generator.service';
 import { HlsGeneratorService } from './hls-generator.service';
 import { ChannelController } from './channel.controller';
@@ -44,13 +44,13 @@ import { StorageModule } from '../storage/storage.module';
   controllers: [ChannelController],
   providers: [
     ChannelService,
-    ChannelBroadcasterService,
+    ChannelPlaybackService,
     QueueGeneratorService,
     HlsGeneratorService,
   ],
   exports: [
     ChannelService,
-    ChannelBroadcasterService,
+    ChannelPlaybackService,
     HlsGeneratorService,
     TypeOrmModule,
   ],

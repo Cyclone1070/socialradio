@@ -19,14 +19,8 @@ export class Channel {
   @Column({ nullable: true })
   ownerId: string | null;
 
-  @Column({ default: true })
-  isPaused: boolean;
-
   @Column({ nullable: true })
   currentSegmentId: string | null;
-
-  @Column('float', { default: 0 })
-  pausedOffsetSeconds: number;
 
   @Column({ type: 'timestamp', nullable: true })
   lastRequestedAt: Date | null;

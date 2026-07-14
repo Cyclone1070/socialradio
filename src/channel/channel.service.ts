@@ -34,7 +34,6 @@ export class ChannelService {
       name: saved.name,
       visibility: saved.visibility,
       ownerId: saved.ownerId,
-      isPaused: saved.isPaused,
       createdAt: saved.createdAt,
     };
   }
@@ -83,7 +82,6 @@ export class ChannelService {
       name: c.name,
       visibility: c.visibility,
       ownerId: c.ownerId,
-      isPaused: c.isPaused,
       createdAt: c.createdAt,
     }));
   }

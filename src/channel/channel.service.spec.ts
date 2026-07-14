@@ -58,7 +58,6 @@ describe('ChannelService', () => {
         name: 'My Radio',
         visibility: 'private',
         ownerId,
-        isPaused: true,
         createdAt: new Date(),
       };
 
@@ -78,7 +77,6 @@ describe('ChannelService', () => {
         name: channel.name,
         visibility: channel.visibility,
         ownerId: channel.ownerId,
-        isPaused: channel.isPaused,
         createdAt: channel.createdAt,
       });
     });
