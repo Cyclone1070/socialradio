@@ -15,7 +15,7 @@ import { RadioService } from '../radio/radio.service';
 import { MediaService } from '../media/media.service';
 import { clusterPosts } from './utils/topic-clustering.util';
 import { ScraperService } from '../feed/scraper.service';
-import { HlsGeneratorService } from './hls-generator.service';
+import { ChunkerService } from './chunker.service';
 
 @Injectable()
 export class QueueGeneratorService {
@@ -31,7 +31,7 @@ export class QueueGeneratorService {
     private readonly radioService: RadioService,
     private readonly mediaService: MediaService,
     private readonly scraperService: ScraperService,
-    private readonly hlsGen: HlsGeneratorService,
+    private readonly chunker: ChunkerService,
   ) {}
 
   async bufferAhead(channelId: string): Promise<void> {
@@ -55,7 +55,7 @@ export class QueueGeneratorService {
       durationSeconds: jingleSegment.durationSeconds,
     });
     const savedJingle = await this.segmentRepo.save(jingleItem);
-    await this.hlsGen.sliceAndUpload(
+    await this.chunker.sliceAndUpload(
       channelId,
       savedJingle.id,
       jingleSegment.filePath,
@@ -91,7 +91,7 @@ export class QueueGeneratorService {
           savedTalkItem.status = 'ready';
           await this.segmentRepo.save(savedTalkItem);
 
-          await this.hlsGen.sliceAndUpload(
+          await this.chunker.sliceAndUpload(
             channelId,
             savedTalkItem.id,
             voiceTrack.filePath,
@@ -113,7 +113,7 @@ export class QueueGeneratorService {
         artist: fallbackSong.artist,
       });
       const savedSong = await this.segmentRepo.save(songItem);
-      await this.hlsGen.sliceAndUpload(
+      await this.chunker.sliceAndUpload(
         channelId,
         savedSong.id,
         fallbackSong.filePath,
@@ -131,7 +131,7 @@ export class QueueGeneratorService {
       artist: songSegment1.artist,
     });
     const savedSong1 = await this.segmentRepo.save(songItem1);
-    await this.hlsGen.sliceAndUpload(
+    await this.chunker.sliceAndUpload(
       channelId,
       savedSong1.id,
       songSegment1.filePath,
@@ -146,7 +146,11 @@ export class QueueGeneratorService {
       durationSeconds: adSegment.durationSeconds,
     });
     const savedAd = await this.segmentRepo.save(adItem);
-    await this.hlsGen.sliceAndUpload(channelId, savedAd.id, adSegment.filePath);
+    await this.chunker.sliceAndUpload(
+      channelId,
+      savedAd.id,
+      adSegment.filePath,
+    );
 
     // Song (ready)
     const songSegment2 = await this.mediaService.getRandomMusic();
@@ -159,7 +163,7 @@ export class QueueGeneratorService {
       artist: songSegment2.artist,
     });
     const savedSong2 = await this.segmentRepo.save(songItem2);
-    await this.hlsGen.sliceAndUpload(
+    await this.chunker.sliceAndUpload(
       channelId,
       savedSong2.id,
       songSegment2.filePath,

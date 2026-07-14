@@ -13,7 +13,7 @@ import {
 import { ChannelService } from './channel.service';
 import { ChannelPlaybackService } from './channel-playback.service';
 import { QueueGeneratorService } from './queue-generator.service';
-import { HlsGeneratorService } from './hls-generator.service';
+import { ChunkerService } from './chunker.service';
 import { ChannelController } from './channel.controller';
 import { DomainModule } from '../domain/domain.module';
 import { RadioModule } from '../radio/radio.module';
@@ -46,12 +46,12 @@ import { StorageModule } from '../storage/storage.module';
     ChannelService,
     ChannelPlaybackService,
     QueueGeneratorService,
-    HlsGeneratorService,
+    ChunkerService,
   ],
   exports: [
     ChannelService,
     ChannelPlaybackService,
-    HlsGeneratorService,
+    ChunkerService,
     TypeOrmModule,
   ],
 })

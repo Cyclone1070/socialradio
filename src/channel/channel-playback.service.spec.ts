@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ChannelPlaybackService } from './channel-playback.service';
-import { HlsGeneratorService } from './hls-generator.service';
+import { ChunkerService } from './chunker.service';
 import { QueueGeneratorService } from './queue-generator.service';
 import { Channel } from './entities/channel.entity';
 import { Segment, SongSegment } from './entities/segment.entity';
@@ -20,8 +20,10 @@ describe('ChannelPlaybackService', () => {
     count: jest.fn(),
   };
 
-  const mockHlsGen = {
-    fastForwardChannel: jest.fn(),
+  const mockChunker = {
+    getManifestUri: jest
+      .fn()
+      .mockImplementation((segmentId, idx) => `chunks/${segmentId}_${idx}.mp3`),
   };
 
   const mockQueueGen = {
@@ -34,7 +36,7 @@ describe('ChannelPlaybackService', () => {
         ChannelPlaybackService,
         { provide: getRepositoryToken(Channel), useValue: mockChannelRepo },
         { provide: getRepositoryToken(Segment), useValue: mockSegmentRepo },
-        { provide: HlsGeneratorService, useValue: mockHlsGen },
+        { provide: ChunkerService, useValue: mockChunker },
         { provide: QueueGeneratorService, useValue: mockQueueGen },
       ],
     }).compile();

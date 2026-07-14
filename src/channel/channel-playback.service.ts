@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
 import { Channel } from './entities/channel.entity';
 import { Segment } from './entities/segment.entity';
-import { HlsGeneratorService } from './hls-generator.service';
+import { ChunkerService } from './chunker.service';
 import { QueueGeneratorService } from './queue-generator.service';
 
 @Injectable()
@@ -13,7 +13,7 @@ export class ChannelPlaybackService {
     private readonly channelRepo: Repository<Channel>,
     @InjectRepository(Segment)
     private readonly segmentRepo: Repository<Segment>,
-    private readonly hlsGen: HlsGeneratorService,
+    private readonly chunker: ChunkerService,
     private readonly queueGen: QueueGeneratorService,
   ) {}
 
@@ -155,7 +155,7 @@ export class ChannelPlaybackService {
         : 10;
 
       manifestLines.push(`#EXTINF:${chunkDuration.toFixed(1)},`);
-      manifestLines.push(`chunks/${segment.id}_${idx}.mp3`);
+      manifestLines.push(this.chunker.getManifestUri(segment.id, idx));
     }
 
     return manifestLines.join('\n') + '\n';

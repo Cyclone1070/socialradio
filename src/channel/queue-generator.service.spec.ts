@@ -8,7 +8,7 @@ import { Post } from '../feed/entities/post.entity';
 import { RadioService } from '../radio/radio.service';
 import { MediaService } from '../media/media.service';
 import { ScraperService } from '../feed/scraper.service';
-import { HlsGeneratorService } from './hls-generator.service';
+import { ChunkerService } from './chunker.service';
 
 describe('QueueGeneratorService', () => {
   let service: QueueGeneratorService;
@@ -49,9 +49,8 @@ describe('QueueGeneratorService', () => {
     scrapeSubreddit: jest.fn(),
   };
 
-  const mockHlsGen = {
+  const mockChunker = {
     sliceAndUpload: jest.fn().mockResolvedValue(10),
-    fastForwardChannel: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -74,7 +73,7 @@ describe('QueueGeneratorService', () => {
         { provide: RadioService, useValue: mockRadioService },
         { provide: MediaService, useValue: mockMediaService },
         { provide: ScraperService, useValue: mockScraperService },
-        { provide: HlsGeneratorService, useValue: mockHlsGen },
+        { provide: ChunkerService, useValue: mockChunker },
       ],
     }).compile();
 
