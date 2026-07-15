@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ChannelController } from './channel.controller';
 import { ChannelService } from './channel.service';
 import { ChannelPlaybackService } from './channel-playback.service';
+import { QueueGeneratorService } from './queue-generator.service';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { Request, Response } from 'express';
 
@@ -20,6 +21,10 @@ describe('ChannelController', () => {
     getPlaylistManifest: jest.fn(),
   };
 
+  const mockQueueGen = {
+    findPendingTopicSegment: jest.fn(),
+  };
+
   const mockStorageService = {
     exists: jest.fn(),
     createReadStream: jest.fn(),
@@ -33,6 +38,10 @@ describe('ChannelController', () => {
         {
           provide: ChannelPlaybackService,
           useValue: mockPlaybackService,
+        },
+        {
+          provide: QueueGeneratorService,
+          useValue: mockQueueGen,
         },
         {
           provide: 'StorageService',
@@ -163,6 +172,21 @@ describe('ChannelController', () => {
         'audio/mpeg',
       );
       expect(pipe).toHaveBeenCalledWith(mockRes);
+    });
+  });
+
+  describe('getTopics', () => {
+    it('should return clustered topics for a channel', async () => {
+      const channelId = 'chan-1';
+      const mockTopic = { id: 'post-1', title: 'Test Topic', posts: [] };
+      mockQueueGen.findPendingTopicSegment.mockResolvedValue(mockTopic);
+
+      const result = await controller.getTopics(channelId);
+
+      expect(mockQueueGen.findPendingTopicSegment).toHaveBeenCalledWith(
+        channelId,
+      );
+      expect(result).toEqual(mockTopic);
     });
   });
 });

@@ -14,6 +14,7 @@ import { AuthGuard } from '@nestjs/passport';
 import * as express from 'express';
 import { ChannelService } from './channel.service';
 import { ChannelPlaybackService } from './channel-playback.service';
+import { QueueGeneratorService } from './queue-generator.service';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { ChannelResponseDto } from './dto/channel-response.dto';
 import type { StorageService } from '../domain/types/storage.interface';
@@ -23,6 +24,7 @@ export class ChannelController {
   constructor(
     private readonly channelService: ChannelService,
     private readonly playbackService: ChannelPlaybackService,
+    private readonly queueGeneratorService: QueueGeneratorService,
     @Inject('StorageService')
     private readonly storageService: StorageService,
   ) {}
@@ -94,5 +96,11 @@ export class ChannelController {
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     const readStream = this.storageService.createReadStream(chunkPath);
     readStream.pipe(res);
+  }
+
+  @Get('/admin/channels/:id/topics')
+  @UseGuards(AuthGuard('jwt'))
+  async getTopics(@Param('id') id: string) {
+    return this.queueGeneratorService.findPendingTopicSegment(id);
   }
 }

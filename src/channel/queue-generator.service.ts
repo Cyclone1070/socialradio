@@ -170,7 +170,7 @@ export class QueueGeneratorService {
     );
   }
 
-  private async findPendingTopicSegment(
+  public async findPendingTopicSegment(
     channelId: string,
   ): Promise<{ id: string; title: string; posts: Post[] } | null> {
     const subs = await this.channelSubredditRepo.find({
