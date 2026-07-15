@@ -4,6 +4,8 @@ import {
   Column,
   CreateDateColumn,
   Unique,
+  BeforeInsert,
+  BeforeUpdate,
 } from 'typeorm';
 
 @Entity()
@@ -20,4 +22,12 @@ export class Subreddit {
 
   @CreateDateColumn()
   createdAt: Date;
+
+  @BeforeInsert()
+  @BeforeUpdate()
+  normalizeName() {
+    if (this.name) {
+      this.name = this.name.trim().toLowerCase();
+    }
+  }
 }

@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Channel } from './entities/channel.entity';
@@ -6,6 +10,7 @@ import { ChannelSubreddit } from './entities/channel-subreddit.entity';
 import { Subreddit } from '../domain/entities/subreddit.entity';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { ChannelResponseDto } from './dto/channel-response.dto';
+import { ScraperService } from '../feed/scraper.service';
 
 @Injectable()
 export class ChannelService {
@@ -16,6 +21,7 @@ export class ChannelService {
     private readonly channelSubredditRepo: Repository<ChannelSubreddit>,
     @InjectRepository(Subreddit)
     private readonly subredditRepo: Repository<Subreddit>,
+    private readonly scraperService: ScraperService,
   ) {}
 
   async configureChannel(
@@ -42,9 +48,17 @@ export class ChannelService {
     channelId: string,
     subredditName: string,
   ): Promise<void> {
-    let subreddit = await this.subredditRepo.findOneBy({ name: subredditName });
+    const normalizedName = subredditName.trim().toLowerCase();
+    let subreddit = await this.subredditRepo.findOneBy({
+      name: normalizedName,
+    });
     if (!subreddit) {
-      subreddit = this.subredditRepo.create({ name: subredditName });
+      const isValid =
+        await this.scraperService.validateSubreddit(normalizedName);
+      if (!isValid) {
+        throw new BadRequestException('Subreddit does not exist or is private');
+      }
+      subreddit = this.subredditRepo.create({ name: normalizedName });
       subreddit = await this.subredditRepo.save(subreddit);
     }
 
@@ -59,8 +73,9 @@ export class ChannelService {
     channelId: string,
     subredditName: string,
   ): Promise<void> {
+    const normalizedName = subredditName.trim().toLowerCase();
     const subreddit = await this.subredditRepo.findOneBy({
-      name: subredditName,
+      name: normalizedName,
     });
     if (!subreddit) {
       throw new NotFoundException('Subreddit not found');

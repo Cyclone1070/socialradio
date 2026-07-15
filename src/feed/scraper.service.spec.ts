@@ -13,6 +13,7 @@ describe('ScraperService', () => {
     findOneBy: jest.fn(),
     create: jest.fn(),
     save: jest.fn(),
+    delete: jest.fn(),
   };
 
   const mockPostRepo = {
@@ -30,6 +31,7 @@ describe('ScraperService', () => {
   const mockRedditApi = {
     fetchTopPosts: jest.fn(),
     fetchPostComments: jest.fn(),
+    exists: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -133,6 +135,49 @@ describe('ScraperService', () => {
         50,
       );
     });
+
+    it('should delete subreddit completely and resolve gracefully on permanent (403/404) Reddit API errors', async () => {
+      const subName = 'bannedSub';
+      const subEntity = {
+        id: 'banned-uuid',
+        name: subName,
+        lastScrapedAt: null,
+      };
+
+      mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
+      const error404 = new Error('Not Found') as Error & {
+        isAxiosError: boolean;
+        response: { status: number };
+      };
+      error404.isAxiosError = true;
+      error404.response = { status: 404 };
+      mockRedditApi.fetchTopPosts.mockRejectedValue(error404);
+
+      await expect(service.scrapeSubreddit(subName)).resolves.not.toThrow();
+
+      expect(mockSubredditRepo.delete).toHaveBeenCalledWith({
+        id: 'banned-uuid',
+      });
+    });
+
+    it('should rethrow error on transient (500/503) errors', async () => {
+      const subName = 'downSub';
+      const subEntity = { id: 'down-uuid', name: subName, lastScrapedAt: null };
+
+      mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
+      const error503 = new Error('Service Unavailable') as Error & {
+        isAxiosError: boolean;
+        response: { status: number };
+      };
+      error503.isAxiosError = true;
+      error503.response = { status: 503 };
+      mockRedditApi.fetchTopPosts.mockRejectedValue(error503);
+
+      await expect(service.scrapeSubreddit(subName)).rejects.toThrow(
+        'Service Unavailable',
+      );
+      expect(mockSubredditRepo.delete).not.toHaveBeenCalled();
+    });
   });
 
   describe('cleanupOldData', () => {
@@ -153,6 +198,27 @@ describe('ScraperService', () => {
 
       // Assert it is within 5 seconds of our calculated cutoff
       expect(passedDate.getTime()).toBeCloseTo(expectedCutoff, -4);
+    });
+  });
+
+  describe('validateSubreddit', () => {
+    it('should return true if RedditApiService.exists returns true', async () => {
+      mockRedditApi.fetchTopPosts.mockResolvedValue([]); // fallback if needed
+      mockRedditApi.exists.mockResolvedValue(true);
+
+      const result = await service.validateSubreddit('AskReddit');
+
+      expect(result).toBe(true);
+      expect(mockRedditApi.exists).toHaveBeenCalledWith('AskReddit');
+    });
+
+    it('should return false if RedditApiService.exists returns false', async () => {
+      mockRedditApi.exists.mockResolvedValue(false);
+
+      const result = await service.validateSubreddit('private');
+
+      expect(result).toBe(false);
+      expect(mockRedditApi.exists).toHaveBeenCalledWith('private');
     });
   });
 });

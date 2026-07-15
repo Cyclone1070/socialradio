@@ -125,6 +125,61 @@ describe('RedditApiService', () => {
     });
   });
 
+  describe('exists', () => {
+    it('should return true if subreddit exists and is accessible', async () => {
+      service['accessToken'] = 'mock_token';
+      service['tokenExpiresAt'] = new Date(Date.now() + 100000);
+
+      const response: AxiosResponse = {
+        data: { data: { children: [] } },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config: {} as InternalAxiosRequestConfig,
+      };
+      mockHttpService.get.mockReturnValue(of(response));
+
+      const result = await service.exists('AskReddit');
+
+      expect(result).toBe(true);
+      expect(mockHttpService.get).toHaveBeenCalledWith(
+        'https://oauth.reddit.com/r/AskReddit/top?t=day&limit=1',
+        expect.any(Object),
+      );
+    });
+
+    it('should return false if subreddit returns 404 Not Found or 403 Forbidden', async () => {
+      service['accessToken'] = 'mock_token';
+      service['tokenExpiresAt'] = new Date(Date.now() + 100000);
+
+      const error404 = {
+        isAxiosError: true,
+        response: { status: 404 },
+      };
+      mockHttpService.get.mockReturnValue(throwError(() => error404));
+
+      const result = await service.exists('privateSubreddit');
+      expect(result).toBe(false);
+    });
+
+    it('should throw error if fetch throws non-404/403 errors', async () => {
+      service['accessToken'] = 'mock_token';
+      service['tokenExpiresAt'] = new Date(Date.now() + 100000);
+
+      const error500 = new Error('Internal Server Error') as Error & {
+        isAxiosError: boolean;
+        response: { status: number };
+      };
+      error500.isAxiosError = true;
+      error500.response = { status: 500 };
+      mockHttpService.get.mockReturnValue(throwError(() => error500));
+
+      await expect(service.exists('brokenSubreddit')).rejects.toThrow(
+        'Internal Server Error',
+      );
+    });
+  });
+
   describe('fetchPostComments', () => {
     it('should recursively fetch comments and their replies for a post', async () => {
       service['accessToken'] = 'mock_token';

@@ -5,6 +5,7 @@ import { Subreddit } from '../domain/entities/subreddit.entity';
 import { Post } from './entities/post.entity';
 import { Comment } from './entities/comment.entity';
 import { RedditApiService } from './reddit-api.service';
+import axios from 'axios';
 
 @Injectable()
 export class ScraperService {
@@ -27,61 +28,76 @@ export class ScraperService {
       subreddit = await this.subredditRepo.save(subreddit);
     }
 
-    const rawPosts = await this.redditApiService.fetchTopPosts(
-      subredditName,
-      20,
-    );
-    const newPostEntities: Post[] = [];
-
-    for (const rawPost of rawPosts) {
-      const exists = await this.postRepo.findOneBy({ redditId: rawPost.id });
-      if (exists) continue;
-
-      const post = this.postRepo.create({
-        subredditId: subreddit.id,
-        redditId: rawPost.id,
-        title: rawPost.title,
-        body: rawPost.selftext || '',
-        score: rawPost.score,
-        redditCreatedAt: new Date(rawPost.created_utc * 1000),
-      });
-
-      // Save post first so comments can reference its ID via database relation
-      const savedPost = await this.postRepo.save(post);
-
-      const rawComments = await this.redditApiService.fetchPostComments(
+    try {
+      const rawPosts = await this.redditApiService.fetchTopPosts(
         subredditName,
-        rawPost.id,
-        50,
+        20,
       );
-      const comments = rawComments.map((rawComment) => {
-        const isOp = rawComment.author === rawPost.author;
-        const parentRedditId = rawComment.parent_id.startsWith('t1_')
-          ? rawComment.parent_id.replace('t1_', '')
-          : null;
+      const newPostEntities: Post[] = [];
 
-        return this.commentRepo.create({
-          postId: savedPost.id,
-          redditId: rawComment.id,
-          body: rawComment.body,
-          score: rawComment.score,
-          parentRedditId,
-          isOp,
-          redditCreatedAt: new Date(rawComment.created_utc * 1000),
+      for (const rawPost of rawPosts) {
+        const exists = await this.postRepo.findOneBy({ redditId: rawPost.id });
+        if (exists) continue;
+
+        const post = this.postRepo.create({
+          subredditId: subreddit.id,
+          redditId: rawPost.id,
+          title: rawPost.title,
+          body: rawPost.selftext || '',
+          score: rawPost.score,
+          redditCreatedAt: new Date(rawPost.created_utc * 1000),
         });
-      });
-      await this.commentRepo.save(comments);
 
-      newPostEntities.push(savedPost);
+        // Save post first so comments can reference its ID via database relation
+        const savedPost = await this.postRepo.save(post);
+
+        const rawComments = await this.redditApiService.fetchPostComments(
+          subredditName,
+          rawPost.id,
+          50,
+        );
+        const comments = rawComments.map((rawComment) => {
+          const isOp = rawComment.author === rawPost.author;
+          const parentRedditId = rawComment.parent_id.startsWith('t1_')
+            ? rawComment.parent_id.replace('t1_', '')
+            : null;
+
+          return this.commentRepo.create({
+            postId: savedPost.id,
+            redditId: rawComment.id,
+            body: rawComment.body,
+            score: rawComment.score,
+            parentRedditId,
+            isOp,
+            redditCreatedAt: new Date(rawComment.created_utc * 1000),
+          });
+        });
+        await this.commentRepo.save(comments);
+
+        newPostEntities.push(savedPost);
+      }
+
+      subreddit.lastScrapedAt = new Date();
+      await this.subredditRepo.save(subreddit);
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error) && error.response) {
+        const status = error.response.status;
+        if (status === 404 || status === 403) {
+          await this.subredditRepo.delete({ id: subreddit.id });
+          return;
+        }
+      }
+      throw error;
     }
-
-    subreddit.lastScrapedAt = new Date();
-    await this.subredditRepo.save(subreddit);
   }
 
   async cleanupOldData(): Promise<void> {
     const cutoff = new Date(Date.now() - 72 * 60 * 60 * 1000);
     // Deleting posts cascadedly deletes their comments
     await this.postRepo.delete({ scrapedAt: LessThan(cutoff) });
+  }
+
+  async validateSubreddit(subredditName: string): Promise<boolean> {
+    return this.redditApiService.exists(subredditName);
   }
 }

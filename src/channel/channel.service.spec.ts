@@ -1,9 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ChannelService } from './channel.service';
 import { Channel } from './entities/channel.entity';
 import { ChannelSubreddit } from './entities/channel-subreddit.entity';
 import { Subreddit } from '../domain/entities/subreddit.entity';
+import { ScraperService } from '../feed/scraper.service';
 
 describe('ChannelService', () => {
   let service: ChannelService;
@@ -28,6 +30,10 @@ describe('ChannelService', () => {
     save: jest.fn(),
   };
 
+  const mockScraperService = {
+    validateSubreddit: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -38,6 +44,7 @@ describe('ChannelService', () => {
           useValue: mockChannelSubredditRepo,
         },
         { provide: getRepositoryToken(Subreddit), useValue: mockSubredditRepo },
+        { provide: ScraperService, useValue: mockScraperService },
       ],
     }).compile();
 
@@ -83,14 +90,42 @@ describe('ChannelService', () => {
   });
 
   describe('subscribeToSubreddit', () => {
-    it('should find/create Subreddit and create subscription mapping', async () => {
+    it('should normalize name, check API, save Subreddit and create subscription mapping', async () => {
       const channelId = 'chan-1';
-      const subName = 'AskReddit';
-      const subreddit = { id: 'sub-1', name: subName };
+      const subInputName = '  AskReddit  ';
+      const normalizedName = 'askreddit';
+      const subreddit = { id: 'sub-1', name: normalizedName };
 
       mockSubredditRepo.findOneBy.mockResolvedValue(null);
+      mockScraperService.validateSubreddit.mockResolvedValue(true);
       mockSubredditRepo.create.mockReturnValue(subreddit);
       mockSubredditRepo.save.mockResolvedValue(subreddit);
+
+      const subscription = { channelId, subredditId: subreddit.id };
+      mockChannelSubredditRepo.create.mockReturnValue(subscription);
+      mockChannelSubredditRepo.save.mockResolvedValue(subscription);
+
+      await service.subscribeToSubreddit(channelId, subInputName);
+
+      expect(mockSubredditRepo.findOneBy).toHaveBeenCalledWith({
+        name: normalizedName,
+      });
+      expect(mockScraperService.validateSubreddit).toHaveBeenCalledWith(
+        normalizedName,
+      );
+      expect(mockChannelSubredditRepo.create).toHaveBeenCalledWith({
+        channelId,
+        subredditId: 'sub-1',
+      });
+      expect(mockChannelSubredditRepo.save).toHaveBeenCalled();
+    });
+
+    it('should skip API validation if Subreddit already exists in database', async () => {
+      const channelId = 'chan-1';
+      const subName = 'pics';
+      const subreddit = { id: 'sub-2', name: subName };
+
+      mockSubredditRepo.findOneBy.mockResolvedValue(subreddit);
 
       const subscription = { channelId, subredditId: subreddit.id };
       mockChannelSubredditRepo.create.mockReturnValue(subscription);
@@ -101,11 +136,55 @@ describe('ChannelService', () => {
       expect(mockSubredditRepo.findOneBy).toHaveBeenCalledWith({
         name: subName,
       });
+      expect(mockScraperService.validateSubreddit).not.toHaveBeenCalled();
       expect(mockChannelSubredditRepo.create).toHaveBeenCalledWith({
+        channelId,
+        subredditId: 'sub-2',
+      });
+    });
+
+    it('should throw BadRequestException if Subreddit validation returns false', async () => {
+      const channelId = 'chan-1';
+      const subName = 'nonexistent';
+
+      mockSubredditRepo.findOneBy.mockResolvedValue(null);
+      mockScraperService.validateSubreddit.mockResolvedValue(false);
+
+      await expect(
+        service.subscribeToSubreddit(channelId, subName),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(mockSubredditRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('unsubscribeFromSubreddit', () => {
+    it('should normalize subreddit name, find it and delete subscription', async () => {
+      const channelId = 'chan-1';
+      const subNameInput = '  AskReddit  ';
+      const normalizedName = 'askreddit';
+      const subreddit = { id: 'sub-1', name: normalizedName };
+
+      mockSubredditRepo.findOneBy.mockResolvedValue(subreddit);
+      mockChannelSubredditRepo.delete.mockResolvedValue({ affected: 1 });
+
+      await service.unsubscribeFromSubreddit(channelId, subNameInput);
+
+      expect(mockSubredditRepo.findOneBy).toHaveBeenCalledWith({
+        name: normalizedName,
+      });
+      expect(mockChannelSubredditRepo.delete).toHaveBeenCalledWith({
         channelId,
         subredditId: 'sub-1',
       });
-      expect(mockChannelSubredditRepo.save).toHaveBeenCalled();
+    });
+
+    it('should throw NotFoundException if subreddit is not registered', async () => {
+      mockSubredditRepo.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.unsubscribeFromSubreddit('chan-1', 'unknown'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 });

@@ -177,6 +177,39 @@ export class RedditApiService {
     return data?.data?.children?.map((child) => child.data) || [];
   }
 
+  async exists(subredditName: string): Promise<boolean> {
+    const token = await this.ensureAuthenticated();
+    const userAgent = this.configService.get<string>(
+      'REDDIT_USER_AGENT',
+      'SocialRadio/1.0.0',
+    );
+
+    try {
+      await this.requestWithRetry(() =>
+        lastValueFrom(
+          this.httpService.get(
+            `https://oauth.reddit.com/r/${subredditName}/top?t=day&limit=1`,
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                'User-Agent': userAgent,
+              },
+            },
+          ),
+        ),
+      );
+      return true;
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error) && error.response) {
+        const status = error.response.status;
+        if (status === 404 || status === 403) {
+          return false;
+        }
+      }
+      throw error;
+    }
+  }
+
   async fetchPostComments(
     subredditName: string,
     postRedditId: string,
