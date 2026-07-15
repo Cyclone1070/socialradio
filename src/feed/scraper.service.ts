@@ -4,7 +4,7 @@ import { Repository, LessThan } from 'typeorm';
 import { Subreddit } from '../domain/entities/subreddit.entity';
 import { Post } from './entities/post.entity';
 import { Comment } from './entities/comment.entity';
-import { RedditApiService } from './reddit-api.service';
+import { RedditScraperService } from './reddit-scraper.service';
 import axios from 'axios';
 
 @Injectable()
@@ -16,7 +16,7 @@ export class ScraperService {
     private readonly postRepo: Repository<Post>,
     @InjectRepository(Comment)
     private readonly commentRepo: Repository<Comment>,
-    private readonly redditApiService: RedditApiService,
+    private readonly redditApiService: RedditScraperService,
   ) {}
 
   async scrapeSubreddit(subredditName: string): Promise<void> {

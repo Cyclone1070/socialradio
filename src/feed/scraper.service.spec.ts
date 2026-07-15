@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ScraperService } from './scraper.service';
-import { RedditApiService } from './reddit-api.service';
+import { RedditScraperService } from './reddit-scraper.service';
 import { Subreddit } from '../domain/entities/subreddit.entity';
 import { Post } from './entities/post.entity';
 import { Comment } from './entities/comment.entity';
@@ -41,7 +41,7 @@ describe('ScraperService', () => {
         { provide: getRepositoryToken(Subreddit), useValue: mockSubredditRepo },
         { provide: getRepositoryToken(Post), useValue: mockPostRepo },
         { provide: getRepositoryToken(Comment), useValue: mockCommentRepo },
-        { provide: RedditApiService, useValue: mockRedditApi },
+        { provide: RedditScraperService, useValue: mockRedditApi },
       ],
     }).compile();
 
@@ -202,7 +202,7 @@ describe('ScraperService', () => {
   });
 
   describe('validateSubreddit', () => {
-    it('should return true if RedditApiService.exists returns true', async () => {
+    it('should return true if RedditScraperService.exists returns true', async () => {
       mockRedditApi.fetchTopPosts.mockResolvedValue([]); // fallback if needed
       mockRedditApi.exists.mockResolvedValue(true);
 
@@ -212,7 +212,7 @@ describe('ScraperService', () => {
       expect(mockRedditApi.exists).toHaveBeenCalledWith('AskReddit');
     });
 
-    it('should return false if RedditApiService.exists returns false', async () => {
+    it('should return false if RedditScraperService.exists returns false', async () => {
       mockRedditApi.exists.mockResolvedValue(false);
 
       const result = await service.validateSubreddit('private');
