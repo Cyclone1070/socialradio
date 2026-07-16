@@ -146,11 +146,17 @@ export class RedditScraperService {
       const url = `https://www.reddit.com/r/${subredditName}/`;
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-      const pageText = await page.evaluate(() => document.body.innerText);
-      const isNotFound =
-        pageText.includes('Community not found') ||
-        pageText.includes('Create a community');
-      return !isNotFound;
+      try {
+        // Wait for all dynamic fetches to settle
+        await page.waitForLoadState('networkidle', { timeout: 8000 });
+      } catch {
+        // Ignore networkidle timeouts to verify what loaded
+      }
+
+      const postCount = await page.evaluate(
+        () => document.querySelectorAll('shreddit-post').length,
+      );
+      return postCount > 0;
     } finally {
       await page.close();
       await context.close();

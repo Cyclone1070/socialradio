@@ -64,6 +64,7 @@ describe('ScraperService', () => {
 
       mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
       mockSubredditRepo.save.mockResolvedValue(subEntity);
+      mockRedditApi.exists.mockResolvedValue(true); // Subreddit exists
 
       const rawPosts = [
         {
@@ -109,6 +110,7 @@ describe('ScraperService', () => {
       await service.scrapeSubreddit(subName);
 
       expect(cleanupSpy).toHaveBeenCalled();
+      expect(mockRedditApi.exists).toHaveBeenCalledWith(subName);
       expect(mockCommentRepo.create).toHaveBeenNthCalledWith(
         1,
         expect.objectContaining({
@@ -136,7 +138,7 @@ describe('ScraperService', () => {
       );
     });
 
-    it('should delete subreddit completely and resolve gracefully on permanent (403/404) Reddit API errors', async () => {
+    it('should delete subreddit completely and resolve gracefully when validateSubreddit returns false', async () => {
       const subName = 'bannedSub';
       const subEntity = {
         id: 'banned-uuid',
@@ -145,36 +147,28 @@ describe('ScraperService', () => {
       };
 
       mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
-      const error404 = new Error('Not Found') as Error & {
-        isAxiosError: boolean;
-        response: { status: number };
-      };
-      error404.isAxiosError = true;
-      error404.response = { status: 404 };
-      mockRedditApi.fetchTopPosts.mockRejectedValue(error404);
+      mockRedditApi.exists.mockResolvedValue(false); // Invalid subreddit
 
       await expect(service.scrapeSubreddit(subName)).resolves.not.toThrow();
 
       expect(mockSubredditRepo.delete).toHaveBeenCalledWith({
         id: 'banned-uuid',
       });
+      expect(mockRedditApi.fetchTopPosts).not.toHaveBeenCalled();
     });
 
-    it('should rethrow error on transient (500/503) errors', async () => {
+    it('should rethrow error on unexpected scraper execution errors', async () => {
       const subName = 'downSub';
       const subEntity = { id: 'down-uuid', name: subName, lastScrapedAt: null };
 
       mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
-      const error503 = new Error('Service Unavailable') as Error & {
-        isAxiosError: boolean;
-        response: { status: number };
-      };
-      error503.isAxiosError = true;
-      error503.response = { status: 503 };
-      mockRedditApi.fetchTopPosts.mockRejectedValue(error503);
+      mockRedditApi.exists.mockResolvedValue(true);
+      mockRedditApi.fetchTopPosts.mockRejectedValue(
+        new Error('Browser connection lost'),
+      );
 
       await expect(service.scrapeSubreddit(subName)).rejects.toThrow(
-        'Service Unavailable',
+        'Browser connection lost',
       );
       expect(mockSubredditRepo.delete).not.toHaveBeenCalled();
     });

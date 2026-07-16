@@ -7,11 +7,13 @@ import { chromium } from 'playwright-extra';
 const mockPage = {
   addInitScript: jest.fn(),
   goto: jest.fn(),
-  waitForSelector: jest.fn().mockResolvedValue(undefined),
+  waitForSelector: jest.fn(),
   evaluate: jest.fn(),
   screenshot: jest.fn(),
   close: jest.fn(),
   route: jest.fn().mockResolvedValue(undefined),
+  waitForTimeout: jest.fn().mockResolvedValue(undefined),
+  waitForLoadState: jest.fn(),
 };
 
 const mockContext = {
@@ -105,6 +107,7 @@ describe('RedditScraperService', () => {
 
   describe('fetchTopPosts', () => {
     it('should connect to browserless, use generated fingerprint options with macOS restriction, enable adblocker, and scrape posts', async () => {
+      mockPage.waitForSelector.mockResolvedValue(undefined);
       // Setup evaluate mock to return the final parsed output structure from evaluate
       mockPage.evaluate.mockResolvedValue([
         {
@@ -166,27 +169,32 @@ describe('RedditScraperService', () => {
   });
 
   describe('exists', () => {
-    it('should return true if subreddit page loads successfully without not-found indicators', async () => {
-      mockPage.evaluate.mockResolvedValue(
-        'Welcome to r/webdev! The community for web developers.',
-      );
+    it('should return true if subreddit page loads and renders shreddit-posts using Option A', async () => {
+      mockPage.waitForLoadState.mockResolvedValue(undefined);
+      mockPage.evaluate.mockResolvedValue(1); // 1 post found
 
       const result = await service.exists('webdev');
       expect(result).toBe(true);
+      expect(mockPage.waitForLoadState).toHaveBeenCalledWith('networkidle', {
+        timeout: 8000,
+      });
     });
 
-    it('should return false if subreddit page indicates it does not exist', async () => {
-      mockPage.evaluate.mockResolvedValue(
-        'Community not found. Create a community or explore others.',
-      );
+    it('should return false if shreddit-post is not found even if load state succeeds', async () => {
+      mockPage.waitForLoadState.mockResolvedValue(undefined);
+      mockPage.evaluate.mockResolvedValue(0); // 0 posts found
 
       const result = await service.exists('invalidSubreddit');
       expect(result).toBe(false);
+      expect(mockPage.waitForLoadState).toHaveBeenCalledWith('networkidle', {
+        timeout: 8000,
+      });
     });
   });
 
   describe('fetchPostComments', () => {
     it('should fetch comments for a post thread', async () => {
+      mockPage.waitForSelector.mockResolvedValue(undefined);
       mockPage.evaluate.mockResolvedValue([
         {
           id: 'comment123',
