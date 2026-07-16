@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import { PlaywrightBlocker } from '@ghostery/adblocker-playwright';
+import { FingerprintGenerator } from 'fingerprint-generator';
 
 export interface RedditPostData {
   id: string;
@@ -23,9 +25,21 @@ export interface RedditCommentData {
 
 @Injectable()
 export class RedditScraperService {
+  private readonly fingerprintGenerator = new FingerprintGenerator();
+  private adblocker: PlaywrightBlocker | null = null;
+
   constructor(private readonly configService: ConfigService) {
     // Register the canon stealth plugin
     chromium.use(StealthPlugin());
+  }
+
+  private async getAdblocker(): Promise<PlaywrightBlocker> {
+    if (!this.adblocker) {
+      // Load standard prebuilt blocklist (contains EasyList/EasyPrivacy rules similar to uBlock Origin)
+      this.adblocker =
+        await PlaywrightBlocker.fromPrebuiltAdsAndTracking(fetch);
+    }
+    return this.adblocker;
   }
 
   private async connect() {
@@ -36,15 +50,34 @@ export class RedditScraperService {
     return chromium.connect(wsEndpoint);
   }
 
+  private getFingerprintContextOptions() {
+    const { fingerprint } = this.fingerprintGenerator.getFingerprint({
+      browsers: ['chrome'],
+      devices: ['desktop'],
+    });
+
+    return {
+      userAgent: fingerprint.navigator.userAgent,
+      viewport: {
+        width: fingerprint.screen.width,
+        height: fingerprint.screen.height,
+      },
+      locale: fingerprint.navigator.language,
+    };
+  }
+
   async fetchTopPosts(
     subredditName: string,
     limit: number,
   ): Promise<RedditPostData[]> {
     const browser = await this.connect();
-    const context = await browser.newContext({
-      viewport: { width: 1280, height: 1600 },
-    });
+    const contextOptions = this.getFingerprintContextOptions();
+    const context = await browser.newContext(contextOptions);
     const page = await context.newPage();
+
+    // Enable uBlock-equivalent network blocking on page
+    const blocker = await this.getAdblocker();
+    await blocker.enableBlockingInPage(page);
 
     try {
       const url = `https://www.reddit.com/r/${subredditName}/`;
@@ -66,6 +99,10 @@ export class RedditScraperService {
             // Strip t3_ prefix
             const cleanId = rawId.replace('t3_', '');
 
+            // Check if it's an ad post
+            const isAd =
+              el.hasAttribute('is-ad') || el.getAttribute('is-ad') === 'true';
+
             return {
               id: cleanId,
               title: el.getAttribute('post-title') || '',
@@ -73,9 +110,18 @@ export class RedditScraperService {
               author: el.getAttribute('author') || '',
               score: parseInt(scoreAttr, 10),
               created_utc: createdUtc,
+              isAd,
             };
           })
-          .filter((p) => p.title !== '');
+          .filter((p) => p.title !== '' && !p.isAd)
+          .map((p) => ({
+            id: p.id,
+            title: p.title,
+            selftext: p.selftext,
+            author: p.author,
+            score: p.score,
+            created_utc: p.created_utc,
+          }));
       });
 
       return rawPosts.slice(0, limit);
@@ -88,10 +134,12 @@ export class RedditScraperService {
 
   async exists(subredditName: string): Promise<boolean> {
     const browser = await this.connect();
-    const context = await browser.newContext({
-      viewport: { width: 1280, height: 1600 },
-    });
+    const contextOptions = this.getFingerprintContextOptions();
+    const context = await browser.newContext(contextOptions);
     const page = await context.newPage();
+
+    const blocker = await this.getAdblocker();
+    await blocker.enableBlockingInPage(page);
 
     try {
       const url = `https://www.reddit.com/r/${subredditName}/`;
@@ -115,10 +163,12 @@ export class RedditScraperService {
     limit: number,
   ): Promise<RedditCommentData[]> {
     const browser = await this.connect();
-    const context = await browser.newContext({
-      viewport: { width: 1280, height: 1600 },
-    });
+    const contextOptions = this.getFingerprintContextOptions();
+    const context = await browser.newContext(contextOptions);
     const page = await context.newPage();
+
+    const blocker = await this.getAdblocker();
+    await blocker.enableBlockingInPage(page);
 
     try {
       const url = `https://www.reddit.com/r/${subredditName}/comments/${postRedditId}/`;

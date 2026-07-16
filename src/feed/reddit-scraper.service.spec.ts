@@ -11,6 +11,7 @@ const mockPage = {
   evaluate: jest.fn(),
   screenshot: jest.fn(),
   close: jest.fn(),
+  route: jest.fn().mockResolvedValue(undefined),
 };
 
 const mockContext = {
@@ -21,7 +22,7 @@ const mockContext = {
 const mockBrowser = {
   newContext: jest.fn().mockResolvedValue(mockContext),
   close: jest.fn(),
-  on: jest.fn(), // Necessary for playwright-extra connection listener binding
+  on: jest.fn(),
 };
 
 // Mock playwright-extra
@@ -36,9 +37,41 @@ jest.mock('playwright-extra', () => {
 
 // Mock puppeteer-extra-plugin-stealth
 jest.mock('puppeteer-extra-plugin-stealth', () => {
-  return jest.fn().mockImplementation(() => ({
-    // empty mock plugin interface
-  }));
+  return jest.fn().mockImplementation(() => ({}));
+});
+
+// Mock @ghostery/adblocker-playwright with embedded mock to avoid TDZ error
+const mockEnableBlocking = jest.fn().mockResolvedValue(undefined);
+
+jest.mock('@ghostery/adblocker-playwright', () => {
+  return {
+    PlaywrightBlocker: {
+      fromPrebuiltAdsAndTracking: jest.fn().mockImplementation(() =>
+        Promise.resolve({
+          enableBlockingInPage: mockEnableBlocking,
+        }),
+      ),
+    },
+  };
+});
+
+// Mock fingerprint-generator
+const mockFingerprint = {
+  navigator: {
+    userAgent: 'mock-stealth-user-agent',
+    language: 'en-GB',
+  },
+  screen: { width: 1440, height: 900 },
+};
+
+jest.mock('fingerprint-generator', () => {
+  return {
+    FingerprintGenerator: jest.fn().mockImplementation(() => ({
+      getFingerprint: jest
+        .fn()
+        .mockReturnValue({ fingerprint: mockFingerprint }),
+    })),
+  };
 });
 
 describe('RedditScraperService', () => {
@@ -69,7 +102,7 @@ describe('RedditScraperService', () => {
   });
 
   describe('fetchTopPosts', () => {
-    it('should connect to browserless and scrape posts', async () => {
+    it('should connect to browserless, use generated fingerprint options, enable adblocker, and scrape posts', async () => {
       // Setup evaluate mock to return the final parsed output structure from evaluate
       mockPage.evaluate.mockResolvedValue([
         {
@@ -86,6 +119,19 @@ describe('RedditScraperService', () => {
       expect(chromium.connect).toHaveBeenCalledWith(
         'ws://mock-browserless:3000/playwright',
       );
+
+      // Verify that newContext was invoked with the mock fingerprint values
+      expect(mockBrowser.newContext).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userAgent: 'mock-stealth-user-agent',
+          viewport: { width: 1440, height: 900 },
+          locale: 'en-GB',
+        }),
+      );
+
+      // Verify Ghostery Adblocker was enabled on the page
+      expect(mockEnableBlocking).toHaveBeenCalledWith(mockPage);
+
       expect(mockPage.goto).toHaveBeenCalledWith(
         'https://www.reddit.com/r/webdev/',
         expect.any(Object),
