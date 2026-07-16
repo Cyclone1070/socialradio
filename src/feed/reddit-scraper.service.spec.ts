@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { RedditScraperService } from './reddit-scraper.service';
 import { ConfigService } from '@nestjs/config';
-import { chromium } from 'playwright-core';
+import { chromium } from 'playwright-extra';
 
 // Declare mocks at root scope so they are accessible by tests
 const mockPage = {
@@ -21,15 +21,24 @@ const mockContext = {
 const mockBrowser = {
   newContext: jest.fn().mockResolvedValue(mockContext),
   close: jest.fn(),
+  on: jest.fn(), // Necessary for playwright-extra connection listener binding
 };
 
-// Mock playwright-core
-jest.mock('playwright-core', () => {
+// Mock playwright-extra
+jest.mock('playwright-extra', () => {
   return {
     chromium: {
+      use: jest.fn(),
       connect: jest.fn().mockImplementation(() => Promise.resolve(mockBrowser)),
     },
   };
+});
+
+// Mock puppeteer-extra-plugin-stealth
+jest.mock('puppeteer-extra-plugin-stealth', () => {
+  return jest.fn().mockImplementation(() => ({
+    // empty mock plugin interface
+  }));
 });
 
 describe('RedditScraperService', () => {
@@ -64,7 +73,7 @@ describe('RedditScraperService', () => {
       // Setup evaluate mock to return the final parsed output structure from evaluate
       mockPage.evaluate.mockResolvedValue([
         {
-          id: 'post123', // t3_ prefix is already stripped by browser code before returning
+          id: 'post123',
           title: 'Title of Post',
           author: 'author1',
           score: 500,
@@ -74,7 +83,6 @@ describe('RedditScraperService', () => {
 
       const result = await service.fetchTopPosts('webdev', 10);
 
-      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(chromium.connect).toHaveBeenCalledWith(
         'ws://mock-browserless:3000/playwright',
       );
@@ -124,7 +132,7 @@ describe('RedditScraperService', () => {
     it('should fetch comments for a post thread', async () => {
       mockPage.evaluate.mockResolvedValue([
         {
-          id: 'comment123', // t1_ prefix stripped
+          id: 'comment123',
           body: 'Comment body text',
           author: 'commenter1',
           score: 15,

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { chromium } from 'playwright-core';
+import { chromium } from 'playwright-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 
 export interface RedditPostData {
   id: string;
@@ -22,7 +23,10 @@ export interface RedditCommentData {
 
 @Injectable()
 export class RedditScraperService {
-  constructor(private readonly configService: ConfigService) {}
+  constructor(private readonly configService: ConfigService) {
+    // Register the canon stealth plugin
+    chromium.use(StealthPlugin());
+  }
 
   private async connect() {
     const wsEndpoint = this.configService.get<string>('BROWSERLESS_WS_URL');
@@ -38,17 +42,9 @@ export class RedditScraperService {
   ): Promise<RedditPostData[]> {
     const browser = await this.connect();
     const context = await browser.newContext({
-      userAgent:
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
       viewport: { width: 1280, height: 1600 },
-      locale: 'en-US',
     });
     const page = await context.newPage();
-
-    // Stealth script
-    await page.addInitScript(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    });
 
     try {
       const url = `https://www.reddit.com/r/${subredditName}/`;
@@ -73,7 +69,7 @@ export class RedditScraperService {
             return {
               id: cleanId,
               title: el.getAttribute('post-title') || '',
-              selftext: '', // Text snippet, can fetch or leave empty if text post
+              selftext: '',
               author: el.getAttribute('author') || '',
               score: parseInt(scoreAttr, 10),
               created_utc: createdUtc,
@@ -93,16 +89,9 @@ export class RedditScraperService {
   async exists(subredditName: string): Promise<boolean> {
     const browser = await this.connect();
     const context = await browser.newContext({
-      userAgent:
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
       viewport: { width: 1280, height: 1600 },
     });
     const page = await context.newPage();
-
-    // Stealth script
-    await page.addInitScript(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    });
 
     try {
       const url = `https://www.reddit.com/r/${subredditName}/`;
@@ -127,17 +116,9 @@ export class RedditScraperService {
   ): Promise<RedditCommentData[]> {
     const browser = await this.connect();
     const context = await browser.newContext({
-      userAgent:
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
       viewport: { width: 1280, height: 1600 },
-      locale: 'en-US',
     });
     const page = await context.newPage();
-
-    // Stealth script
-    await page.addInitScript(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    });
 
     try {
       const url = `https://www.reddit.com/r/${subredditName}/comments/${postRedditId}/`;
