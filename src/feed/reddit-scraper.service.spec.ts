@@ -64,12 +64,14 @@ const mockFingerprint = {
   screen: { width: 1440, height: 900 },
 };
 
+const mockGetFingerprint = jest
+  .fn()
+  .mockReturnValue({ fingerprint: mockFingerprint });
+
 jest.mock('fingerprint-generator', () => {
   return {
     FingerprintGenerator: jest.fn().mockImplementation(() => ({
-      getFingerprint: jest
-        .fn()
-        .mockReturnValue({ fingerprint: mockFingerprint }),
+      getFingerprint: mockGetFingerprint,
     })),
   };
 });
@@ -102,7 +104,7 @@ describe('RedditScraperService', () => {
   });
 
   describe('fetchTopPosts', () => {
-    it('should connect to browserless, use generated fingerprint options, enable adblocker, and scrape posts', async () => {
+    it('should connect to browserless, use generated fingerprint options with macOS restriction, enable adblocker, and scrape posts', async () => {
       // Setup evaluate mock to return the final parsed output structure from evaluate
       mockPage.evaluate.mockResolvedValue([
         {
@@ -118,6 +120,15 @@ describe('RedditScraperService', () => {
 
       expect(chromium.connect).toHaveBeenCalledWith(
         'ws://mock-browserless:3000/playwright',
+      );
+
+      // Verify that fingerprint generator was called with macos restriction
+      expect(mockGetFingerprint).toHaveBeenCalledWith(
+        expect.objectContaining({
+          browsers: ['chrome'],
+          devices: ['desktop'],
+          operatingSystems: ['macos'],
+        }),
       );
 
       // Verify that newContext was invoked with the mock fingerprint values

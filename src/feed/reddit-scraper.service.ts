@@ -54,6 +54,7 @@ export class RedditScraperService {
     const { fingerprint } = this.fingerprintGenerator.getFingerprint({
       browsers: ['chrome'],
       devices: ['desktop'],
+      operatingSystems: ['macos'],
     });
 
     return {
