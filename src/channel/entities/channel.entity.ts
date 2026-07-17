@@ -16,10 +16,10 @@ export class Channel {
   @Column({ default: 'public' })
   visibility: 'public' | 'private';
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   ownerId: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   currentSegmentId: string | null;
 
   @Column({ type: 'timestamp', nullable: true })

@@ -26,22 +26,30 @@ services:
     ports:
       - "3000:3000"
     environment:
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_USERNAME: postgres
-      DB_PASSWORD: postgres
-      DB_DATABASE: socialradio
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/socialradio
+      BROWSERLESS_WS_URL: ws://browserless:3000/playwright
       JWT_SECRET: ${JWT_SECRET:-super_secret_key}
-      REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID}
-      REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET}
-      REDDIT_USER_AGENT: ${REDDIT_USER_AGENT:-SocialRadio/1.0.0}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL}
       TTS_API_KEY: ${TTS_API_KEY}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
     depends_on:
       db:
         condition: service_healthy
+      browserless:
+        condition: service_started
     volumes:
       - hf_cache:/home/node/.cache
+
+  browserless:
+    image: browserless/chrome:latest
+    container_name: socialradio_browserless
+    ports:
+      - "4000:3000"
+    environment:
+      - MAX_CONCURRENT_SESSIONS=10
+    restart: always
 
 volumes:
   postgres_data:

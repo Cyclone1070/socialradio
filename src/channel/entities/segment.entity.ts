@@ -29,7 +29,7 @@ export abstract class Segment {
   @Column('int')
   playOrder: number;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   audioUrl: string | null;
 
   @Column('float', { nullable: true })

@@ -30,7 +30,7 @@ export class Comment {
   @Column('int')
   score: number;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   parentRedditId: string | null;
 
   @Column({ default: false })
