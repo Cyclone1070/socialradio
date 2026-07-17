@@ -6,7 +6,6 @@ import { UserModule } from './user/user.module';
 import { AuthModule } from './auth/auth.module';
 import { MediaModule } from './media/media.module';
 import { FeedModule } from './feed/feed.module';
-import { LlmModule } from './llm/llm.module';
 import { RadioModule } from './radio/radio.module';
 import { ChannelModule } from './channel/channel.module';
 
@@ -34,7 +33,6 @@ import { ChannelModule } from './channel/channel.module';
     AuthModule,
     MediaModule,
     FeedModule,
-    LlmModule,
     RadioModule,
     ChannelModule,
   ],

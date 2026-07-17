@@ -1,11 +1,14 @@
-import { Injectable } from '@nestjs/common';
-import { LlmService } from '../llm/llm.service';
+import { Injectable, Inject } from '@nestjs/common';
+import type { LlmService } from './interfaces/llm-service.interface';
 import { Post } from '../feed/entities/post.entity';
 import { Comment } from '../feed/entities/comment.entity';
 
 @Injectable()
 export class ScriptService {
-  constructor(private readonly llmService: LlmService) {}
+  constructor(
+    @Inject('LlmService')
+    private readonly llmService: LlmService,
+  ) {}
 
   private collectChain(
     c: Comment,

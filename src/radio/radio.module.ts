@@ -6,21 +6,28 @@ import { TopicAudio } from './entities/topic-audio.entity';
 import { ScriptService } from './script.service';
 import { AudioService } from './audio.service';
 import { RadioService } from './radio.service';
-import { LlmModule } from '../llm/llm.module';
 import { DomainModule } from '../domain/domain.module';
 import { FeedModule } from '../feed/feed.module';
 import { StorageModule } from '../storage/storage.module';
+import { DeepSeekLlmService } from './deepseek-llm.service';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([TopicScript, TopicAudio]),
-    LlmModule,
     DomainModule,
     HttpModule,
     FeedModule,
     StorageModule,
   ],
-  providers: [ScriptService, AudioService, RadioService],
-  exports: [RadioService, TypeOrmModule],
+  providers: [
+    ScriptService,
+    AudioService,
+    RadioService,
+    {
+      provide: 'LlmService',
+      useClass: DeepSeekLlmService,
+    },
+  ],
+  exports: [RadioService, 'LlmService', TypeOrmModule],
 })
 export class RadioModule {}

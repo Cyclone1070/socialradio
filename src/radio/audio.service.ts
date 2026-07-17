@@ -14,31 +14,39 @@ export class AudioService {
   ) {}
 
   async generateSpeech(text: string, outputFilePath: string): Promise<number> {
-    const apiKey = this.configService.get<string>('TTS_API_KEY');
+    const apiKey =
+      this.configService.get<string>('TTS_API_KEY') ||
+      this.configService.get<string>('GEMINI_API_KEY');
     if (!apiKey) {
       throw new Error('TTS API key is not configured');
     }
 
     const response = await lastValueFrom(
       this.httpService.post(
-        'https://api.openai.com/v1/audio/speech',
+        `https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`,
         {
-          model: 'tts-1',
-          input: text,
-          voice: 'alloy',
-          response_format: 'mp3',
+          input: { text },
+          voice: { languageCode: 'en-US', name: 'en-US-Studio-O' },
+          audioConfig: { audioEncoding: 'MP3' },
         },
         {
           headers: {
-            Authorization: `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
           },
-          responseType: 'arraybuffer', // Ensure we receive a binary buffer
         },
       ),
     );
 
-    const buffer = Buffer.from(response.data);
+    interface GoogleTtsResponse {
+      audioContent?: string;
+    }
+
+    const data = response.data as GoogleTtsResponse;
+    if (!data.audioContent) {
+      throw new Error('No audio content returned from Google TTS API');
+    }
+
+    const buffer = Buffer.from(data.audioContent, 'base64');
     await this.storageService.write({
       key: outputFilePath,
       content: buffer,

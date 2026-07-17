@@ -42,11 +42,15 @@ describe('AudioService', () => {
   });
 
   describe('generateSpeech', () => {
-    it('should call TTS API, write file to disk, and return duration based on CBR math', async () => {
+    it('should call Google Studio TTS API, decode base64 audioContent, write binary file to disk, and return duration', async () => {
       // 16,000 bytes = 1.0 second of 128kbps audio
       const mockAudioBuffer = Buffer.alloc(16000);
+      const mockBase64Content = mockAudioBuffer.toString('base64');
+
       const response: AxiosResponse = {
-        data: mockAudioBuffer,
+        data: {
+          audioContent: mockBase64Content,
+        },
         status: 200,
         statusText: 'OK',
         headers: {},
@@ -62,12 +66,11 @@ describe('AudioService', () => {
       );
 
       expect(mockHttpService.post).toHaveBeenCalledWith(
-        'https://api.openai.com/v1/audio/speech',
+        'https://texttospeech.googleapis.com/v1/text:synthesize?key=mock_key',
         expect.objectContaining({
-          input: 'Hello from social radio',
-          model: 'tts-1',
-          voice: 'alloy',
-          response_format: 'mp3',
+          input: { text: 'Hello from social radio' },
+          voice: { languageCode: 'en-US', name: 'en-US-Studio-O' },
+          audioConfig: { audioEncoding: 'MP3' },
         }),
         expect.any(Object),
       );
