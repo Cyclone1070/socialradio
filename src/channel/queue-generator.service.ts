@@ -16,6 +16,7 @@ import { MediaService } from '../media/media.service';
 import { clusterPosts } from './utils/topic-clustering.util';
 import { ScraperService } from '../feed/scraper.service';
 import { ChunkerService } from './chunker.service';
+import { Topic } from './interfaces/topic.interface';
 
 @Injectable()
 export class QueueGeneratorService {
@@ -172,7 +173,7 @@ export class QueueGeneratorService {
 
   public async findPendingTopicSegment(
     channelId: string,
-  ): Promise<{ id: string; title: string; posts: Post[] } | null> {
+  ): Promise<Topic | null> {
     const subs = await this.channelSubredditRepo.find({
       where: { channelId },
       relations: { subreddit: true },

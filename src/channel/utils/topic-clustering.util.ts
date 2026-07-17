@@ -1,5 +1,5 @@
 import { Post } from '../../feed/entities/post.entity';
-import { TopicSegment } from '../interfaces/topic-segment.interface';
+import { Topic } from '../interfaces/topic.interface';
 
 const STOP_WORDS = new Set([
   'the',
@@ -86,8 +86,8 @@ export function jaccardSimilarity(
   return intersectionSize / unionSize;
 }
 
-export function clusterPosts(posts: Post[], threshold = 0.35): TopicSegment[] {
-  const segments: TopicSegment[] = [];
+export function clusterPosts(posts: Post[], threshold = 0.35): Topic[] {
+  const segments: Topic[] = [];
   const sortedPosts = [...posts].sort((a, b) => b.score - a.score);
   const mapped = new Set<string>();
 
@@ -113,7 +113,6 @@ export function clusterPosts(posts: Post[], threshold = 0.35): TopicSegment[] {
 
     segments.push({
       id: post.id,
-      title: post.title,
       posts: cluster,
     });
   }
