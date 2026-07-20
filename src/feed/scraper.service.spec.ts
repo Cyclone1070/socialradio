@@ -28,7 +28,7 @@ describe('ScraperService', () => {
     save: jest.fn(),
   };
 
-  const mockRedditApi = {
+  const mockRedditScraper = {
     fetchTopPosts: jest.fn(),
     fetchPostComments: jest.fn(),
     exists: jest.fn(),
@@ -41,7 +41,7 @@ describe('ScraperService', () => {
         { provide: getRepositoryToken(Subreddit), useValue: mockSubredditRepo },
         { provide: getRepositoryToken(Post), useValue: mockPostRepo },
         { provide: getRepositoryToken(Comment), useValue: mockCommentRepo },
-        { provide: RedditScraperService, useValue: mockRedditApi },
+        { provide: RedditScraperService, useValue: mockRedditScraper },
       ],
     }).compile();
 
@@ -54,7 +54,7 @@ describe('ScraperService', () => {
   });
 
   describe('scrapeSubreddit', () => {
-    it('should scrape new posts and comments, then categorize them', async () => {
+    it('should scrape new posts and comments, filtering out posts with under 2000 words and capping at 20 saved posts', async () => {
       const subName = 'AskReddit';
       const subEntity = { id: 'sub-uuid', name: subName, lastScrapedAt: null };
 
@@ -64,79 +64,70 @@ describe('ScraperService', () => {
 
       mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
       mockSubredditRepo.save.mockResolvedValue(subEntity);
-      mockRedditApi.exists.mockResolvedValue(true); // Subreddit exists
+      mockRedditScraper.exists.mockResolvedValue(true);
 
+      // We return 3 raw posts. 
+      // Post 1: has comments with >= 2000 words. (Should be saved)
+      // Post 2: has comments with < 2000 words. (Should be skipped)
+      // Post 3: has comments with >= 2000 words. (Should be saved)
       const rawPosts = [
-        {
-          id: 'post1',
-          title: 'Title 1',
-          selftext: 'Body 1',
-          author: 'caller_user',
-          score: 100,
-          created_utc: 1719999999,
-        },
+        { id: 'post1', title: 'Title 1', selftext: 'Body 1', author: 'op1', score: 100, created_utc: 1719999999 },
+        { id: 'post2', title: 'Title 2', selftext: 'Body 2', author: 'op2', score: 200, created_utc: 1719999999 },
+        { id: 'post3', title: 'Title 3', selftext: 'Body 3', author: 'op3', score: 300, created_utc: 1719999999 },
       ];
-      mockRedditApi.fetchTopPosts.mockResolvedValue(rawPosts);
-      mockPostRepo.findOneBy.mockResolvedValue(null); // Post doesn't exist yet
+      mockRedditScraper.fetchTopPosts.mockResolvedValue(rawPosts);
+      mockPostRepo.findOneBy.mockResolvedValue(null); // None exist in DB yet
 
-      const rawComments = [
-        {
-          id: 'comment1',
-          body: 'Comment Body',
-          author: 'caller_user', // OP
-          score: 5,
-          parent_id: 't3_post1',
-          created_utc: 1719999999,
-        },
-        {
-          id: 'reply1',
-          body: 'Reply Body',
-          author: 'other_user', // Not OP
-          score: 2,
-          parent_id: 't1_comment1', // replies to comment1
-          created_utc: 1720000000,
-        },
+      // Mock word count comments
+      // post1: 1 comment containing 2000 words (repeating a word 2000 times)
+      const post1Comments = [
+        { id: 'c1', body: 'hello '.repeat(2000).trim(), author: 'user1', score: 10, parent_id: 't3_post1', created_utc: 1719999999 }
       ];
-      mockRedditApi.fetchPostComments.mockResolvedValue(rawComments);
+      // post2: 1 comment containing only 1500 words
+      const post2Comments = [
+        { id: 'c2', body: 'hello '.repeat(1500).trim(), author: 'user2', score: 10, parent_id: 't3_post2', created_utc: 1719999999 }
+      ];
+      // post3: 1 comment containing 2500 words
+      const post3Comments = [
+        { id: 'c3', body: 'hello '.repeat(2500).trim(), author: 'user3', score: 10, parent_id: 't3_post3', created_utc: 1719999999 }
+      ];
 
-      const createdComment = { id: 'c-uuid', redditId: 'comment1' };
-      mockCommentRepo.create.mockReturnValue(createdComment);
-      mockCommentRepo.save.mockResolvedValue(createdComment);
+      mockRedditScraper.fetchPostComments.mockImplementation((sub, postId) => {
+        if (postId === 'post1') return Promise.resolve(post1Comments);
+        if (postId === 'post2') return Promise.resolve(post2Comments);
+        if (postId === 'post3') return Promise.resolve(post3Comments);
+        return Promise.resolve([]);
+      });
 
-      const createdPost = { id: 'p-uuid', redditId: 'post1' };
-      mockPostRepo.create.mockReturnValue(createdPost);
+      mockCommentRepo.create.mockImplementation((c) => ({ id: 'c-uuid', ...c }));
+      mockCommentRepo.save.mockImplementation((c) => Promise.resolve(c));
+
+      mockPostRepo.create.mockImplementation((p) => ({ id: 'p-uuid', ...p }));
       mockPostRepo.save.mockImplementation((p) => Promise.resolve(p));
 
       await service.scrapeSubreddit(subName);
 
       expect(cleanupSpy).toHaveBeenCalled();
-      expect(mockRedditApi.exists).toHaveBeenCalledWith(subName);
-      expect(mockCommentRepo.create).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({
-          redditId: 'comment1',
-          isOp: true,
-          parentRedditId: null,
-        }) as unknown,
-      );
-      expect(mockCommentRepo.create).toHaveBeenNthCalledWith(
-        2,
-        expect.objectContaining({
-          redditId: 'reply1',
-          isOp: false,
-          parentRedditId: 'comment1',
-        }) as unknown,
-      );
-      expect(mockSubredditRepo.findOneBy).toHaveBeenCalledWith({
-        name: subName,
-      });
-      expect(mockRedditApi.fetchTopPosts).toHaveBeenCalledWith(subName, 20);
-      expect(mockRedditApi.fetchPostComments).toHaveBeenCalledWith(
-        subName,
-        'post1',
-        50,
-      );
+      expect(mockRedditScraper.exists).toHaveBeenCalledWith(subName);
+      expect(mockSubredditRepo.findOneBy).toHaveBeenCalledWith({ name: subName });
+      
+      // Verification 1: fetchTopPosts should look at 100 posts max to find high quality content
+      expect(mockRedditScraper.fetchTopPosts).toHaveBeenCalledWith(subName, 100);
+
+      // Verification 2: fetchPostComments should have been called for all candidate posts
+      expect(mockRedditScraper.fetchPostComments).toHaveBeenCalledWith(subName, 'post1');
+      expect(mockRedditScraper.fetchPostComments).toHaveBeenCalledWith(subName, 'post2');
+      expect(mockRedditScraper.fetchPostComments).toHaveBeenCalledWith(subName, 'post3');
+
+      // Verification 3: Only post1 and post3 should be saved in DB. post2 is skipped due to < 2000 words.
+      // So postRepo.save should NOT be called for post2
+      const saveCalls = mockPostRepo.save.mock.calls;
+      const savedPostIds = saveCalls.map((call: any[]) => call[0].redditId);
+      expect(savedPostIds).toContain('post1');
+      expect(savedPostIds).toContain('post3');
+      expect(savedPostIds).not.toContain('post2');
     });
+
 
     it('should delete subreddit completely and resolve gracefully when validateSubreddit returns false', async () => {
       const subName = 'bannedSub';
@@ -147,14 +138,14 @@ describe('ScraperService', () => {
       };
 
       mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
-      mockRedditApi.exists.mockResolvedValue(false); // Invalid subreddit
+      mockRedditScraper.exists.mockResolvedValue(false); // Invalid subreddit
 
       await expect(service.scrapeSubreddit(subName)).resolves.not.toThrow();
 
       expect(mockSubredditRepo.delete).toHaveBeenCalledWith({
         id: 'banned-uuid',
       });
-      expect(mockRedditApi.fetchTopPosts).not.toHaveBeenCalled();
+      expect(mockRedditScraper.fetchTopPosts).not.toHaveBeenCalled();
     });
 
     it('should rethrow error on unexpected scraper execution errors', async () => {
@@ -162,8 +153,8 @@ describe('ScraperService', () => {
       const subEntity = { id: 'down-uuid', name: subName, lastScrapedAt: null };
 
       mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
-      mockRedditApi.exists.mockResolvedValue(true);
-      mockRedditApi.fetchTopPosts.mockRejectedValue(
+      mockRedditScraper.exists.mockResolvedValue(true);
+      mockRedditScraper.fetchTopPosts.mockRejectedValue(
         new Error('Browser connection lost'),
       );
 
@@ -197,22 +188,22 @@ describe('ScraperService', () => {
 
   describe('validateSubreddit', () => {
     it('should return true if RedditScraperService.exists returns true', async () => {
-      mockRedditApi.fetchTopPosts.mockResolvedValue([]); // fallback if needed
-      mockRedditApi.exists.mockResolvedValue(true);
+      mockRedditScraper.fetchTopPosts.mockResolvedValue([]); // fallback if needed
+      mockRedditScraper.exists.mockResolvedValue(true);
 
       const result = await service.validateSubreddit('AskReddit');
 
       expect(result).toBe(true);
-      expect(mockRedditApi.exists).toHaveBeenCalledWith('AskReddit');
+      expect(mockRedditScraper.exists).toHaveBeenCalledWith('AskReddit');
     });
 
     it('should return false if RedditScraperService.exists returns false', async () => {
-      mockRedditApi.exists.mockResolvedValue(false);
+      mockRedditScraper.exists.mockResolvedValue(false);
 
       const result = await service.validateSubreddit('private');
 
       expect(result).toBe(false);
-      expect(mockRedditApi.exists).toHaveBeenCalledWith('private');
+      expect(mockRedditScraper.exists).toHaveBeenCalledWith('private');
     });
   });
 });

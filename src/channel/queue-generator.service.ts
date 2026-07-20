@@ -213,11 +213,19 @@ export class QueueGeneratorService {
     }
 
     if (subsToScrape.length > 0) {
-      // Execute scrapes in parallel (controlled concurrency handled by Axios/RedditApiService)
-      await Promise.all(
-        subsToScrape.map((name) => this.scraperService.scrapeSubreddit(name)),
-      );
+      for (let i = 0; i < subsToScrape.length; i++) {
+        const name = subsToScrape[i];
+
+        // Apply a randomized 5-6s context rotation delay before subsequent scrapes
+        if (i > 0) {
+          const delayMs = Math.floor(Math.random() * 1000) + 5000;
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+
+        await this.scraperService.scrapeSubreddit(name);
+      }
     }
+
 
     // Fetch again after potentially scraping new posts
     const posts = await this.postRepo.find({

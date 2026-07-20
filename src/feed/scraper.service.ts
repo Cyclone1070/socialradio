@@ -15,7 +15,7 @@ export class ScraperService {
     private readonly postRepo: Repository<Post>,
     @InjectRepository(Comment)
     private readonly commentRepo: Repository<Comment>,
-    private readonly redditApiService: RedditScraperService,
+    private readonly redditScraperService: RedditScraperService,
   ) {}
 
   async scrapeSubreddit(subredditName: string): Promise<void> {
@@ -34,15 +34,35 @@ export class ScraperService {
       return;
     }
 
-    const rawPosts = await this.redditApiService.fetchTopPosts(
+    const rawPosts = await this.redditScraperService.fetchTopPosts(
       subredditName,
-      20,
+      100,
     );
     const newPostEntities: Post[] = [];
+    let savedCount = 0;
 
     for (const rawPost of rawPosts) {
+      if (savedCount >= 20) {
+        break;
+      }
+
       const exists = await this.postRepo.findOneBy({ redditId: rawPost.id });
       if (exists) continue;
+
+      const rawComments = await this.redditScraperService.fetchPostComments(
+        subredditName,
+        rawPost.id,
+      );
+
+      // Word count guard: total words across all comments must be >= 2000
+      const totalWords = rawComments.reduce((sum, c) => {
+        const body = c.body || '';
+        return sum + body.split(/\s+/).filter(Boolean).length;
+      }, 0);
+
+      if (totalWords < 2000) {
+        continue;
+      }
 
       const post = this.postRepo.create({
         subredditId: subreddit.id,
@@ -56,11 +76,6 @@ export class ScraperService {
       // Save post first so comments can reference its ID via database relation
       const savedPost = await this.postRepo.save(post);
 
-      const rawComments = await this.redditApiService.fetchPostComments(
-        subredditName,
-        rawPost.id,
-        50,
-      );
       const comments = rawComments.map((rawComment) => {
         const isOp = rawComment.author === rawPost.author;
         const parentRedditId = rawComment.parent_id.startsWith('t1_')
@@ -80,6 +95,7 @@ export class ScraperService {
       await this.commentRepo.save(comments);
 
       newPostEntities.push(savedPost);
+      savedCount++;
     }
 
     subreddit.lastScrapedAt = new Date();
@@ -93,6 +109,6 @@ export class ScraperService {
   }
 
   async validateSubreddit(subredditName: string): Promise<boolean> {
-    return this.redditApiService.exists(subredditName);
+    return this.redditScraperService.exists(subredditName);
   }
 }

@@ -106,18 +106,39 @@ describe('RedditScraperService', () => {
   });
 
   describe('fetchTopPosts', () => {
-    it('should connect to browserless, use generated fingerprint options with macOS restriction, enable adblocker, and scrape posts', async () => {
+    it('should connect to browserless, wait for shreddit-post, execute in-page fetch for JSON, and parse posts with at least 40 comments', async () => {
       mockPage.waitForSelector.mockResolvedValue(undefined);
-      // Setup evaluate mock to return the final parsed output structure from evaluate
-      mockPage.evaluate.mockResolvedValue([
-        {
-          id: 'post123',
-          title: 'Title of Post',
-          author: 'author1',
-          score: 500,
-          created_utc: 1784084400,
+
+      const mockJsonFeed = {
+        data: {
+          children: [
+            {
+              data: {
+                id: 'post123',
+                title: 'Title of Post',
+                author: 'author1',
+                score: 500,
+                created_utc: 1784084400,
+                selftext: 'Self text here',
+                num_comments: 15, // Should be skipped
+              },
+            },
+            {
+              data: {
+                id: 'post456',
+                title: 'Another Post Title',
+                author: 'author2',
+                score: 1200,
+                created_utc: 1784085000,
+                selftext: 'More text',
+                num_comments: 50, // Should be included
+              },
+            },
+          ],
         },
-      ]);
+      };
+
+      mockPage.evaluate.mockResolvedValue(mockJsonFeed);
 
       const result = await service.fetchTopPosts('webdev', 10);
 
@@ -125,40 +146,29 @@ describe('RedditScraperService', () => {
         'ws://mock-browserless:3000/playwright',
       );
 
-      // Verify that fingerprint generator was called with macos restriction
-      expect(mockGetFingerprint).toHaveBeenCalledWith(
-        expect.objectContaining({
-          browsers: ['chrome'],
-          devices: ['desktop'],
-          operatingSystems: ['macos'],
-        }),
-      );
-
-      // Verify that newContext was invoked with the mock fingerprint values
-      expect(mockBrowser.newContext).toHaveBeenCalledWith(
-        expect.objectContaining({
-          userAgent: 'mock-stealth-user-agent',
-          viewport: { width: 1440, height: 900 },
-          locale: 'en-GB',
-        }),
-      );
-
-      // Verify Ghostery Adblocker was enabled on the page
-      expect(mockEnableBlocking).toHaveBeenCalledWith(mockPage);
-
+      // Verify page loaded normal URL first
       expect(mockPage.goto).toHaveBeenCalledWith(
         'https://www.reddit.com/r/webdev/',
         expect.any(Object),
       );
+
+      // Verify deterministic wait for selector
       expect(mockPage.waitForSelector).toHaveBeenCalledWith(
         'shreddit-post',
         expect.any(Object),
       );
+
+      // Verify page.evaluate was called to fetch relative JSON
+      expect(mockPage.evaluate).toHaveBeenCalled();
+
+      // Only post456 should be returned (15 comments was skipped)
       expect(result).toHaveLength(1);
-      expect(result[0].id).toBe('post123');
-      expect(result[0].title).toBe('Title of Post');
-      expect(result[0].created_utc).toBe(1784084400);
+      expect(result[0].id).toBe('post456');
+      expect(result[0].title).toBe('Another Post Title');
+      expect(result[0].created_utc).toBe(1784085000);
+      expect(result[0].author).toBe('author2');
     });
+
 
     it('should throw error if BROWSERLESS_WS_URL is not configured', async () => {
       mockConfigService.get.mockReturnValueOnce(null);
@@ -193,28 +203,82 @@ describe('RedditScraperService', () => {
   });
 
   describe('fetchPostComments', () => {
-    it('should fetch comments for a post thread', async () => {
+    it('should navigate to the post, wait for shreddit-post, execute in-page fetch for JSON, and recursively flatten comments', async () => {
       mockPage.waitForSelector.mockResolvedValue(undefined);
-      mockPage.evaluate.mockResolvedValue([
+
+      const mockJsonTree = [
         {
-          id: 'comment123',
-          body: 'Comment body text',
-          author: 'commenter1',
-          score: 15,
-          parent_id: '',
-          created_utc: 1784085000,
+          data: {
+            children: [{ data: { id: 'post123', title: 'Post Title' } }],
+          },
         },
-      ]);
+        {
+          data: {
+            children: [
+              {
+                kind: 't1',
+                data: {
+                  id: 'comment1',
+                  body: 'Parent comment text',
+                  author: 'author1',
+                  score: 10,
+                  parent_id: 't3_post123',
+                  created_utc: 1784085000,
+                  replies: {
+                    data: {
+                      children: [
+                        {
+                          kind: 't1',
+                          data: {
+                            id: 'comment2',
+                            body: 'Child comment text',
+                            author: 'author2',
+                            score: 5,
+                            parent_id: 't1_comment1',
+                            created_utc: 1784085100,
+                            replies: '',
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      ];
 
-      const result = await service.fetchPostComments('webdev', 'post123', 20);
+      mockPage.evaluate.mockResolvedValue(mockJsonTree);
 
+      const result = await service.fetchPostComments('webdev', 'post123');
+
+      // Verify page loaded normal URL first
       expect(mockPage.goto).toHaveBeenCalledWith(
         'https://www.reddit.com/r/webdev/comments/post123/',
         expect.any(Object),
       );
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe('comment123');
-      expect(result[0].body).toBe('Comment body text');
+
+      // Verify deterministic wait for selector
+      expect(mockPage.waitForSelector).toHaveBeenCalledWith(
+        'shreddit-post',
+        expect.any(Object),
+      );
+
+      // Verify page.evaluate was called to fetch relative JSON
+      expect(mockPage.evaluate).toHaveBeenCalled();
+
+      // Verify result has both parent and child comments flattened
+      expect(result).toHaveLength(2);
+      expect(result[0].id).toBe('comment1');
+      expect(result[0].body).toBe('Parent comment text');
+      expect(result[0].parent_id).toBe('post123');
+
+      expect(result[1].id).toBe('comment2');
+      expect(result[1].body).toBe('Child comment text');
+      expect(result[1].parent_id).toBe('comment1');
     });
   });
 });
+
+

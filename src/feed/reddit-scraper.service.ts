@@ -76,62 +76,47 @@ export class RedditScraperService {
     const context = await browser.newContext(contextOptions);
     const page = await context.newPage();
 
-    // Enable uBlock-equivalent network blocking on page
-    const blocker = await this.getAdblocker();
-    await blocker.enableBlockingInPage(page);
-
     try {
       const url = `https://www.reddit.com/r/${subredditName}/`;
+
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
       await page.waitForSelector('shreddit-post', { timeout: 15000 });
 
-      const rawPosts = await page.evaluate(() => {
-        return Array.from(document.querySelectorAll('shreddit-post'))
-          .map((el) => {
-            const rawId = el.getAttribute('id') || '';
-            const scoreAttr = el.getAttribute('score') || '0';
-            const timestampAttr = el.getAttribute('created-timestamp') || '';
+      const rawJson = await page.evaluate(async (feedLimit) => {
+        const res = await fetch(`./.json?limit=${feedLimit}`);
+        if (!res.ok) {
+          throw new Error(`Failed to fetch subreddit feed JSON: ${res.status}`);
+        }
+        return res.json();
+      }, limit);
 
-            let createdUtc = 0;
-            if (timestampAttr) {
-              createdUtc = Math.floor(Date.parse(timestampAttr) / 1000);
-            }
+      const children = rawJson?.data?.children || [];
+      const posts: RedditPostData[] = children
+        .filter((child: any) => {
+          const d = child.data;
+          return d && Number(d.num_comments) >= 40;
+        })
+        .map((child: any) => {
+          const d = child.data;
+          return {
+            id: d.id || '',
+            title: d.title || '',
+            selftext: d.selftext || '',
+            author: d.author || '',
+            score: Number(d.score) || 0,
+            created_utc: Number(d.created_utc) || 0,
+          };
+        });
 
-            // Strip t3_ prefix
-            const cleanId = rawId.replace('t3_', '');
+      return posts.slice(0, limit);
 
-            // Check if it's an ad post
-            const isAd =
-              el.hasAttribute('is-ad') || el.getAttribute('is-ad') === 'true';
-
-            return {
-              id: cleanId,
-              title: el.getAttribute('post-title') || '',
-              selftext: '',
-              author: el.getAttribute('author') || '',
-              score: parseInt(scoreAttr, 10),
-              created_utc: createdUtc,
-              isAd,
-            };
-          })
-          .filter((p) => p.title !== '' && !p.isAd)
-          .map((p) => ({
-            id: p.id,
-            title: p.title,
-            selftext: p.selftext,
-            author: p.author,
-            score: p.score,
-            created_utc: p.created_utc,
-          }));
-      });
-
-      return rawPosts.slice(0, limit);
     } finally {
       await page.close();
       await context.close();
       await browser.close();
     }
   }
+
 
   async exists(subredditName: string): Promise<boolean> {
     const browser = await this.connect();
@@ -167,60 +152,60 @@ export class RedditScraperService {
   async fetchPostComments(
     subredditName: string,
     postRedditId: string,
-    limit: number,
   ): Promise<RedditCommentData[]> {
+    // Randomized throttle delay of 1.5s to 2.0s between requests to mimic human browsing
+    const delayMs = Math.floor(Math.random() * 500) + 1500;
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+
     const browser = await this.connect();
     const contextOptions = this.getFingerprintContextOptions();
     const context = await browser.newContext(contextOptions);
     const page = await context.newPage();
 
-    const blocker = await this.getAdblocker();
-    await blocker.enableBlockingInPage(page);
-
     try {
       const url = `https://www.reddit.com/r/${subredditName}/comments/${postRedditId}/`;
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await page
-        .waitForSelector('shreddit-comment', { timeout: 15000 })
-        .catch(() => {});
+      await page.waitForSelector('shreddit-post', { timeout: 15000 });
 
-      const rawComments = await page.evaluate((cLimit) => {
-        return Array.from(document.querySelectorAll('shreddit-comment'))
-          .slice(0, cLimit)
-          .map((el) => {
-            const rawId =
-              el.getAttribute('thingid') || el.getAttribute('id') || '';
-            const parentId = el.getAttribute('parentid') || '';
-            const author = el.getAttribute('author') || '';
-            const scoreAttr = el.getAttribute('score') || '0';
-            const timestampAttr = el.getAttribute('created-timestamp') || '';
+      const rawJson = await page.evaluate(async () => {
+        const res = await fetch('./.json');
+        if (!res.ok) {
+          throw new Error(`Failed to fetch comments JSON: ${res.status}`);
+        }
+        return res.json();
+      });
 
-            let createdUtc = 0;
-            if (timestampAttr) {
-              createdUtc = Math.floor(Date.parse(timestampAttr) / 1000);
-            }
+      const flattenComments = (children: any[]): RedditCommentData[] => {
+        const results: RedditCommentData[] = [];
+        if (!children) return results;
 
-            const bodyEl = el.querySelector('[slot="comment"]');
-            const body = bodyEl ? (bodyEl as HTMLElement).innerText.trim() : '';
+        for (const child of children) {
+          if (child.kind !== 't1') continue;
+          const d = child.data;
+          if (!d) continue;
 
-            // Strip prefixes for standard IDs
-            const cleanId = rawId.replace('t1_', '').replace('t3_', '');
-            const cleanParentId = parentId
-              .replace('t1_', '')
-              .replace('t3_', '');
+          // Strip prefixes for standard IDs
+          const cleanId = (d.id || '').replace(/^t1_|^t3_/, '');
+          const cleanParentId = (d.parent_id || '').replace(/^t1_|^t3_/, '');
 
-            return {
-              id: cleanId,
-              body,
-              author,
-              score: parseInt(scoreAttr, 10),
-              parent_id: cleanParentId,
-              created_utc: createdUtc,
-            };
+          results.push({
+            id: cleanId,
+            body: (d.body || '').trim(),
+            author: d.author || '',
+            score: Number(d.score) || 0,
+            parent_id: cleanParentId,
+            created_utc: Number(d.created_utc) || 0,
           });
-      }, limit);
 
-      return rawComments;
+          if (d.replies && d.replies.data && d.replies.data.children) {
+            results.push(...flattenComments(d.replies.data.children));
+          }
+        }
+        return results;
+      };
+
+      const flattened = flattenComments(rawJson[1]?.data?.children || []);
+      return flattened;
     } finally {
       await page.close();
       await context.close();
@@ -228,3 +213,5 @@ export class RedditScraperService {
     }
   }
 }
+
+
