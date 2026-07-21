@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { PlaywrightBlocker } from '@ghostery/adblocker-playwright';
 import { FingerprintGenerator } from 'fingerprint-generator';
 
 export interface RedditPostData {
@@ -26,20 +25,10 @@ export interface RedditCommentData {
 @Injectable()
 export class RedditScraperService {
   private readonly fingerprintGenerator = new FingerprintGenerator();
-  private adblocker: PlaywrightBlocker | null = null;
 
   constructor(private readonly configService: ConfigService) {
     // Register the canon stealth plugin
     chromium.use(StealthPlugin());
-  }
-
-  private async getAdblocker(): Promise<PlaywrightBlocker> {
-    if (!this.adblocker) {
-      // Load standard prebuilt blocklist (contains EasyList/EasyPrivacy rules similar to uBlock Origin)
-      this.adblocker =
-        await PlaywrightBlocker.fromPrebuiltAdsAndTracking(fetch);
-    }
-    return this.adblocker;
   }
 
   private async connect() {
@@ -123,9 +112,6 @@ export class RedditScraperService {
     const contextOptions = this.getFingerprintContextOptions();
     const context = await browser.newContext(contextOptions);
     const page = await context.newPage();
-
-    const blocker = await this.getAdblocker();
-    await blocker.enableBlockingInPage(page);
 
     try {
       const url = `https://www.reddit.com/r/${subredditName}/`;

@@ -42,21 +42,6 @@ jest.mock('puppeteer-extra-plugin-stealth', () => {
   return jest.fn().mockImplementation(() => ({}));
 });
 
-// Mock @ghostery/adblocker-playwright with embedded mock to avoid TDZ error
-const mockEnableBlocking = jest.fn().mockResolvedValue(undefined);
-
-jest.mock('@ghostery/adblocker-playwright', () => {
-  return {
-    PlaywrightBlocker: {
-      fromPrebuiltAdsAndTracking: jest.fn().mockImplementation(() =>
-        Promise.resolve({
-          enableBlockingInPage: mockEnableBlocking,
-        }),
-      ),
-    },
-  };
-});
-
 // Mock fingerprint-generator
 const mockFingerprint = {
   navigator: {
