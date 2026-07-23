@@ -54,13 +54,13 @@ export class ScraperService {
         rawPost.id,
       );
 
-      // Word count guard: total words across all comments must be >= 2000
+      // Word count guard: total words across all comments must be >= 2500
       const totalWords = rawComments.reduce((sum, c) => {
         const body = c.body || '';
         return sum + body.split(/\s+/).filter(Boolean).length;
       }, 0);
 
-      if (totalWords < 2000) {
+      if (totalWords < 2500) {
         continue;
       }
 

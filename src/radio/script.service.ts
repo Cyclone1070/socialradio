@@ -34,7 +34,8 @@ Format of the segment:
 3. The Debate: The co-hosts (Dave, Sarah, Mike, and Jenny) discuss, debate, and give advice. They must use the provided public stances (Comments list) as inspiration for their opinions and banter. They should adopt these stances as their own arguments rather than reading them out as quotes.
 4. Outro: The hosts wrap up the call and say goodbye to the caller.
 
-Write the script as spoken dialogue. Format each line exactly as:
+Write a detailed dialogue script of approximately 1,500 to 2,000 words so that the spoken radio segment lasts between 10 and 15 minutes.
+Format each line exactly as:
 [Speaker Name]: Spoken text.
 Speakers allowed: Dave, Sarah, Mike, Jenny, Caller.
 
@@ -74,7 +75,7 @@ Deliver it smoothly. Do not mention Reddit terms (like "OP", "upvote", "subreddi
         const sortedTopLevel = [...topLevel].sort((a, b) => b.score - a.score);
 
         for (const topComment of sortedTopLevel) {
-          if (currentWordCount >= 1500) {
+          if (currentWordCount >= 2500) {
             break;
           }
           const chainList: Comment[] = [];
@@ -83,6 +84,12 @@ Deliver it smoothly. Do not mention Reddit terms (like "OP", "upvote", "subreddi
             repliesMap,
             chainList,
           );
+
+          // Hard ceiling cutoff guard: do not exceed 3500 total words
+          if (currentWordCount + chainWords > 3500) {
+            break;
+          }
+
           selectedComments.push(...chainList);
           currentWordCount += chainWords;
         }

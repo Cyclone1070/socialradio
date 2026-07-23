@@ -54,7 +54,7 @@ describe('ScraperService', () => {
   });
 
   describe('scrapeSubreddit', () => {
-    it('should scrape new posts and comments, filtering out posts with under 2000 words and capping at 20 saved posts', async () => {
+    it('should scrape new posts and comments, filtering out posts with under 2500 words and capping at 20 saved posts', async () => {
       const subName = 'AskReddit';
       const subEntity = { id: 'sub-uuid', name: subName, lastScrapedAt: null };
 
@@ -67,9 +67,9 @@ describe('ScraperService', () => {
       mockRedditScraper.exists.mockResolvedValue(true);
 
       // We return 3 raw posts. 
-      // Post 1: has comments with >= 2000 words. (Should be saved)
-      // Post 2: has comments with < 2000 words. (Should be skipped)
-      // Post 3: has comments with >= 2000 words. (Should be saved)
+      // Post 1: 2200 words (Should be skipped due to < 2500)
+      // Post 2: 1500 words (Should be skipped due to < 2500)
+      // Post 3: 2700 words (Should be saved since >= 2500)
       const rawPosts = [
         { id: 'post1', title: 'Title 1', selftext: 'Body 1', author: 'op1', score: 100, created_utc: 1719999999 },
         { id: 'post2', title: 'Title 2', selftext: 'Body 2', author: 'op2', score: 200, created_utc: 1719999999 },
@@ -79,17 +79,17 @@ describe('ScraperService', () => {
       mockPostRepo.findOneBy.mockResolvedValue(null); // None exist in DB yet
 
       // Mock word count comments
-      // post1: 1 comment containing 2000 words (repeating a word 2000 times)
+      // post1: 1 comment containing 2200 words
       const post1Comments = [
-        { id: 'c1', body: 'hello '.repeat(2000).trim(), author: 'user1', score: 10, parent_id: 't3_post1', created_utc: 1719999999 }
+        { id: 'c1', body: 'hello '.repeat(2200).trim(), author: 'user1', score: 10, parent_id: 't3_post1', created_utc: 1719999999 }
       ];
-      // post2: 1 comment containing only 1500 words
+      // post2: 1 comment containing 1500 words
       const post2Comments = [
         { id: 'c2', body: 'hello '.repeat(1500).trim(), author: 'user2', score: 10, parent_id: 't3_post2', created_utc: 1719999999 }
       ];
-      // post3: 1 comment containing 2500 words
+      // post3: 1 comment containing 2700 words
       const post3Comments = [
-        { id: 'c3', body: 'hello '.repeat(2500).trim(), author: 'user3', score: 10, parent_id: 't3_post3', created_utc: 1719999999 }
+        { id: 'c3', body: 'hello '.repeat(2700).trim(), author: 'user3', score: 10, parent_id: 't3_post3', created_utc: 1719999999 }
       ];
 
       mockRedditScraper.fetchPostComments.mockImplementation((sub, postId) => {
@@ -119,12 +119,11 @@ describe('ScraperService', () => {
       expect(mockRedditScraper.fetchPostComments).toHaveBeenCalledWith(subName, 'post2');
       expect(mockRedditScraper.fetchPostComments).toHaveBeenCalledWith(subName, 'post3');
 
-      // Verification 3: Only post1 and post3 should be saved in DB. post2 is skipped due to < 2000 words.
-      // So postRepo.save should NOT be called for post2
+      // Verification 3: Only post3 should be saved in DB. post1 and post2 are skipped due to < 2500 words.
       const saveCalls = mockPostRepo.save.mock.calls;
       const savedPostIds = saveCalls.map((call: any[]) => call[0].redditId);
-      expect(savedPostIds).toContain('post1');
       expect(savedPostIds).toContain('post3');
+      expect(savedPostIds).not.toContain('post1');
       expect(savedPostIds).not.toContain('post2');
     });
 
