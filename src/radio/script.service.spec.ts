@@ -173,10 +173,12 @@ describe('ScriptService', () => {
       ];
 
       let calledUserPrompt = '';
-      mockLlmService.generateText.mockImplementation((sys: string, user: string) => {
-        calledUserPrompt = user;
-        return Promise.resolve('Script content');
-      });
+      mockLlmService.generateText.mockImplementation(
+        (sys: string, user: string) => {
+          calledUserPrompt = user;
+          return Promise.resolve('Script content');
+        },
+      );
 
       await service.generateScript(posts, comments);
 

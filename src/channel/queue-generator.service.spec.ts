@@ -283,11 +283,106 @@ describe('QueueGeneratorService', () => {
       });
 
       // Check queued items order and instance type (STI verification):
-      expect(mockSavedItems[0] instanceof JingleSegment).toBe(true);
+      expect(mockSavedItems[0] instanceof TalkSegment).toBe(true);
 
       // Talk item's topicId should store the primary post ID ('post-1')
-      expect(mockSavedItems[1] instanceof TalkSegment).toBe(true);
-      expect((mockSavedItems[1] as TalkSegment).topicId).toBe('post-1');
+      expect((mockSavedItems[0] as TalkSegment).topicId).toBe('post-1');
+    });
+
+    it('should generate segments following the pattern: [1-2 Talk] -> [1-2 Songs] -> [1-2 Ads] -> [1 Jingle] (Branch: 1 each)', async () => {
+      const channelId = 'chan-1';
+      mockSegmentRepo.count.mockResolvedValue(0);
+      mockSegmentRepo.findOne.mockResolvedValue(null);
+      mockSubredditRepo.find.mockResolvedValue([{ subredditId: 'sub-1' }]);
+      mockProgressRepo.find.mockResolvedValue([]);
+      mockPostRepo.find.mockResolvedValue([
+        { id: 'post-1', title: 'Post 1', score: 10, subredditId: 'sub-1' },
+      ]);
+
+      // Force getRandomCount to return 1
+      jest.spyOn(service, 'getRandomCount').mockReturnValue(1);
+
+      const mockSavedItems: any[] = [];
+      mockSegmentRepo.save.mockImplementation((item) => {
+        const type =
+          item.type ||
+          item.constructor.name.toLowerCase().replace('segment', '');
+        const saved = {
+          ...item,
+          type,
+          id: item.id || 'uuid-' + mockSavedItems.length,
+        };
+        mockSavedItems.push(saved);
+        return Promise.resolve(saved);
+      });
+
+      await service.bufferAhead(channelId);
+
+      // Unique distinct segments by playOrder (1 Talk, 1 Song, 1 Ad, 1 Jingle = 4 total)
+      const uniqueItems = Array.from(
+        new Set(mockSavedItems.map((item) => item.playOrder)),
+      ).map((order) => mockSavedItems.find((item) => item.playOrder === order));
+
+      expect(uniqueItems.length).toBe(4);
+      expect(uniqueItems[0].type).toBe('talk');
+      expect(uniqueItems[1].type).toBe('song');
+      expect(uniqueItems[2].type).toBe('ad');
+      expect(uniqueItems[3].type).toBe('jingle');
+    });
+
+    it('should generate segments following the pattern: [1-2 Talk] -> [1-2 Songs] -> [1-2 Ads] -> [1 Jingle] (Branch: 2 each)', async () => {
+      const channelId = 'chan-1';
+      mockSegmentRepo.count.mockResolvedValue(0);
+      mockSegmentRepo.findOne.mockResolvedValue(null);
+      mockSubredditRepo.find.mockResolvedValue([{ subredditId: 'sub-1' }]);
+      mockProgressRepo.find.mockResolvedValue([]);
+      mockPostRepo.find.mockResolvedValue([
+        {
+          id: 'post-1',
+          title: 'Funny cat picture doing a flip',
+          score: 10,
+          subredditId: 'sub-1',
+        },
+        {
+          id: 'post-2',
+          title: 'Quantum Physics breakthrough at CERN laboratory',
+          score: 10,
+          subredditId: 'sub-1',
+        },
+      ]);
+
+      // Force getRandomCount to return 2
+      jest.spyOn(service, 'getRandomCount').mockReturnValue(2);
+
+      const mockSavedItems: any[] = [];
+      mockSegmentRepo.save.mockImplementation((item) => {
+        const type =
+          item.type ||
+          item.constructor.name.toLowerCase().replace('segment', '');
+        const saved = {
+          ...item,
+          type,
+          id: item.id || 'uuid-' + mockSavedItems.length,
+        };
+        mockSavedItems.push(saved);
+        return Promise.resolve(saved);
+      });
+
+      await service.bufferAhead(channelId);
+
+      // Unique distinct segments by playOrder (2 Talk, 2 Songs, 2 Ads, 1 Jingle = 7 total)
+      const uniqueItems = Array.from(
+        new Set(mockSavedItems.map((item) => item.playOrder)),
+      ).map((order) => mockSavedItems.find((item) => item.playOrder === order));
+
+      expect(uniqueItems.length).toBe(7);
+      expect(uniqueItems[0].type).toBe('talk');
+      expect(uniqueItems[1].type).toBe('talk');
+      expect(uniqueItems[2].type).toBe('song');
+      expect(uniqueItems[3].type).toBe('song');
+      expect(uniqueItems[4].type).toBe('ad');
+      expect(uniqueItems[5].type).toBe('ad');
+      expect(uniqueItems[6].type).toBe('jingle');
     });
   });
 });

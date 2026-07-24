@@ -154,7 +154,6 @@ describe('RedditScraperService', () => {
       expect(result[0].author).toBe('author2');
     });
 
-
     it('should throw error if BROWSERLESS_WS_URL is not configured', async () => {
       mockConfigService.get.mockReturnValueOnce(null);
       await expect(service.fetchTopPosts('webdev', 10)).rejects.toThrow(
@@ -265,5 +264,3 @@ describe('RedditScraperService', () => {
     });
   });
 });
-
-

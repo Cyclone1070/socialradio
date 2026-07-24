@@ -66,14 +66,35 @@ describe('ScraperService', () => {
       mockSubredditRepo.save.mockResolvedValue(subEntity);
       mockRedditScraper.exists.mockResolvedValue(true);
 
-      // We return 3 raw posts. 
+      // We return 3 raw posts.
       // Post 1: 2200 words (Should be skipped due to < 2500)
       // Post 2: 1500 words (Should be skipped due to < 2500)
       // Post 3: 2700 words (Should be saved since >= 2500)
       const rawPosts = [
-        { id: 'post1', title: 'Title 1', selftext: 'Body 1', author: 'op1', score: 100, created_utc: 1719999999 },
-        { id: 'post2', title: 'Title 2', selftext: 'Body 2', author: 'op2', score: 200, created_utc: 1719999999 },
-        { id: 'post3', title: 'Title 3', selftext: 'Body 3', author: 'op3', score: 300, created_utc: 1719999999 },
+        {
+          id: 'post1',
+          title: 'Title 1',
+          selftext: 'Body 1',
+          author: 'op1',
+          score: 100,
+          created_utc: 1719999999,
+        },
+        {
+          id: 'post2',
+          title: 'Title 2',
+          selftext: 'Body 2',
+          author: 'op2',
+          score: 200,
+          created_utc: 1719999999,
+        },
+        {
+          id: 'post3',
+          title: 'Title 3',
+          selftext: 'Body 3',
+          author: 'op3',
+          score: 300,
+          created_utc: 1719999999,
+        },
       ];
       mockRedditScraper.fetchTopPosts.mockResolvedValue(rawPosts);
       mockPostRepo.findOneBy.mockResolvedValue(null); // None exist in DB yet
@@ -81,15 +102,36 @@ describe('ScraperService', () => {
       // Mock word count comments
       // post1: 1 comment containing 2200 words
       const post1Comments = [
-        { id: 'c1', body: 'hello '.repeat(2200).trim(), author: 'user1', score: 10, parent_id: 't3_post1', created_utc: 1719999999 }
+        {
+          id: 'c1',
+          body: 'hello '.repeat(2200).trim(),
+          author: 'user1',
+          score: 10,
+          parent_id: 't3_post1',
+          created_utc: 1719999999,
+        },
       ];
       // post2: 1 comment containing 1500 words
       const post2Comments = [
-        { id: 'c2', body: 'hello '.repeat(1500).trim(), author: 'user2', score: 10, parent_id: 't3_post2', created_utc: 1719999999 }
+        {
+          id: 'c2',
+          body: 'hello '.repeat(1500).trim(),
+          author: 'user2',
+          score: 10,
+          parent_id: 't3_post2',
+          created_utc: 1719999999,
+        },
       ];
       // post3: 1 comment containing 2700 words
       const post3Comments = [
-        { id: 'c3', body: 'hello '.repeat(2700).trim(), author: 'user3', score: 10, parent_id: 't3_post3', created_utc: 1719999999 }
+        {
+          id: 'c3',
+          body: 'hello '.repeat(2700).trim(),
+          author: 'user3',
+          score: 10,
+          parent_id: 't3_post3',
+          created_utc: 1719999999,
+        },
       ];
 
       mockRedditScraper.fetchPostComments.mockImplementation((sub, postId) => {
@@ -99,7 +141,10 @@ describe('ScraperService', () => {
         return Promise.resolve([]);
       });
 
-      mockCommentRepo.create.mockImplementation((c) => ({ id: 'c-uuid', ...c }));
+      mockCommentRepo.create.mockImplementation((c) => ({
+        id: 'c-uuid',
+        ...c,
+      }));
       mockCommentRepo.save.mockImplementation((c) => Promise.resolve(c));
 
       mockPostRepo.create.mockImplementation((p) => ({ id: 'p-uuid', ...p }));
@@ -109,15 +154,29 @@ describe('ScraperService', () => {
 
       expect(cleanupSpy).toHaveBeenCalled();
       expect(mockRedditScraper.exists).toHaveBeenCalledWith(subName);
-      expect(mockSubredditRepo.findOneBy).toHaveBeenCalledWith({ name: subName });
-      
+      expect(mockSubredditRepo.findOneBy).toHaveBeenCalledWith({
+        name: subName,
+      });
+
       // Verification 1: fetchTopPosts should look at 100 posts max to find high quality content
-      expect(mockRedditScraper.fetchTopPosts).toHaveBeenCalledWith(subName, 100);
+      expect(mockRedditScraper.fetchTopPosts).toHaveBeenCalledWith(
+        subName,
+        100,
+      );
 
       // Verification 2: fetchPostComments should have been called for all candidate posts
-      expect(mockRedditScraper.fetchPostComments).toHaveBeenCalledWith(subName, 'post1');
-      expect(mockRedditScraper.fetchPostComments).toHaveBeenCalledWith(subName, 'post2');
-      expect(mockRedditScraper.fetchPostComments).toHaveBeenCalledWith(subName, 'post3');
+      expect(mockRedditScraper.fetchPostComments).toHaveBeenCalledWith(
+        subName,
+        'post1',
+      );
+      expect(mockRedditScraper.fetchPostComments).toHaveBeenCalledWith(
+        subName,
+        'post2',
+      );
+      expect(mockRedditScraper.fetchPostComments).toHaveBeenCalledWith(
+        subName,
+        'post3',
+      );
 
       // Verification 3: Only post3 should be saved in DB. post1 and post2 are skipped due to < 2500 words.
       const saveCalls = mockPostRepo.save.mock.calls;
@@ -126,7 +185,6 @@ describe('ScraperService', () => {
       expect(savedPostIds).not.toContain('post1');
       expect(savedPostIds).not.toContain('post2');
     });
-
 
     it('should delete subreddit completely and resolve gracefully when validateSubreddit returns false', async () => {
       const subName = 'bannedSub';

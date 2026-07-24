@@ -47,27 +47,42 @@ export class QueueGeneratorService {
     });
     let nextPlayOrder = lastItem ? lastItem.playOrder + 1 : 1;
 
-    // Jingle (ready)
-    const jingleSegment = await this.mediaService.getRandomJingle();
-    const jingleItem = Object.assign(new JingleSegment(), {
-      channelId,
-      playOrder: nextPlayOrder++,
-      audioUrl: jingleSegment.filePath,
-      durationSeconds: jingleSegment.durationSeconds,
-    });
-    const savedJingle = await this.segmentRepo.save(jingleItem);
-    await this.chunker.sliceAndUpload(
-      channelId,
-      savedJingle.id,
-      jingleSegment.filePath,
-    );
+    // Sequence Pattern: [1-2 Talk] -> [1-2 Songs] -> [1-2 Ads] -> [1 Jingle]
+    const talkCount = this.getRandomCount();
+    for (let i = 0; i < talkCount; i++) {
+      nextPlayOrder = await this.appendTalkOrFallbackSong(
+        channelId,
+        nextPlayOrder,
+      );
+    }
 
-    // Talk (generating)
+    const songCount = this.getRandomCount();
+    for (let i = 0; i < songCount; i++) {
+      nextPlayOrder = await this.appendSong(channelId, nextPlayOrder);
+    }
+
+    const adCount = this.getRandomCount();
+    for (let i = 0; i < adCount; i++) {
+      nextPlayOrder = await this.appendAd(channelId, nextPlayOrder);
+    }
+
+    // Always finish cycle with 1 Jingle stinger
+    await this.appendJingle(channelId, nextPlayOrder++);
+  }
+
+  public getRandomCount(): number {
+    return Math.random() < 0.5 ? 1 : 2;
+  }
+
+  private async appendTalkOrFallbackSong(
+    channelId: string,
+    playOrder: number,
+  ): Promise<number> {
     const topicSegment = await this.findPendingTopicSegment(channelId);
     if (topicSegment) {
       const talkItem = Object.assign(new TalkSegment(), {
         channelId,
-        playOrder: nextPlayOrder++,
+        playOrder,
         status: 'generating',
         topicId: topicSegment.id,
       });
@@ -103,72 +118,64 @@ export class QueueGeneratorService {
           await this.segmentRepo.save(savedTalkItem);
         });
     } else {
-      // Fallback if no topics: insert extra song instead
-      const fallbackSong = await this.mediaService.getRandomMusic();
-      const songItem = Object.assign(new SongSegment(), {
-        channelId,
-        playOrder: nextPlayOrder++,
-        audioUrl: fallbackSong.filePath,
-        durationSeconds: fallbackSong.durationSeconds,
-        title: fallbackSong.title,
-        artist: fallbackSong.artist,
-      });
-      const savedSong = await this.segmentRepo.save(songItem);
-      await this.chunker.sliceAndUpload(
-        channelId,
-        savedSong.id,
-        fallbackSong.filePath,
-      );
+      // Fallback if no topics: insert song instead
+      await this.appendSong(channelId, playOrder);
     }
+    return playOrder + 1;
+  }
 
-    // Song (ready)
-    const songSegment1 = await this.mediaService.getRandomMusic();
-    const songItem1 = Object.assign(new SongSegment(), {
+  private async appendSong(
+    channelId: string,
+    playOrder: number,
+  ): Promise<number> {
+    const song = await this.mediaService.getRandomMusic();
+    const songItem = Object.assign(new SongSegment(), {
       channelId,
-      playOrder: nextPlayOrder++,
-      audioUrl: songSegment1.filePath,
-      durationSeconds: songSegment1.durationSeconds,
-      title: songSegment1.title,
-      artist: songSegment1.artist,
+      playOrder,
+      audioUrl: song.filePath,
+      durationSeconds: song.durationSeconds,
+      title: song.title,
+      artist: song.artist,
     });
-    const savedSong1 = await this.segmentRepo.save(songItem1);
-    await this.chunker.sliceAndUpload(
-      channelId,
-      savedSong1.id,
-      songSegment1.filePath,
-    );
+    const savedSong = await this.segmentRepo.save(songItem);
+    await this.chunker.sliceAndUpload(channelId, savedSong.id, song.filePath);
+    return playOrder + 1;
+  }
 
-    // Ad (ready)
-    const adSegment = await this.mediaService.getRandomAd();
+  private async appendAd(
+    channelId: string,
+    playOrder: number,
+  ): Promise<number> {
+    const ad = await this.mediaService.getRandomAd();
     const adItem = Object.assign(new AdSegment(), {
       channelId,
-      playOrder: nextPlayOrder++,
-      audioUrl: adSegment.filePath,
-      durationSeconds: adSegment.durationSeconds,
+      playOrder,
+      audioUrl: ad.filePath,
+      durationSeconds: ad.durationSeconds,
     });
     const savedAd = await this.segmentRepo.save(adItem);
-    await this.chunker.sliceAndUpload(
-      channelId,
-      savedAd.id,
-      adSegment.filePath,
-    );
+    await this.chunker.sliceAndUpload(channelId, savedAd.id, ad.filePath);
+    return playOrder + 1;
+  }
 
-    // Song (ready)
-    const songSegment2 = await this.mediaService.getRandomMusic();
-    const songItem2 = Object.assign(new SongSegment(), {
+  private async appendJingle(
+    channelId: string,
+    playOrder: number,
+  ): Promise<number> {
+    const jingle = await this.mediaService.getRandomJingle();
+    const jingleItem = Object.assign(new JingleSegment(), {
       channelId,
-      playOrder: nextPlayOrder++,
-      audioUrl: songSegment2.filePath,
-      durationSeconds: songSegment2.durationSeconds,
-      title: songSegment2.title,
-      artist: songSegment2.artist,
+      playOrder,
+      audioUrl: jingle.filePath,
+      durationSeconds: jingle.durationSeconds,
     });
-    const savedSong2 = await this.segmentRepo.save(songItem2);
+    const savedJingle = await this.segmentRepo.save(jingleItem);
     await this.chunker.sliceAndUpload(
       channelId,
-      savedSong2.id,
-      songSegment2.filePath,
+      savedJingle.id,
+      jingle.filePath,
     );
+    return playOrder + 1;
   }
 
   public async findPendingTopicSegment(
@@ -225,7 +232,6 @@ export class QueueGeneratorService {
         await this.scraperService.scrapeSubreddit(name);
       }
     }
-
 
     // Fetch again after potentially scraping new posts
     const posts = await this.postRepo.find({

@@ -98,14 +98,12 @@ export class RedditScraperService {
         });
 
       return posts.slice(0, limit);
-
     } finally {
       await page.close();
       await context.close();
       await browser.close();
     }
   }
-
 
   async exists(subredditName: string): Promise<boolean> {
     const browser = await this.connect();
@@ -199,5 +197,3 @@ export class RedditScraperService {
     }
   }
 }
-
-
