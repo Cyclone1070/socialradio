@@ -98,6 +98,7 @@ describe('RedditScraperService', () => {
         data: {
           children: [
             {
+              kind: 't3',
               data: {
                 id: 'post123',
                 title: 'Title of Post',
@@ -109,6 +110,7 @@ describe('RedditScraperService', () => {
               },
             },
             {
+              kind: 't3',
               data: {
                 id: 'post456',
                 title: 'Another Post Title',

@@ -65,7 +65,9 @@ describe('ChannelController', () => {
       ];
       mockChannelService.getUserChannels.mockResolvedValue(channels);
 
-      const req = { user: { id: 'user-1' } } as unknown as Request;
+      const req = {
+        user: { id: 'user-1' },
+      } as Request & { user: { id: string } };
       const result = await controller.getUserChannels(req);
 
       expect(mockChannelService.getUserChannels).toHaveBeenCalledWith('user-1');
@@ -87,7 +89,9 @@ describe('ChannelController', () => {
       };
       mockChannelService.configureChannel.mockResolvedValue(channel);
 
-      const req = { user: { id: 'user-1' } } as unknown as Request;
+      const req = {
+        user: { id: 'user-1' },
+      } as Request & { user: { id: string } };
       const result = await controller.configureChannel(dto, req);
 
       expect(mockChannelService.configureChannel).toHaveBeenCalledWith(

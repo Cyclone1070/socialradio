@@ -39,7 +39,9 @@ describe('UserController', () => {
       };
       mockUserService.findById.mockResolvedValue(user);
 
-      const req = { user: { id: 'uuid-123' } } as unknown as Request;
+      const req = {
+        user: { id: 'uuid-123' },
+      } as Request & { user?: { id: string } };
       const result = await controller.getMe(req);
 
       expect(mockUserService.findById).toHaveBeenCalledWith('uuid-123');
@@ -53,7 +55,9 @@ describe('UserController', () => {
     it('should throw NotFoundException if user does not exist', async () => {
       mockUserService.findById.mockResolvedValue(null);
 
-      const req = { user: { id: 'uuid-123' } } as unknown as Request;
+      const req = {
+        user: { id: 'uuid-123' },
+      } as Request & { user?: { id: string } };
 
       await expect(controller.getMe(req)).rejects.toThrow();
       expect(mockUserService.findById).toHaveBeenCalledWith('uuid-123');

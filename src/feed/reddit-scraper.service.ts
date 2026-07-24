@@ -3,6 +3,58 @@ import { ConfigService } from '@nestjs/config';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { FingerprintGenerator } from 'fingerprint-generator';
+import { z } from 'zod';
+
+// ── Zod schemas for Reddit JSON API ──────────────────────────────────
+const ListingChildDataSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  selftext: z.string(),
+  author: z.string(),
+  score: z.number(),
+  num_comments: z.number(),
+  created_utc: z.number(),
+});
+
+const ListingChildSchema = z.object({
+  kind: z.string(),
+  data: ListingChildDataSchema,
+});
+
+const ListingResponseSchema = z.object({
+  data: z.object({
+    children: z.array(ListingChildSchema),
+  }),
+});
+
+const CommentDataSchema = z.object({
+  id: z.string(),
+  body: z.string(),
+  author: z.string(),
+  score: z.number(),
+  parent_id: z.string(),
+  created_utc: z.number(),
+  replies: z
+    .object({
+      data: z.object({
+        children: z.array(z.any()),
+      }),
+    })
+    .optional(),
+});
+
+const CommentChildSchema = z.object({
+  kind: z.string(),
+  data: CommentDataSchema,
+});
+
+const CommentResponseSchema = z.object({
+  data: z.object({
+    children: z.array(CommentChildSchema),
+  }),
+});
+
+// ── Public types ─────────────────────────────────────────────────────
 
 export interface RedditPostData {
   id: string;
@@ -71,21 +123,27 @@ export class RedditScraperService {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
       await page.waitForSelector('shreddit-post', { timeout: 15000 });
 
-      const rawJson = await page.evaluate(async (feedLimit) => {
-        const res = await fetch(`./.json?limit=${feedLimit}`);
-        if (!res.ok) {
-          throw new Error(`Failed to fetch subreddit feed JSON: ${res.status}`);
-        }
-        return res.json();
-      }, limit);
+      const rawJson: unknown = await page.evaluate(
+        async (feedLimit): Promise<unknown> => {
+          const res = await fetch(`./.json?limit=${feedLimit}`);
+          if (!res.ok) {
+            throw new Error(
+              `Failed to fetch subreddit feed JSON: ${res.status}`,
+            );
+          }
+          return res.json();
+        },
+        limit,
+      );
 
-      const children = rawJson?.data?.children || [];
+      const listing = ListingResponseSchema.parse(rawJson);
+      const children = listing.data.children || [];
       const posts: RedditPostData[] = children
-        .filter((child: any) => {
+        .filter((child) => {
           const d = child.data;
           return d && Number(d.num_comments) >= 40;
         })
-        .map((child: any) => {
+        .map((child) => {
           const d = child.data;
           return {
             id: d.id || '',
@@ -151,15 +209,22 @@ export class RedditScraperService {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
       await page.waitForSelector('shreddit-post', { timeout: 15000 });
 
-      const rawJson = await page.evaluate(async () => {
-        const res = await fetch('./.json');
-        if (!res.ok) {
-          throw new Error(`Failed to fetch comments JSON: ${res.status}`);
-        }
-        return res.json();
-      });
+      const rawJson: unknown = await page.evaluate(
+        async (): Promise<unknown> => {
+          const res = await fetch('./.json');
+          if (!res.ok) {
+            throw new Error(`Failed to fetch comments JSON: ${res.status}`);
+          }
+          return res.json();
+        },
+      );
 
-      const flattenComments = (children: any[]): RedditCommentData[] => {
+      const parsed = z.array(z.any()).parse(rawJson);
+      const commentsListing = CommentResponseSchema.parse(parsed[1]);
+
+      const flattenComments = (
+        children: z.infer<typeof CommentChildSchema>[] | undefined,
+      ): RedditCommentData[] => {
         const results: RedditCommentData[] = [];
         if (!children) return results;
 
@@ -181,14 +246,14 @@ export class RedditScraperService {
             created_utc: Number(d.created_utc) || 0,
           });
 
-          if (d.replies && d.replies.data && d.replies.data.children) {
+          if (d.replies?.data?.children) {
             results.push(...flattenComments(d.replies.data.children));
           }
         }
         return results;
       };
 
-      const flattened = flattenComments(rawJson[1]?.data?.children || []);
+      const flattened = flattenComments(commentsListing.data.children);
       return flattened;
     } finally {
       await page.close();

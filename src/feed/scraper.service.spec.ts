@@ -141,14 +141,21 @@ describe('ScraperService', () => {
         return Promise.resolve([]);
       });
 
-      mockCommentRepo.create.mockImplementation((c) => ({
+      mockCommentRepo.create.mockImplementation((c): Partial<Comment> => ({
         id: 'c-uuid',
         ...c,
       }));
-      mockCommentRepo.save.mockImplementation((c) => Promise.resolve(c));
+      mockCommentRepo.save.mockImplementation((c): Promise<Partial<Comment>> =>
+        Promise.resolve(c),
+      );
 
-      mockPostRepo.create.mockImplementation((p) => ({ id: 'p-uuid', ...p }));
-      mockPostRepo.save.mockImplementation((p) => Promise.resolve(p));
+      mockPostRepo.create.mockImplementation((p): Partial<Post> => ({
+        id: 'p-uuid',
+        ...p,
+      }));
+      mockPostRepo.save.mockImplementation((p): Promise<Partial<Post>> =>
+        Promise.resolve(p),
+      );
 
       await service.scrapeSubreddit(subName);
 
@@ -180,7 +187,9 @@ describe('ScraperService', () => {
 
       // Verification 3: Only post3 should be saved in DB. post1 and post2 are skipped due to < 2500 words.
       const saveCalls = mockPostRepo.save.mock.calls;
-      const savedPostIds = saveCalls.map((call: any[]) => call[0].redditId);
+      const savedPostIds = saveCalls.map(
+        (call: [Partial<Post>]) => call[0].redditId,
+      );
       expect(savedPostIds).toContain('post3');
       expect(savedPostIds).not.toContain('post1');
       expect(savedPostIds).not.toContain('post2');

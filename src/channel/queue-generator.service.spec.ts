@@ -1,7 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { QueueGeneratorService } from './queue-generator.service';
-import { Segment, TalkSegment, JingleSegment } from './entities/segment.entity';
+import {
+  Segment,
+  TalkSegment,
+  SongSegment,
+  AdSegment,
+  JingleSegment,
+} from './entities/segment.entity';
 import { ChannelSubreddit } from './entities/channel-subreddit.entity';
 import { ChannelPostProgress } from './entities/channel-post-progress.entity';
 import { Post } from '../feed/entities/post.entity';
@@ -101,12 +107,9 @@ describe('QueueGeneratorService', () => {
       durationSeconds: 60,
       postIds: ['post-1'],
     });
-    mockSegmentRepo.create.mockImplementation((dto) => dto as Segment);
-    mockSegmentRepo.save.mockImplementation((item) =>
-      Promise.resolve({
-        id: 'uuid-1',
-        ...(item as Record<string, unknown>),
-      } as Segment),
+    mockSegmentRepo.create.mockImplementation((dto): Segment => dto);
+    mockSegmentRepo.save.mockImplementation((item): Promise<Segment> =>
+      Promise.resolve(item as Segment),
     );
   });
 
@@ -251,13 +254,13 @@ describe('QueueGeneratorService', () => {
       });
 
       const mockSavedItems: Segment[] = [];
-      mockSegmentRepo.create.mockImplementation((dto) => dto as Segment);
-      mockSegmentRepo.save.mockImplementation((item) => {
+      mockSegmentRepo.create.mockImplementation((dto): Segment => dto);
+      mockSegmentRepo.save.mockImplementation((item): Promise<Segment> => {
         mockSavedItems.push(item as Segment);
         return Promise.resolve({
           id: 'uuid-' + mockSavedItems.length,
           ...(item as Record<string, unknown>),
-        } as Segment);
+        } as unknown as Segment);
       });
 
       await service.bufferAhead(channelId);
@@ -302,18 +305,10 @@ describe('QueueGeneratorService', () => {
       // Force getRandomCount to return 1
       jest.spyOn(service, 'getRandomCount').mockReturnValue(1);
 
-      const mockSavedItems: any[] = [];
+      const mockSavedItems: Segment[] = [];
       mockSegmentRepo.save.mockImplementation((item) => {
-        const type =
-          item.type ||
-          item.constructor.name.toLowerCase().replace('segment', '');
-        const saved = {
-          ...item,
-          type,
-          id: item.id || 'uuid-' + mockSavedItems.length,
-        };
-        mockSavedItems.push(saved);
-        return Promise.resolve(saved);
+        mockSavedItems.push(item as Segment);
+        return Promise.resolve(item as Segment);
       });
 
       await service.bufferAhead(channelId);
@@ -324,10 +319,10 @@ describe('QueueGeneratorService', () => {
       ).map((order) => mockSavedItems.find((item) => item.playOrder === order));
 
       expect(uniqueItems.length).toBe(4);
-      expect(uniqueItems[0].type).toBe('talk');
-      expect(uniqueItems[1].type).toBe('song');
-      expect(uniqueItems[2].type).toBe('ad');
-      expect(uniqueItems[3].type).toBe('jingle');
+      expect(uniqueItems[0]).toBeInstanceOf(TalkSegment);
+      expect(uniqueItems[1]).toBeInstanceOf(SongSegment);
+      expect(uniqueItems[2]).toBeInstanceOf(AdSegment);
+      expect(uniqueItems[3]).toBeInstanceOf(JingleSegment);
     });
 
     it('should generate segments following the pattern: [1-2 Talk] -> [1-2 Songs] -> [1-2 Ads] -> [1 Jingle] (Branch: 2 each)', async () => {
@@ -354,18 +349,10 @@ describe('QueueGeneratorService', () => {
       // Force getRandomCount to return 2
       jest.spyOn(service, 'getRandomCount').mockReturnValue(2);
 
-      const mockSavedItems: any[] = [];
+      const mockSavedItems: Segment[] = [];
       mockSegmentRepo.save.mockImplementation((item) => {
-        const type =
-          item.type ||
-          item.constructor.name.toLowerCase().replace('segment', '');
-        const saved = {
-          ...item,
-          type,
-          id: item.id || 'uuid-' + mockSavedItems.length,
-        };
-        mockSavedItems.push(saved);
-        return Promise.resolve(saved);
+        mockSavedItems.push(item as Segment);
+        return Promise.resolve(item as Segment);
       });
 
       await service.bufferAhead(channelId);
@@ -376,13 +363,13 @@ describe('QueueGeneratorService', () => {
       ).map((order) => mockSavedItems.find((item) => item.playOrder === order));
 
       expect(uniqueItems.length).toBe(7);
-      expect(uniqueItems[0].type).toBe('talk');
-      expect(uniqueItems[1].type).toBe('talk');
-      expect(uniqueItems[2].type).toBe('song');
-      expect(uniqueItems[3].type).toBe('song');
-      expect(uniqueItems[4].type).toBe('ad');
-      expect(uniqueItems[5].type).toBe('ad');
-      expect(uniqueItems[6].type).toBe('jingle');
+      expect(uniqueItems[0]).toBeInstanceOf(TalkSegment);
+      expect(uniqueItems[1]).toBeInstanceOf(TalkSegment);
+      expect(uniqueItems[2]).toBeInstanceOf(SongSegment);
+      expect(uniqueItems[3]).toBeInstanceOf(SongSegment);
+      expect(uniqueItems[4]).toBeInstanceOf(AdSegment);
+      expect(uniqueItems[5]).toBeInstanceOf(AdSegment);
+      expect(uniqueItems[6]).toBeInstanceOf(JingleSegment);
     });
   });
 });
