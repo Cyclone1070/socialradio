@@ -27,26 +27,41 @@ const ListingResponseSchema = z.object({
   }),
 });
 
-const CommentDataSchema = z.object({
-  id: z.string(),
-  body: z.string(),
-  author: z.string(),
-  score: z.number(),
-  parent_id: z.string(),
-  created_utc: z.number(),
-  replies: z
-    .object({
-      data: z.object({
-        children: z.array(z.any()),
-      }),
-    })
-    .optional(),
-});
+// Recursive comment node for deeply nested replies
+interface InternalCommentNode {
+  kind: string;
+  data: {
+    id: string;
+    body: string;
+    author: string;
+    score: number;
+    parent_id: string;
+    created_utc: number;
+    replies?: { data: { children: InternalCommentNode[] } } | string;
+  };
+}
 
-const CommentChildSchema = z.object({
-  kind: z.string(),
-  data: CommentDataSchema,
-});
+const CommentChildSchema: z.ZodType<InternalCommentNode> = z.lazy(() =>
+  z.object({
+    kind: z.string(),
+    data: z.object({
+      id: z.string(),
+      body: z.string(),
+      author: z.string(),
+      score: z.number(),
+      parent_id: z.string(),
+      created_utc: z.number(),
+      replies: z
+        .object({
+          data: z.object({
+            children: z.array(CommentChildSchema),
+          }),
+        })
+        .or(z.string())
+        .optional(),
+    }),
+  }),
+);
 
 const CommentResponseSchema = z.object({
   data: z.object({
@@ -219,18 +234,18 @@ export class RedditScraperService {
         },
       );
 
-      const parsed = z.array(z.any()).parse(rawJson);
-      const commentsListing = CommentResponseSchema.parse(parsed[1]);
+      const parsed = z.tuple([z.any(), CommentResponseSchema]).parse(rawJson);
+      const commentsListing = parsed[1];
 
       const flattenComments = (
-        children: z.infer<typeof CommentChildSchema>[] | undefined,
+        children: InternalCommentNode[] | undefined,
       ): RedditCommentData[] => {
         const results: RedditCommentData[] = [];
         if (!children) return results;
 
         for (const child of children) {
           if (child.kind !== 't1') continue;
-          const d = child.data;
+          const d: InternalCommentNode['data'] = child.data;
           if (!d) continue;
 
           // Strip prefixes for standard IDs
@@ -246,7 +261,11 @@ export class RedditScraperService {
             created_utc: Number(d.created_utc) || 0,
           });
 
-          if (d.replies?.data?.children) {
+          if (
+            d.replies &&
+            typeof d.replies === 'object' &&
+            d.replies.data?.children
+          ) {
             results.push(...flattenComments(d.replies.data.children));
           }
         }

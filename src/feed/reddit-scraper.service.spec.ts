@@ -264,5 +264,56 @@ describe('RedditScraperService', () => {
       expect(result[1].body).toBe('Child comment text');
       expect(result[1].parent_id).toBe('comment1');
     });
+
+    it('should throw ZodError if a deeply nested reply is missing required fields', async () => {
+      mockPage.waitForSelector.mockResolvedValue(undefined);
+
+      // Nested reply missing required fields like score and created_utc
+      const mockJsonTree = [
+        {
+          data: {
+            children: [{ data: { id: 'post123', title: 'Post Title' } }],
+          },
+        },
+        {
+          data: {
+            children: [
+              {
+                kind: 't1',
+                data: {
+                  id: 'comment1',
+                  body: 'Parent comment',
+                  author: 'author1',
+                  score: 10,
+                  parent_id: 't3_post123',
+                  created_utc: 1784085000,
+                  replies: {
+                    data: {
+                      children: [
+                        {
+                          kind: 't1',
+                          data: {
+                            id: 'bad-child',
+                            body: 'missing score and created_utc',
+                            author: 'author2',
+                            parent_id: 't1_comment1',
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      ];
+
+      mockPage.evaluate.mockResolvedValue(mockJsonTree);
+
+      await expect(
+        service.fetchPostComments('webdev', 'post123'),
+      ).rejects.toThrow();
+    });
   });
 });
