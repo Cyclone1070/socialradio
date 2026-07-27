@@ -1,5 +1,3 @@
-import * as fs from 'fs';
-
 export interface WriteParams {
   key: string;
   content: string | Buffer;
@@ -10,10 +8,7 @@ export interface WriteParams {
 export interface StorageService {
   write(params: WriteParams): Promise<void>;
   read(key: string): Promise<Buffer>;
-  exists(key: string): boolean;
+  exists(key: string): Promise<boolean>;
   delete(key: string): Promise<void>;
-  createReadStream(
-    key: string,
-    options?: Parameters<typeof fs.createReadStream>[1],
-  ): fs.ReadStream;
+  getPublicUrl(key: string): string;
 }

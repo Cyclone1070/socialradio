@@ -27,6 +27,7 @@ describe('ChannelController', () => {
 
   const mockStorageService = {
     exists: jest.fn(),
+    read: jest.fn(),
     createReadStream: jest.fn(),
   };
 
@@ -152,30 +153,28 @@ describe('ChannelController', () => {
   });
 
   describe('getAudioChunk', () => {
-    it('should stream audio chunk if it exists', () => {
-      const pipe = jest.fn();
+    it('should stream audio chunk if it exists', async () => {
       const mockRes = {
         setHeader: jest.fn(),
         status: jest.fn().mockReturnThis(),
         send: jest.fn(),
       } as unknown as Response;
-      const mockStream = { pipe };
-      mockStorageService.exists.mockReturnValue(true);
-      mockStorageService.createReadStream.mockReturnValue(mockStream);
+      mockStorageService.exists.mockResolvedValue(true);
+      mockStorageService.read.mockResolvedValue(Buffer.from('audio'));
 
-      controller.getAudioChunk('chan-1', 'chunk_1.mp3', mockRes);
+      await controller.getAudioChunk('chan-1', 'chunk_1.mp3', mockRes);
 
       expect(mockStorageService.exists).toHaveBeenCalledWith(
         'channels/chan-1/chunks/chunk_1.mp3',
       );
-      expect(mockStorageService.createReadStream).toHaveBeenCalledWith(
+      expect(mockStorageService.read).toHaveBeenCalledWith(
         'channels/chan-1/chunks/chunk_1.mp3',
       );
       expect(mockRes.setHeader).toHaveBeenCalledWith(
         'Content-Type',
         'audio/mpeg',
       );
-      expect(pipe).toHaveBeenCalledWith(mockRes);
+      expect(mockRes.send).toHaveBeenCalledWith(Buffer.from('audio'));
     });
   });
 

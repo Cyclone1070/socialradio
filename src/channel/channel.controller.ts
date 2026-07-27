@@ -82,20 +82,21 @@ export class ChannelController {
   }
 
   @Get(':id/chunks/:filename')
-  getAudioChunk(
+  async getAudioChunk(
     @Param('id') id: string,
     @Param('filename') filename: string,
     @Res() res: express.Response,
-  ): void {
+  ): Promise<void> {
     const chunkPath = `channels/${id}/chunks/${filename}`;
-    if (!this.storageService.exists(chunkPath)) {
+    const exists = await this.storageService.exists(chunkPath);
+    if (!exists) {
       res.status(404).send('Chunk not found');
       return;
     }
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    const readStream = this.storageService.createReadStream(chunkPath);
-    readStream.pipe(res);
+    const audioBuffer = await this.storageService.read(chunkPath);
+    res.send(audioBuffer);
   }
 
   @Get('/admin/channels/:id/topics')
