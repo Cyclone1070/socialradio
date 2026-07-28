@@ -38,7 +38,8 @@ services:
 
   app:
     build:
-      context: .
+      context: ../..
+      dockerfile: deployment/docker/Dockerfile
       target: runner
     container_name: socialradio_app
     ports:
