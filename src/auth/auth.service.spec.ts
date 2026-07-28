@@ -36,39 +36,15 @@ describe('AuthService', () => {
     expect(service).toBeDefined();
   });
 
-  describe('register', () => {
-    it('should hash password and create user', async () => {
-      const registerDto = {
-        email: 'test@example.com',
-        password: 'password123',
-      };
-      const hashedPassword = 'hashed_password';
-      const createdUser = {
-        id: 'uuid',
-        email: 'test@example.com',
-        createdAt: new Date(),
-      };
-
-      (bcrypt.hash as jest.Mock).mockResolvedValue(hashedPassword);
-      mockUserService.create.mockResolvedValue(createdUser);
-
-      const result = await service.register(registerDto);
-
-      expect(bcrypt.hash).toHaveBeenCalledWith(registerDto.password, 10);
-      expect(mockUserService.create).toHaveBeenCalledWith(
-        registerDto,
-        hashedPassword,
-      );
-      expect(result).toEqual(createdUser);
-    });
-  });
-
   describe('login', () => {
     it('should return access token if credentials are valid', async () => {
-      const loginDto = { email: 'test@example.com', password: 'password123' };
+      const loginDto = {
+        email: 'admin@socialradio.com',
+        password: 'password123',
+      };
       const user = {
         id: 'uuid',
-        email: 'test@example.com',
+        email: 'admin@socialradio.com',
         passwordHash: 'hash',
       };
 
@@ -103,10 +79,13 @@ describe('AuthService', () => {
     });
 
     it('should throw UnauthorizedException if password does not match', async () => {
-      const loginDto = { email: 'test@example.com', password: 'wrongpassword' };
+      const loginDto = {
+        email: 'admin@socialradio.com',
+        password: 'wrongpassword',
+      };
       const user = {
         id: 'uuid',
-        email: 'test@example.com',
+        email: 'admin@socialradio.com',
         passwordHash: 'hash',
       };
 

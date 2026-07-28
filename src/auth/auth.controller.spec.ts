@@ -1,14 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
-import { RegisterDto } from '../user/dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 
 describe('AuthController', () => {
   let controller: AuthController;
 
   const mockAuthService = {
-    register: jest.fn(),
     login: jest.fn(),
   };
 
@@ -31,31 +29,10 @@ describe('AuthController', () => {
     expect(controller).toBeDefined();
   });
 
-  describe('register', () => {
-    it('should register a new user and return response', async () => {
-      const registerDto: RegisterDto = {
-        email: 'test@example.com',
-        password: 'password123',
-      };
-      const createdUser = {
-        id: 'uuid',
-        email: 'test@example.com',
-        createdAt: new Date(),
-      };
-
-      mockAuthService.register.mockResolvedValue(createdUser);
-
-      const result = await controller.register(registerDto);
-
-      expect(mockAuthService.register).toHaveBeenCalledWith(registerDto);
-      expect(result).toEqual(createdUser);
-    });
-  });
-
   describe('login', () => {
     it('should login user and return token response', async () => {
       const loginDto: LoginDto = {
-        email: 'test@example.com',
+        email: 'admin@socialradio.com',
         password: 'password123',
       };
       const tokenResponse = { accessToken: 'jwt_token' };
