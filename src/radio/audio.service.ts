@@ -14,11 +14,9 @@ export class AudioService {
   ) {}
 
   async generateSpeech(text: string, outputFilePath: string): Promise<number> {
-    const apiKey =
-      this.configService.get<string>('TTS_API_KEY') ||
-      this.configService.get<string>('GEMINI_API_KEY');
+    const apiKey = this.configService.get<string>('GEMINI_API_KEY');
     if (!apiKey) {
-      throw new Error('TTS API key is not configured');
+      throw new Error('GEMINI_API_KEY is not configured');
     }
 
     const response = await lastValueFrom(
