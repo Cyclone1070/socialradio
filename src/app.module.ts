@@ -25,7 +25,9 @@ import { ChannelModule } from './channel/channel.module';
           type: 'postgres',
           url: databaseUrl,
           autoLoadEntities: true,
-          synchronize: true, // safe for local dev
+          synchronize: false,
+          migrationsRun: true,
+          migrations: ['dist/database/migrations/*.js'],
         };
       },
       inject: [ConfigService],
