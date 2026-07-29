@@ -8,6 +8,7 @@ import { MediaModule } from './media/media.module';
 import { FeedModule } from './feed/feed.module';
 import { RadioModule } from './radio/radio.module';
 import { ChannelModule } from './channel/channel.module';
+import { HealthcheckModule } from './healthcheck/healthcheck.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { ChannelModule } from './channel/channel.module';
     FeedModule,
     RadioModule,
     ChannelModule,
+    HealthcheckModule,
   ],
   controllers: [],
   providers: [],

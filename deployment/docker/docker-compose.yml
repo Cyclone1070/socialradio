@@ -1,9 +1,6 @@
-version: '3.8'
-
 services:
   db:
     image: postgres:17-alpine
-    container_name: socialradio_db
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -20,7 +17,6 @@ services:
 
   minio:
     image: minio/minio:latest
-    container_name: socialradio_minio
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -41,7 +37,6 @@ services:
       context: ../..
       dockerfile: deployment/docker/Dockerfile
       target: runner
-    container_name: socialradio_app
     ports:
       - "3000:3000"
     environment:
@@ -52,6 +47,8 @@ services:
       STORAGE_ACCESS_KEY: minioadmin
       STORAGE_SECRET_KEY: minioadmin
       STORAGE_PUBLIC_URL: http://localhost:9000/socialradio-media
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@socialradio.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-AdminPass123!}
       JWT_SECRET: ${JWT_SECRET:-super_secret_key}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL}
@@ -69,7 +66,6 @@ services:
 
   browserless:
     image: browserless/chrome:latest
-    container_name: socialradio_browserless
     ports:
       - "4000:3000"
     environment:

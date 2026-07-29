@@ -14,7 +14,6 @@
     "start:prod": "node dist/main",
     "lint": "eslint \"src/**/*.ts\" --fix && tsc --noEmit",
     "gate": "npm run format && npm run lint && npm test",
-    "seed": "ts-node -r tsconfig-paths/register src/database/seed.ts",
     "typeorm": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js -d src/database/data-source.ts",
     "migration:generate": "npm run typeorm -- migration:generate src/database/migrations/InitialSchema",
     "migration:run": "npm run typeorm -- migration:run",

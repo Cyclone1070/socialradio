@@ -1,0 +1,30 @@
+services:
+  app:
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/healthcheck"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
+  tests:
+    image: curlimages/curl:latest
+    entrypoint: ["/bin/sh"]
+    command: ["/scripts/docker-test.sh"]
+    environment:
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@socialradio.com}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-AdminPass123!}
+      - TARGET_URL=http://host.docker.internal:3000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./docker-test.sh:/scripts/docker-test.sh
+    networks:
+      - external_test_net
+    depends_on:
+      app:
+        condition: service_healthy
+
+networks:
+  external_test_net:
+    driver: bridge
