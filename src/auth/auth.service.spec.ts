@@ -59,7 +59,10 @@ describe('AuthService', () => {
         loginDto.password,
         user.passwordHash,
       );
-      expect(mockJwtService.sign).toHaveBeenCalledWith({ sub: user.id });
+      expect(mockJwtService.sign).toHaveBeenCalledWith({
+        sub: user.id,
+        role: 'user',
+      });
       expect(result).toEqual({ accessToken: 'signed_jwt' });
     });
 

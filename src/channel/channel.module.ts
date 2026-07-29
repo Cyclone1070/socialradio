@@ -15,6 +15,7 @@ import { ChannelPlaybackService } from './channel-playback.service';
 import { QueueGeneratorService } from './queue-generator.service';
 import { ChunkerService } from './chunker.service';
 import { ChannelController } from './channel.controller';
+import { AdminChannelController } from './admin-channel.controller';
 import { DomainModule } from '../domain/domain.module';
 import { RadioModule } from '../radio/radio.module';
 import { MediaModule } from '../media/media.module';
@@ -41,7 +42,7 @@ import { StorageModule } from '../storage/storage.module';
     FeedModule,
     StorageModule,
   ],
-  controllers: [ChannelController],
+  controllers: [ChannelController, AdminChannelController],
   providers: [
     ChannelService,
     ChannelPlaybackService,

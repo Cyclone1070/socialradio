@@ -23,7 +23,10 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const accessToken = this.jwtService.sign({ sub: user.id });
+    const accessToken = this.jwtService.sign({
+      sub: user.id,
+      role: user.role || 'user',
+    });
 
     return { accessToken };
   }

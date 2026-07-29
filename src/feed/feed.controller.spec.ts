@@ -5,6 +5,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { Subreddit } from '../domain/entities/subreddit.entity';
 import { Post } from './entities/post.entity';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard } from '../auth/roles.guard';
 
 describe('FeedController', () => {
   let controller: FeedController;
@@ -36,6 +37,8 @@ describe('FeedController', () => {
       ],
     })
       .overrideGuard(JwtAuthGuard)
+      .useValue(mockGuard)
+      .overrideGuard(RolesGuard)
       .useValue(mockGuard)
       .compile();
 

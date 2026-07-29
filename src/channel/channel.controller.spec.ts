@@ -177,19 +177,4 @@ describe('ChannelController', () => {
       expect(mockRes.send).toHaveBeenCalledWith(Buffer.from('audio'));
     });
   });
-
-  describe('getTopics', () => {
-    it('should return clustered topics for a channel', async () => {
-      const channelId = 'chan-1';
-      const mockTopic = { id: 'post-1', posts: [] };
-      mockQueueGen.findPendingTopicSegment.mockResolvedValue(mockTopic);
-
-      const result = await controller.getTopics(channelId);
-
-      expect(mockQueueGen.findPendingTopicSegment).toHaveBeenCalledWith(
-        channelId,
-      );
-      expect(result).toEqual(mockTopic);
-    });
-  });
 });

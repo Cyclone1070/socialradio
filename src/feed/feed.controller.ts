@@ -5,9 +5,12 @@ import { Repository } from 'typeorm';
 import { Subreddit } from '../domain/entities/subreddit.entity';
 import { Post as PostEntity } from './entities/post.entity';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../auth/roles.decorator';
 
-@Controller('admin/feed')
-@UseGuards(JwtAuthGuard)
+@Controller('admin/feeds')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('admin')
 export class FeedController {
   constructor(
     private readonly scraperService: ScraperService,

@@ -98,10 +98,4 @@ export class ChannelController {
     const audioBuffer = await this.storageService.read(chunkPath);
     res.send(audioBuffer);
   }
-
-  @Get('/admin/channels/:id/topics')
-  @UseGuards(AuthGuard('jwt'))
-  async getTopics(@Param('id') id: string) {
-    return this.queueGeneratorService.findPendingTopicSegment(id);
-  }
 }

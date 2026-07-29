@@ -9,6 +9,7 @@ import { FeedModule } from './feed/feed.module';
 import { RadioModule } from './radio/radio.module';
 import { ChannelModule } from './channel/channel.module';
 import { HealthcheckModule } from './healthcheck/healthcheck.module';
+import { InitialSeed1700000000000 } from './database/migrations/1700000000000-InitialSeed';
 
 @Module({
   imports: [
@@ -26,9 +27,9 @@ import { HealthcheckModule } from './healthcheck/healthcheck.module';
           type: 'postgres',
           url: databaseUrl,
           autoLoadEntities: true,
-          synchronize: false,
+          synchronize: true,
           migrationsRun: true,
-          migrations: ['dist/database/migrations/*.js'],
+          migrations: [InitialSeed1700000000000],
         };
       },
       inject: [ConfigService],
