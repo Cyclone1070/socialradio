@@ -48,6 +48,11 @@ export class ChannelService {
     channelId: string,
     subredditName: string,
   ): Promise<void> {
+    const channel = await this.channelRepo.findOneBy({ id: channelId });
+    if (!channel) {
+      throw new NotFoundException('Channel not found');
+    }
+
     const normalizedName = subredditName.trim().toLowerCase();
     let subreddit = await this.subredditRepo.findOneBy({
       name: normalizedName,
@@ -62,6 +67,14 @@ export class ChannelService {
       subreddit = await this.subredditRepo.save(subreddit);
     }
 
+    const existing = await this.channelSubredditRepo.findOneBy({
+      channelId,
+      subredditId: subreddit.id,
+    });
+    if (existing) {
+      return;
+    }
+
     const subscription = this.channelSubredditRepo.create({
       channelId,
       subredditId: subreddit.id,
@@ -73,6 +86,11 @@ export class ChannelService {
     channelId: string,
     subredditName: string,
   ): Promise<void> {
+    const channel = await this.channelRepo.findOneBy({ id: channelId });
+    if (!channel) {
+      throw new NotFoundException('Channel not found');
+    }
+
     const normalizedName = subredditName.trim().toLowerCase();
     const subreddit = await this.subredditRepo.findOneBy({
       name: normalizedName,

@@ -39,6 +39,7 @@ services:
       target: runner
     ports:
       - "3000:3000"
+    env_file: ../../.env
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/socialradio
       BROWSERLESS_WS_URL: ws://browserless:3000/playwright
@@ -47,13 +48,12 @@ services:
       STORAGE_ACCESS_KEY: minioadmin
       STORAGE_SECRET_KEY: minioadmin
       STORAGE_PUBLIC_URL: http://localhost:9000/socialradio-media
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@socialradio.com}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-AdminPass123!}
-      JWT_SECRET: ${JWT_SECRET:-super_secret_key}
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
-      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL}
-      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL}
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/healthcheck"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
     depends_on:
       db:
         condition: service_healthy

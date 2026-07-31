@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS "user" (
 INSERT INTO "user" ("email", "passwordHash", "role")
 VALUES (
   'user@socialradio.com',
-  '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeg6Lruj3vjPGga31lW',
+  '$2b$10$8rjRlq/njPt5Eeh7npgYn.2ViEkdX9IlefqhsfnJcjmTPabmbvK4y',
   'user'
 )
-ON CONFLICT ("email") DO NOTHING;
+ON CONFLICT ("email") DO UPDATE SET "passwordHash" = EXCLUDED."passwordHash";

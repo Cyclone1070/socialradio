@@ -9,7 +9,7 @@ import { FeedModule } from './feed/feed.module';
 import { RadioModule } from './radio/radio.module';
 import { ChannelModule } from './channel/channel.module';
 import { HealthcheckModule } from './healthcheck/healthcheck.module';
-import { InitialSeed1700000000000 } from './database/migrations/1700000000000-InitialSeed';
+import { CreateSchema1785419900925 } from './database/migrations/1785419900925-CreateSchema';
 
 @Module({
   imports: [
@@ -27,9 +27,9 @@ import { InitialSeed1700000000000 } from './database/migrations/1700000000000-In
           type: 'postgres',
           url: databaseUrl,
           autoLoadEntities: true,
-          synchronize: true,
+          synchronize: false,
           migrationsRun: true,
-          migrations: [InitialSeed1700000000000],
+          migrations: [CreateSchema1785419900925],
         };
       },
       inject: [ConfigService],
