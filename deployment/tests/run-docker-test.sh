@@ -4,7 +4,7 @@ set -e
 cd "$(dirname "$0")"
 PROJECT="socialradio_e2e"
 COMPOSE="docker compose -p $PROJECT -f ../docker/docker-compose.yml -f docker-compose.test.yml"
-export COMPOSE_PROGRESS=plain
+export COMPOSE_PROGRESS=auto
 
 echo "=== E2E Test ==="
 $COMPOSE run --build --rm tests
