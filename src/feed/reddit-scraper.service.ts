@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { FingerprintGenerator } from 'fingerprint-generator';
+import type { Page } from 'playwright-core';
 import { z } from 'zod';
 
 // ── Zod schemas for Reddit JSON API ──────────────────────────────────
@@ -123,16 +124,26 @@ export class RedditScraperService {
     };
   }
 
-  async fetchTopPosts(
-    subredditName: string,
-    limit: number,
-  ): Promise<RedditPostData[]> {
+  private async withPage<T>(fn: (page: Page) => Promise<T>): Promise<T> {
     const browser = await this.connect();
     const contextOptions = this.getFingerprintContextOptions();
     const context = await browser.newContext(contextOptions);
     const page = await context.newPage();
 
     try {
+      return await fn(page);
+    } finally {
+      await page.close();
+      await context.close();
+      await browser.close();
+    }
+  }
+
+  async fetchTopPosts(
+    subredditName: string,
+    limit: number,
+  ): Promise<RedditPostData[]> {
+    return this.withPage(async (page) => {
       const url = `https://www.reddit.com/r/${subredditName}/`;
 
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -171,20 +182,11 @@ export class RedditScraperService {
         });
 
       return posts.slice(0, limit);
-    } finally {
-      await page.close();
-      await context.close();
-      await browser.close();
-    }
+    });
   }
 
   async exists(subredditName: string): Promise<boolean> {
-    const browser = await this.connect();
-    const contextOptions = this.getFingerprintContextOptions();
-    const context = await browser.newContext(contextOptions);
-    const page = await context.newPage();
-
-    try {
+    return this.withPage(async (page) => {
       const url = `https://www.reddit.com/r/${subredditName}/`;
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
@@ -199,11 +201,7 @@ export class RedditScraperService {
         () => document.querySelectorAll('shreddit-post').length,
       );
       return postCount > 0;
-    } finally {
-      await page.close();
-      await context.close();
-      await browser.close();
-    }
+    });
   }
 
   async fetchPostComments(
@@ -214,24 +212,24 @@ export class RedditScraperService {
     const delayMs = Math.floor(Math.random() * 500) + 1500;
     await new Promise((resolve) => setTimeout(resolve, delayMs));
 
-    const browser = await this.connect();
-    const contextOptions = this.getFingerprintContextOptions();
-    const context = await browser.newContext(contextOptions);
-    const page = await context.newPage();
-
-    try {
+    return this.withPage(async (page) => {
       const url = `https://www.reddit.com/r/${subredditName}/comments/${postRedditId}/`;
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
       await page.waitForSelector('shreddit-post', { timeout: 15000 });
 
+      // sort=top: highest-scored comments first; limit=500: max batch Reddit
+      // serves; showmore=false: drops "more" placeholder nodes that break
+      // CommentChildSchema (undocumented param — tolerant schema is the fallback)
+      const commentsUrl = './.json?sort=top&limit=500&showmore=false';
       const rawJson: unknown = await page.evaluate(
-        async (): Promise<unknown> => {
-          const res = await fetch('./.json');
+        async (commentsPageUrl): Promise<unknown> => {
+          const res = await fetch(commentsPageUrl);
           if (!res.ok) {
             throw new Error(`Failed to fetch comments JSON: ${res.status}`);
           }
           return res.json();
         },
+        commentsUrl,
       );
 
       const parsed = z.tuple([z.any(), CommentResponseSchema]).parse(rawJson);
@@ -274,10 +272,6 @@ export class RedditScraperService {
 
       const flattened = flattenComments(commentsListing.data.children);
       return flattened;
-    } finally {
-      await page.close();
-      await context.close();
-      await browser.close();
-    }
+    });
   }
 }

@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Delete, Body, UseGuards } from '@nestjs/common';
-import { ScraperService } from './scraper.service';
+import { ScraperService, ScrapeSubredditResult } from './scraper.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Subreddit } from '../domain/entities/subreddit.entity';
@@ -21,9 +21,11 @@ export class FeedController {
   ) {}
 
   @Post('scrape')
-  async scrape(@Body() body: { subredditName: string }): Promise<void> {
+  async scrape(
+    @Body() body: { subredditName: string },
+  ): Promise<ScrapeSubredditResult> {
     const normalizedName = body.subredditName.trim().toLowerCase();
-    await this.scraperService.scrapeSubreddit(normalizedName);
+    return this.scraperService.scrapeSubreddit(normalizedName);
   }
 
   @Delete('cache')

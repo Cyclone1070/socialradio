@@ -189,6 +189,36 @@ describe('RedditScraperService', () => {
   });
 
   describe('fetchPostComments', () => {
+    it('should fetch the comments JSON with sort=top, limit=500 and showmore=false params', async () => {
+      mockPage.waitForSelector.mockResolvedValue(undefined);
+
+      const mockJsonTree = [
+        {
+          data: {
+            children: [{ data: { id: 'post123', title: 'Post Title' } }],
+          },
+        },
+        { data: { children: [] } },
+      ];
+
+      // Execute the real in-page callback so the fetch URL is observable
+      mockPage.evaluate.mockImplementation(
+        (fn: (arg?: unknown) => unknown, arg?: unknown) => fn(arg),
+      );
+
+      const mockFetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: () => mockJsonTree,
+      });
+      (globalThis as unknown as { fetch: unknown }).fetch = mockFetch;
+
+      await service.fetchPostComments('webdev', 'post123');
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        './.json?sort=top&limit=500&showmore=false',
+      );
+    });
+
     it('should navigate to the post, wait for shreddit-post, execute in-page fetch for JSON, and recursively flatten comments', async () => {
       mockPage.waitForSelector.mockResolvedValue(undefined);
 

@@ -51,11 +51,16 @@ describe('FeedController', () => {
   });
 
   describe('scrape', () => {
-    it('should trigger scraper service for the subreddit', async () => {
-      mockScraperService.scrapeSubreddit.mockResolvedValue(undefined);
+    it('should trigger scraper service for the subreddit and return the scrape result', async () => {
+      mockScraperService.scrapeSubreddit.mockResolvedValue({
+        scrapedPostsCount: 2,
+      });
 
-      await controller.scrape({ subredditName: 'AskReddit' });
+      const result = await controller.scrape({
+        subredditName: 'AskReddit',
+      });
 
+      expect(result).toEqual({ scrapedPostsCount: 2 });
       expect(mockScraperService.scrapeSubreddit).toHaveBeenCalledWith(
         'askreddit',
       );

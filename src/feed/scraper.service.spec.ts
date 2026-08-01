@@ -157,8 +157,9 @@ describe('ScraperService', () => {
         Promise.resolve(p),
       );
 
-      await service.scrapeSubreddit(subName);
+      const result = await service.scrapeSubreddit(subName);
 
+      expect(result).toEqual({ scrapedPostsCount: 1 });
       expect(cleanupSpy).toHaveBeenCalled();
       expect(mockRedditScraper.exists).toHaveBeenCalledWith(subName);
       expect(mockSubredditRepo.findOneBy).toHaveBeenCalledWith({

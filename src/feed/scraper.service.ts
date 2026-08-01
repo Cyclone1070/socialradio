@@ -6,6 +6,10 @@ import { Post } from './entities/post.entity';
 import { Comment } from './entities/comment.entity';
 import { RedditScraperService } from './reddit-scraper.service';
 
+export interface ScrapeSubredditResult {
+  scrapedPostsCount: number;
+}
+
 @Injectable()
 export class ScraperService {
   constructor(
@@ -18,7 +22,7 @@ export class ScraperService {
     private readonly redditScraperService: RedditScraperService,
   ) {}
 
-  async scrapeSubreddit(subredditName: string): Promise<void> {
+  async scrapeSubreddit(subredditName: string): Promise<ScrapeSubredditResult> {
     await this.cleanupOldData();
 
     let subreddit = await this.subredditRepo.findOneBy({ name: subredditName });
@@ -31,14 +35,13 @@ export class ScraperService {
     const isValid = await this.validateSubreddit(subredditName);
     if (!isValid) {
       await this.subredditRepo.delete({ id: subreddit.id });
-      return;
+      return { scrapedPostsCount: 0 };
     }
 
     const rawPosts = await this.redditScraperService.fetchTopPosts(
       subredditName,
       100,
     );
-    const newPostEntities: Post[] = [];
     let savedCount = 0;
 
     for (const rawPost of rawPosts) {
@@ -94,12 +97,13 @@ export class ScraperService {
       });
       await this.commentRepo.save(comments);
 
-      newPostEntities.push(savedPost);
       savedCount++;
     }
 
     subreddit.lastScrapedAt = new Date();
     await this.subredditRepo.save(subreddit);
+
+    return { scrapedPostsCount: savedCount };
   }
 
   async cleanupOldData(): Promise<void> {
