@@ -82,6 +82,25 @@ export class ChannelService {
     await this.channelSubredditRepo.save(subscription);
   }
 
+  async getChannelSubreddits(
+    channelId: string,
+  ): Promise<{ id: string; name: string }[]> {
+    const channel = await this.channelRepo.findOneBy({ id: channelId });
+    if (!channel) {
+      throw new NotFoundException('Channel not found');
+    }
+
+    const subscriptions = await this.channelSubredditRepo.find({
+      where: { channelId },
+      relations: { subreddit: true },
+    });
+
+    return subscriptions.map((s) => ({
+      id: s.subreddit.id,
+      name: s.subreddit.name,
+    }));
+  }
+
   async unsubscribeFromSubreddit(
     channelId: string,
     subredditName: string,

@@ -22,6 +22,7 @@ describe('ChannelService', () => {
     save: jest.fn(),
     delete: jest.fn(),
     findOneBy: jest.fn(),
+    find: jest.fn(),
   };
 
   const mockSubredditRepo = {
@@ -186,6 +187,39 @@ describe('ChannelService', () => {
       ).rejects.toThrow(BadRequestException);
 
       expect(mockSubredditRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getChannelSubreddits', () => {
+    it('should return the subreddits a channel is subscribed to', async () => {
+      const channelId = 'chan-1';
+      mockChannelRepo.findOneBy.mockResolvedValue({ id: channelId });
+      mockChannelSubredditRepo.find.mockResolvedValue([
+        {
+          id: 'sub-chan-1',
+          channelId,
+          subredditId: 'sub-1',
+          subreddit: { id: 'sub-1', name: 'askreddit' },
+        },
+      ]);
+
+      const result = await service.getChannelSubreddits(channelId);
+
+      expect(mockChannelSubredditRepo.find).toHaveBeenCalledWith({
+        where: { channelId },
+        relations: { subreddit: true },
+      });
+      expect(result).toEqual([{ id: 'sub-1', name: 'askreddit' }]);
+    });
+
+    it('should throw NotFoundException if channel does not exist', async () => {
+      mockChannelRepo.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.getChannelSubreddits('nonexistent-chan'),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(mockChannelSubredditRepo.find).not.toHaveBeenCalled();
     });
   });
 

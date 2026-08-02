@@ -14,7 +14,9 @@ services:
       - ../tests/seed-test-user.sql:/scripts/seed-test-user.sql
 
   tests:
-    image: curlimages/curl:latest
+    build:
+      context: ../tests
+      dockerfile: Dockerfile
     entrypoint: ["/bin/sh"]
     command: ["/scripts/docker-test.sh"]
     env_file: ../../.env

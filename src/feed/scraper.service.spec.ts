@@ -134,7 +134,7 @@ describe('ScraperService', () => {
         },
       ];
 
-      mockRedditScraper.fetchPostComments.mockImplementation((sub, postId) => {
+      mockRedditScraper.fetchPostComments.mockImplementation((_sub, postId) => {
         if (postId === 'post1') return Promise.resolve(post1Comments);
         if (postId === 'post2') return Promise.resolve(post2Comments);
         if (postId === 'post3') return Promise.resolve(post3Comments);

@@ -123,7 +123,7 @@ describe('ScriptService', () => {
 
       let calledUserPrompt = '';
       const mockGenerateText = mockLlmService.generateText;
-      mockGenerateText.mockImplementation((sys: string, user: string) => {
+      mockGenerateText.mockImplementation((_sys: string, user: string) => {
         calledUserPrompt = user;
         return Promise.resolve('Script content');
       });
@@ -174,7 +174,7 @@ describe('ScriptService', () => {
 
       let calledUserPrompt = '';
       mockLlmService.generateText.mockImplementation(
-        (sys: string, user: string) => {
+        (_sys: string, user: string) => {
           calledUserPrompt = user;
           return Promise.resolve('Script content');
         },

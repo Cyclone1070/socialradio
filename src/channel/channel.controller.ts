@@ -14,7 +14,6 @@ import { AuthGuard } from '@nestjs/passport';
 import * as express from 'express';
 import { ChannelService } from './channel.service';
 import { ChannelPlaybackService } from './channel-playback.service';
-import { QueueGeneratorService } from './queue-generator.service';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { ChannelResponseDto } from './dto/channel-response.dto';
 import type { StorageService } from '../domain/types/storage.interface';
@@ -24,7 +23,6 @@ export class ChannelController {
   constructor(
     private readonly channelService: ChannelService,
     private readonly playbackService: ChannelPlaybackService,
-    private readonly queueGeneratorService: QueueGeneratorService,
     @Inject('StorageService')
     private readonly storageService: StorageService,
   ) {}
@@ -53,6 +51,14 @@ export class ChannelController {
     @Body() dto: { subredditName: string },
   ): Promise<void> {
     await this.channelService.subscribeToSubreddit(id, dto.subredditName);
+  }
+
+  @Get(':id/subreddits')
+  @UseGuards(AuthGuard('jwt'))
+  async getChannelSubreddits(
+    @Param('id') id: string,
+  ): Promise<{ id: string; name: string }[]> {
+    return this.channelService.getChannelSubreddits(id);
   }
 
   @Delete(':id/subreddits/:subName')

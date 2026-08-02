@@ -3,7 +3,6 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ChannelController } from './channel.controller';
 import { ChannelService } from './channel.service';
 import { ChannelPlaybackService } from './channel-playback.service';
-import { QueueGeneratorService } from './queue-generator.service';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { Request, Response } from 'express';
 
@@ -15,14 +14,11 @@ describe('ChannelController', () => {
     configureChannel: jest.fn(),
     subscribeToSubreddit: jest.fn(),
     unsubscribeFromSubreddit: jest.fn(),
+    getChannelSubreddits: jest.fn(),
   };
 
   const mockPlaybackService = {
     getPlaylistManifest: jest.fn(),
-  };
-
-  const mockQueueGen = {
-    findPendingTopicSegment: jest.fn(),
   };
 
   const mockStorageService = {
@@ -39,10 +35,6 @@ describe('ChannelController', () => {
         {
           provide: ChannelPlaybackService,
           useValue: mockPlaybackService,
-        },
-        {
-          provide: QueueGeneratorService,
-          useValue: mockQueueGen,
         },
         {
           provide: 'StorageService',
@@ -128,6 +120,20 @@ describe('ChannelController', () => {
         'chan-1',
         'AskReddit',
       );
+    });
+  });
+
+  describe('getChannelSubreddits', () => {
+    it('should return the channel subreddits from the service', async () => {
+      const subreddits = [{ id: 'sub-1', name: 'askreddit' }];
+      mockChannelService.getChannelSubreddits.mockResolvedValue(subreddits);
+
+      const result = await controller.getChannelSubreddits('chan-1');
+
+      expect(mockChannelService.getChannelSubreddits).toHaveBeenCalledWith(
+        'chan-1',
+      );
+      expect(result).toEqual(subreddits);
     });
   });
 

@@ -24,7 +24,7 @@ Each slice has a `README.md` describing its **behaviour** — rules, flows, and 
 | `src/database` | Schema management & migrations | [README](src/database/README.md) |
 | `src/domain` | Shared types & entities | [README](src/domain/README.md) |
 | `src/healthcheck` | Liveness probe | [README](src/healthcheck/README.md) |
-| `deployment/tests` | Blackbox E2E suite (27 cases) | [README](deployment/tests/README.md) |
+| `deployment/tests` | Blackbox E2E suite (34 cases) | [README](deployment/tests/README.md) |
 
 ## Running
 
