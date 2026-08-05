@@ -10,6 +10,7 @@ import { RadioModule } from './radio/radio.module';
 import { ChannelModule } from './channel/channel.module';
 import { HealthcheckModule } from './healthcheck/healthcheck.module';
 import { CreateSchema1785419900925 } from './database/migrations/1785419900925-CreateSchema';
+import { AddScrapeStatusColumns1790000000000 } from './database/migrations/1790000000000-AddScrapeStatusColumns';
 
 @Module({
   imports: [
@@ -29,7 +30,10 @@ import { CreateSchema1785419900925 } from './database/migrations/1785419900925-C
           autoLoadEntities: true,
           synchronize: false,
           migrationsRun: true,
-          migrations: [CreateSchema1785419900925],
+          migrations: [
+            CreateSchema1785419900925,
+            AddScrapeStatusColumns1790000000000,
+          ],
         };
       },
       inject: [ConfigService],

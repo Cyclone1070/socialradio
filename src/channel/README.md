@@ -28,19 +28,18 @@ User-facing stations: each channel subscribes to subreddits, maintains a never-e
 
 (1 or 2 of each talk/song/ad is a 50/50 random choice.)
 
-- **Talk segments** come from the next pending topic (see below). If no topic exists, a song is substituted — the station never goes silent.
+- **Talk segments** come from the next pending topic (see below). If no topic exists, a short ad filler is appended instead — the station never goes silent, and the short bridge means the queue drains to the next topic check faster.
 - Talk is generated **asynchronously**: the segment is queued as `generating` (and the topic's posts are immediately marked *played* so nothing double-queues), voice generation runs in the background, then the segment flips to `ready` — or `failed` if generation errors.
 - Songs/ads/jingles are picked uniformly at random from the media library, chunked immediately.
 
 ### When the queue rescrapes Reddit
 
-Picking the next topic for a channel:
+Picking the next topic for a channel runs in two phases:
 
-1. For each subscribed subreddit, check if it needs a fresh scrape: **stale** (last scrape > 72h ago) **or exhausted** (every post in the DB for that sub has already been played).
-2. If any subs need scraping, scrape them (one at a time, with a random 5–6s delay between multiple subs — context rotation).
-3. Unplayed posts are clustered into topics; the best cluster becomes the next talk segment.
+1. **Fire background scrapes (always)**: for each subscribed subreddit, check if it needs a fresh scrape: **stale** (last scrape > 72h ago) **or exhausted** (every post in the DB for that sub has already been played). If so, fire scrapes in a **sequential background chain** — sub A completes before sub B starts, never awaited, and each Reddit request is spaced 1–2s (proper request spacing, no parallel scraping). The scraper itself deduplicates (an in-flight claim, TTL-bounded) and skips subs cooling down after a 0-new-post scrape; the admin force-scrape bypasses both.
+2. **Read the topic from the current DB**: unplayed posts are clustered into topics; the best cluster becomes the next talk segment — or null, and a filler is appended.
 
-This is the *pull* path into the feed slice — scraping happens on demand, not on a schedule.
+This is the *pull* path into the feed slice — scraping happens on demand (preventively refreshing the DB even while topics are available), not on a schedule.
 
 ## Behaviour — playback (the radio clock)
 
@@ -48,7 +47,7 @@ Every `GET /playlist.m3u8` call advances the channel's state:
 
 - **Active polling**: the playhead advances by the time elapsed since the last request.
 - **Idle ≥ 120s** (listener disconnected): fast-forward logic kicks in — short idle resumes where it left off; long idle skips to a randomized 10–20s "wrap-up" of the current segment; tiny segments are skipped entirely to the next one.
-- **Segment done**: when the playhead passes a segment's end, advance to the next; at end of queue, buffer ahead and start over.
-- **Replenishment**: if fewer than 3 segments remain after the current one, buffer ahead in the background.
+- **Segment done**: when the playhead passes a segment's end, advance to the next; consumed segments are pruned from the table (everything strictly behind the playhead); at end of queue the whole consumed set is cleared and a fresh cycle is buffered.
+- **Replenishment**: if fewer than 3 segments remain after the current one, buffer ahead in the background — the caller owns the "when", the queue generator just appends a cycle.
 
 **HLS manifest** — 10-second chunks (128kbps math: 160,000 bytes = 10s), sliding window of 3 chunks, `EXT-X-START` offsets into the current chunk for gapless-ish resume. Chunk files live at `channels/{channelId}/chunks/{segmentId}_{index}.mp3`.

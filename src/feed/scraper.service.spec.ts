@@ -215,6 +215,121 @@ describe('ScraperService', () => {
       expect(mockRedditScraper.fetchTopPosts).not.toHaveBeenCalled();
     });
 
+    it('should dedupe a scrape already in-flight via scrapeStartedAt', async () => {
+      const subName = 'askreddit';
+      const subreddit = Object.assign(new Subreddit(), {
+        id: 'sub-1',
+        name: subName,
+        lastScrapedAt: new Date(Date.now() - 1000),
+        scrapeStartedAt: new Date(Date.now() - 10000), // claimed 10s ago
+      });
+      mockSubredditRepo.findOneBy.mockResolvedValue(subreddit);
+      mockSubredditRepo.save.mockResolvedValue(subreddit);
+
+      const result = await service.scrapeSubreddit(subName);
+
+      expect(result).toEqual({ scrapedPostsCount: 0 });
+      expect(mockRedditScraper.exists).not.toHaveBeenCalled();
+    });
+
+    it('should set a 2h cooldown when a scrape yields 0 new posts', async () => {
+      const subName = 'askreddit';
+      const subreddit = Object.assign(new Subreddit(), {
+        id: 'sub-1',
+        name: subName,
+        lastScrapedAt: null,
+      });
+      mockSubredditRepo.findOneBy.mockResolvedValue(subreddit);
+      mockSubredditRepo.save.mockResolvedValue(subreddit);
+      mockRedditScraper.exists.mockResolvedValue(true);
+      mockRedditScraper.fetchTopPosts.mockResolvedValue([]);
+
+      const result = await service.scrapeSubreddit(subName);
+
+      expect(result).toEqual({ scrapedPostsCount: 0 });
+      expect(subreddit.scrapeCooldownUntil).toBeInstanceOf(Date);
+      // Cooldown must cover the full 2h window
+      expect(subreddit.scrapeCooldownUntil!.getTime()).toBeGreaterThan(
+        Date.now() + 2 * 60 * 60 * 1000 - 1000,
+      );
+    });
+
+    it('should bypass claim and cooldown when force is true', async () => {
+      const subName = 'askreddit';
+      const subreddit = Object.assign(new Subreddit(), {
+        id: 'sub-1',
+        name: subName,
+        lastScrapedAt: null,
+        scrapeStartedAt: new Date(Date.now() - 10000), // in-flight claim
+        scrapeCooldownUntil: new Date(Date.now() + 60 * 60 * 1000), // cooling down
+      });
+      mockSubredditRepo.findOneBy.mockResolvedValue(subreddit);
+      mockSubredditRepo.save.mockResolvedValue(subreddit);
+      mockRedditScraper.exists.mockResolvedValue(true);
+      mockRedditScraper.fetchTopPosts.mockResolvedValue([]);
+
+      const result = await service.scrapeSubreddit(subName, true);
+
+      // The scrape actually ran (validation happened, posts fetched)
+      expect(mockRedditScraper.exists).toHaveBeenCalled();
+      expect(mockRedditScraper.fetchTopPosts).toHaveBeenCalled();
+      expect(result).toEqual({ scrapedPostsCount: 0 });
+    });
+
+    it('should save new posts BEFORE purging old ones (per-sub scope)', async () => {
+      const subName = 'askreddit';
+      const subEntity = { id: 'sub-1', name: subName, lastScrapedAt: null };
+      mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
+      mockSubredditRepo.save.mockResolvedValue(subEntity);
+      mockRedditScraper.exists.mockResolvedValue(true);
+
+      const rawPosts = [
+        {
+          id: 'p1',
+          title: 'T',
+          selftext: '',
+          author: 'op',
+          score: 10,
+          created_utc: 1719999999,
+        },
+      ];
+      mockRedditScraper.fetchTopPosts.mockResolvedValue(rawPosts);
+      mockRedditScraper.fetchPostComments.mockResolvedValue([
+        {
+          id: 'c1',
+          body: 'hello '.repeat(2600).trim(), // >= 2500 word guard passes
+          author: 'user',
+          score: 10,
+          parent_id: 't3_p1',
+          created_utc: 1719999999,
+        },
+      ]);
+      mockPostRepo.findOneBy.mockResolvedValue(null);
+      mockPostRepo.create.mockImplementation((p): Partial<Post> => ({
+        id: 'p-uuid',
+        ...p,
+      }));
+      mockPostRepo.save.mockImplementation((p): Promise<Partial<Post>> =>
+        Promise.resolve(p),
+      );
+
+      const result = await service.scrapeSubreddit(subName);
+
+      expect(result.scrapedPostsCount).toBe(1);
+      // Save must happen before the 72h purge
+      const saveOrder = mockPostRepo.save.mock.invocationCallOrder[0];
+      const deleteOrder = mockPostRepo.delete.mock.invocationCallOrder[0];
+      expect(saveOrder).toBeLessThan(deleteOrder);
+      // Purge is scoped to this subreddit only (deletes posts older than 72h)
+      const deleteCalls = mockPostRepo.delete.mock.calls as unknown as Array<
+        [Record<string, unknown>?]
+      >;
+      const deleteArgs = deleteCalls[0]?.[0] as
+        { subredditId?: string; scrapedAt?: Date } | undefined;
+      expect(deleteArgs?.subredditId).toBe('sub-1');
+      expect(deleteArgs?.scrapedAt).toBeDefined();
+    });
+
     it('should rethrow error on unexpected scraper execution errors', async () => {
       const subName = 'downSub';
       const subEntity = { id: 'down-uuid', name: subName, lastScrapedAt: null };

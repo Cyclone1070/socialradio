@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThan } from 'typeorm';
+import { Repository, MoreThan, LessThan } from 'typeorm';
 import { Channel } from './entities/channel.entity';
 import { Segment } from './entities/segment.entity';
 import { ChunkerService } from './chunker.service';
@@ -111,6 +111,9 @@ export class ChannelPlaybackService {
           channel.currentSegmentId = segment.id;
         }
       }
+
+      // Prune consumed segments relative to the new playhead
+      await this.pruneConsumed(channelId, segment?.playOrder ?? null);
     }
 
     await this.channelRepo.save(channel);
@@ -161,6 +164,25 @@ export class ChannelPlaybackService {
     return manifestLines.join('\n') + '\n';
   }
 
+  /**
+   * Delete consumed segments relative to the current playhead.
+   * Rows strictly behind the current playOrder are consumed; when no
+   * current segment exists (end of queue), every row is consumed.
+   */
+  private async pruneConsumed(
+    channelId: string,
+    currentPlayOrder: number | null,
+  ): Promise<void> {
+    if (currentPlayOrder === null) {
+      await this.segmentRepo.delete({ channelId });
+    } else {
+      await this.segmentRepo.delete({
+        channelId,
+        playOrder: LessThan(currentPlayOrder),
+      });
+    }
+  }
+
   async fastForwardChannel(channelId: string, seconds: number): Promise<void> {
     const channel = await this.channelRepo.findOneBy({ id: channelId });
     if (!channel || !channel.currentSegmentId) return;
@@ -184,13 +206,10 @@ export class ChannelPlaybackService {
         const next = await this.segmentRepo.findOne({
           where: { channelId, playOrder: segment.playOrder + 1 },
         });
-        if (next) {
-          channel.currentSegmentId = next.id;
-          channel.playheadOffsetSeconds = 0;
-        } else {
-          channel.currentSegmentId = null;
-          channel.playheadOffsetSeconds = 0;
-        }
+        channel.currentSegmentId = next?.id ?? null;
+        channel.playheadOffsetSeconds = 0;
+        // Skipped segment is consumed; prune relative to the new playhead
+        await this.pruneConsumed(channelId, next?.playOrder ?? null);
       }
     }
 

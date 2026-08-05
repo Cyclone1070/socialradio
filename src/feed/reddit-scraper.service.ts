@@ -208,8 +208,8 @@ export class RedditScraperService {
     subredditName: string,
     postRedditId: string,
   ): Promise<RedditCommentData[]> {
-    // Randomized throttle delay of 1.5s to 2.0s between requests to mimic human browsing
-    const delayMs = Math.floor(Math.random() * 500) + 1500;
+    // Randomized throttle delay of 1s to 2s between requests to mimic human browsing
+    const delayMs = Math.floor(Math.random() * 1000) + 1000;
     await new Promise((resolve) => setTimeout(resolve, delayMs));
 
     return this.withPage(async (page) => {

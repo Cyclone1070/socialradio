@@ -197,6 +197,88 @@ describe('QueueGeneratorService', () => {
 
       expect(mockScraperService.scrapeSubreddit).not.toHaveBeenCalled();
     });
+
+    it('should fire background scrapes WITHOUT blocking topic generation', async () => {
+      const channelId = 'chan-1';
+      mockSegmentRepo.findOne.mockResolvedValue(null); // no last item
+      mockSubredditRepo.find.mockResolvedValue([
+        {
+          subredditId: 'sub-1',
+          subreddit: {
+            id: 'sub-1',
+            name: 'AskReddit',
+            lastScrapedAt: null, // stale
+          },
+        },
+      ]);
+      mockProgressRepo.find.mockResolvedValue([]);
+      mockPostRepo.find.mockResolvedValue([
+        { id: 'post-1', subredditId: 'sub-1', title: 'Post 1' },
+      ]);
+
+      // Scrape stays pending — bufferAhead must NOT await it
+      let resolveScrape!: () => void;
+      mockScraperService.scrapeSubreddit.mockReturnValue(
+        new Promise<void>((resolve) => {
+          resolveScrape = resolve;
+        }),
+      );
+
+      await expect(service.bufferAhead(channelId)).resolves.toBeUndefined();
+
+      // Clean up the dangling background scrape
+      resolveScrape();
+      expect(mockScraperService.scrapeSubreddit).toHaveBeenCalledWith(
+        'AskReddit',
+      );
+    });
+
+    it('should scrape multiple subs SEQUENTIALLY — the next fires only after the previous completes', async () => {
+      const channelId = 'chan-1';
+      mockSegmentRepo.findOne.mockResolvedValue(null); // no last item
+      mockSubredditRepo.find.mockResolvedValue([
+        {
+          subredditId: 'sub-1',
+          subreddit: {
+            id: 'sub-1',
+            name: 'alpha',
+            lastScrapedAt: null, // stale
+          },
+        },
+        {
+          subredditId: 'sub-2',
+          subreddit: {
+            id: 'sub-2',
+            name: 'beta',
+            lastScrapedAt: null, // stale
+          },
+        },
+      ]);
+      mockProgressRepo.find.mockResolvedValue([]);
+      mockPostRepo.find.mockResolvedValue([]);
+
+      // One talk slot → exactly one sequential chain (no double-fire)
+      jest.spyOn(service, 'getRandomCount').mockReturnValue(1);
+
+      const fired: string[] = [];
+      const resolvers: Array<() => void> = [];
+      mockScraperService.scrapeSubreddit.mockImplementation((name: string) => {
+        fired.push(name);
+        return new Promise<void>((resolve) => resolvers.push(resolve));
+      });
+
+      await service.bufferAhead(channelId);
+
+      // Only the FIRST sub fires immediately; the second must wait
+      expect(fired).toEqual(['alpha']);
+
+      // Completing the first lets the second fire
+      resolvers[0]();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(fired).toEqual(['alpha', 'beta']);
+
+      resolvers[1]();
+    });
   });
 
   describe('bufferAhead', () => {
@@ -265,7 +347,6 @@ describe('QueueGeneratorService', () => {
 
       await service.bufferAhead(channelId);
 
-      expect(mockSegmentRepo.count).toHaveBeenCalled();
       expect(mockMediaService.getRandomJingle).toHaveBeenCalled();
       expect(mockMediaService.getRandomMusic).toHaveBeenCalled();
       expect(mockMediaService.getRandomAd).toHaveBeenCalled();
@@ -290,6 +371,66 @@ describe('QueueGeneratorService', () => {
 
       // Talk item's topicId should store the primary post ID ('post-1')
       expect((mockSavedItems[0] as TalkSegment).topicId).toBe('post-1');
+    });
+
+    it('should append a full cycle even when the queue already holds 5+ segments (no size gate)', async () => {
+      const channelId = 'chan-1';
+      // Old total-row gate returned early at 5 rows — permanently stalling
+      // refills (dead air). Callers own the "when"; bufferAhead just appends.
+      mockSegmentRepo.count.mockResolvedValue(5);
+      mockSegmentRepo.findOne.mockResolvedValue(null); // no last item
+      mockSubredditRepo.find.mockResolvedValue([]); // no subscriptions → no topic
+      mockProgressRepo.find.mockResolvedValue([]);
+      mockPostRepo.find.mockResolvedValue([]);
+
+      // Force getRandomCount to return 1
+      jest.spyOn(service, 'getRandomCount').mockReturnValue(1);
+
+      const mockSavedItems: Segment[] = [];
+      mockSegmentRepo.save.mockImplementation((item) => {
+        mockSavedItems.push(item as Segment);
+        return Promise.resolve(item as Segment);
+      });
+
+      await service.bufferAhead(channelId);
+
+      // Full cycle: talk-slot filler + song + ad + jingle
+      expect(mockSavedItems.length).toBe(4);
+      expect(mockSegmentRepo.save).toHaveBeenCalledTimes(4);
+    });
+
+    it('should append an ad filler when no topic is available', async () => {
+      const channelId = 'chan-1';
+      const freshDate = new Date(Date.now() - 5 * 60 * 60 * 1000); // 5 hours ago
+      mockSegmentRepo.findOne.mockResolvedValue(null); // no last item
+      mockSubredditRepo.find.mockResolvedValue([
+        {
+          subredditId: 'sub-1',
+          subreddit: {
+            id: 'sub-1',
+            name: 'funny',
+            lastScrapedAt: freshDate,
+          },
+        },
+      ]);
+      mockProgressRepo.find.mockResolvedValue([]);
+      mockPostRepo.find.mockResolvedValue([]); // 0 unplayed posts → no topic
+
+      // Force getRandomCount to return 1
+      jest.spyOn(service, 'getRandomCount').mockReturnValue(1);
+
+      const mockSavedItems: Segment[] = [];
+      mockSegmentRepo.save.mockImplementation((item) => {
+        mockSavedItems.push(item as Segment);
+        return Promise.resolve(item as Segment);
+      });
+
+      await service.bufferAhead(channelId);
+
+      // Talk slot is filled by a short ad filler (fast topic re-check),
+      // then the pattern continues: song + ad + jingle
+      expect(mockSavedItems[0]).toBeInstanceOf(AdSegment);
+      expect(mockSavedItems.length).toBe(4);
     });
 
     it('should generate segments following the pattern: [1-2 Talk] -> [1-2 Songs] -> [1-2 Ads] -> [1 Jingle] (Branch: 1 each)', async () => {

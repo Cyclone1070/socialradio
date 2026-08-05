@@ -36,11 +36,9 @@ export class QueueGeneratorService {
   ) {}
 
   async bufferAhead(channelId: string): Promise<void> {
-    const count = await this.segmentRepo.count({ where: { channelId } });
-    if (count >= 5) {
-      return; // Already has enough items buffered
-    }
-
+    // No size gate here: callers (ChannelPlaybackService) own the "when" —
+    // they only invoke this when the runway is low or empty. Counting total
+    // rows would permanently block refills once 5+ rows exist (dead air).
     const lastItem = await this.segmentRepo.findOne({
       where: { channelId },
       order: { playOrder: 'DESC' },
@@ -50,10 +48,9 @@ export class QueueGeneratorService {
     // Sequence Pattern: [1-2 Talk] -> [1-2 Songs] -> [1-2 Ads] -> [1 Jingle]
     const talkCount = this.getRandomCount();
     for (let i = 0; i < talkCount; i++) {
-      nextPlayOrder = await this.appendTalkOrFallbackSong(
-        channelId,
-        nextPlayOrder,
-      );
+      const next = await this.appendTalk(channelId, nextPlayOrder);
+      nextPlayOrder =
+        next ?? (await this.appendFiller(channelId, nextPlayOrder));
     }
 
     const songCount = this.getRandomCount();
@@ -74,10 +71,10 @@ export class QueueGeneratorService {
     return Math.random() < 0.5 ? 1 : 2;
   }
 
-  private async appendTalkOrFallbackSong(
+  private async appendTalk(
     channelId: string,
     playOrder: number,
-  ): Promise<number> {
+  ): Promise<number | null> {
     const topicSegment = await this.findPendingTopicSegment(channelId);
     if (topicSegment) {
       const talkItem = Object.assign(new TalkSegment(), {
@@ -117,11 +114,21 @@ export class QueueGeneratorService {
           savedTalkItem.status = 'failed';
           await this.segmentRepo.save(savedTalkItem);
         });
-    } else {
-      // Fallback if no topics: insert song instead
-      await this.appendSong(channelId, playOrder);
+      return playOrder + 1;
     }
-    return playOrder + 1;
+    // No topic available: signal the caller to append a filler instead
+    return null;
+  }
+
+  /**
+   * Short filler (ad) appended when no topic is available. A short bridge
+   * means the queue drains to the next topic-check faster.
+   */
+  private async appendFiller(
+    channelId: string,
+    playOrder: number,
+  ): Promise<number> {
+    return this.appendAd(channelId, playOrder);
   }
 
   private async appendSong(
@@ -220,26 +227,21 @@ export class QueueGeneratorService {
     }
 
     if (subsToScrape.length > 0) {
-      for (let i = 0; i < subsToScrape.length; i++) {
-        const name = subsToScrape[i];
-
-        // Apply a randomized 5-6s context rotation delay before subsequent scrapes
-        if (i > 0) {
-          const delayMs = Math.floor(Math.random() * 1000) + 5000;
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
+      // Sequential background chain: each sub's scrape completes before the
+      // next starts — proper request spacing matters (no parallel scraping).
+      // Never blocks topic generation: the whole chain runs in the background.
+      // (Every scrape has a .catch, so the chain never rejects.)
+      const runSequentialScrapes = async (): Promise<void> => {
+        for (const name of subsToScrape) {
+          await this.scraperService.scrapeSubreddit(name).catch(() => {});
         }
-
-        await this.scraperService.scrapeSubreddit(name);
-      }
+      };
+      void runSequentialScrapes();
     }
 
-    // Fetch again after potentially scraping new posts
-    const posts = await this.postRepo.find({
-      where: subIds.map((subredditId) => ({ subredditId })),
-      order: { score: 'DESC', redditCreatedAt: 'DESC' },
-    });
-
-    const unplayedPosts = posts.filter((p) => !completedPostIds.includes(p.id));
+    const unplayedPosts = allPosts.filter(
+      (p) => !completedPostIds.includes(p.id),
+    );
     if (unplayedPosts.length === 0) return null;
 
     const segments = clusterPosts(unplayedPosts);

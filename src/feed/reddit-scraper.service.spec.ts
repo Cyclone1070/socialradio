@@ -189,6 +189,36 @@ describe('RedditScraperService', () => {
   });
 
   describe('fetchPostComments', () => {
+    it('should throttle each request with a 1-2s randomized delay', async () => {
+      mockPage.waitForSelector.mockResolvedValue(undefined);
+
+      // random = 0 → floor(0 * 1000) + 1000 = 1000ms (the 1s floor)
+      jest.spyOn(Math, 'random').mockReturnValue(0);
+
+      const mockJsonTree = [
+        {
+          data: {
+            children: [{ data: { id: 'post123', title: 'Post Title' } }],
+          },
+        },
+        { data: { children: [] } },
+      ];
+      mockPage.evaluate.mockImplementation(
+        (fn: (arg?: unknown) => unknown, arg?: unknown) => fn(arg),
+      );
+      const mockFetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: () => mockJsonTree,
+      });
+      (globalThis as unknown as { fetch: unknown }).fetch = mockFetch;
+
+      const setTimeoutSpy = jest.spyOn(global, 'setTimeout');
+
+      await service.fetchPostComments('webdev', 'post123');
+
+      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 1000);
+    });
+
     it('should fetch the comments JSON with sort=top, limit=500 and showmore=false params', async () => {
       mockPage.waitForSelector.mockResolvedValue(undefined);
 

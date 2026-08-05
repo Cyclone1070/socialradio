@@ -20,6 +20,12 @@ export class Subreddit {
   @Column({ type: 'timestamptz', nullable: true })
   lastScrapedAt: Date | null;
 
+  @Column({ type: 'timestamptz', nullable: true })
+  scrapeStartedAt: Date | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  scrapeCooldownUntil: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

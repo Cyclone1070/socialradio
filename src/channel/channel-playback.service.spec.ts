@@ -5,6 +5,7 @@ import { ChunkerService } from './chunker.service';
 import { QueueGeneratorService } from './queue-generator.service';
 import { Channel } from './entities/channel.entity';
 import { Segment, SongSegment } from './entities/segment.entity';
+import { LessThan } from 'typeorm';
 
 describe('ChannelPlaybackService', () => {
   let service: ChannelPlaybackService;
@@ -18,6 +19,7 @@ describe('ChannelPlaybackService', () => {
   const mockSegmentRepo = {
     findOne: jest.fn(),
     count: jest.fn(),
+    delete: jest.fn(),
   };
 
   const mockChunker = {
@@ -178,7 +180,7 @@ describe('ChannelPlaybackService', () => {
       expect(mockQueueGen.bufferAhead).toHaveBeenCalledWith(channelId);
     });
 
-    it('should transition to next segment if playhead offset exceeds segment duration', async () => {
+    it('should prune consumed segments behind the new playhead when advancing past the current segment', async () => {
       const channelId = 'chan-1';
       const lastRequestedAt = new Date(Date.now() - 5000); // 5s elapsed
       const channel = Object.assign(new Channel(), {
@@ -210,11 +212,45 @@ describe('ChannelPlaybackService', () => {
 
       const manifest = await service.getPlaylistManifest(channelId);
 
-      // 178s + 5s = 183s. 183s - 180s = 3s offset in segment2
       expect(channel.currentSegmentId).toBe('seg-2');
-      expect(channel.playheadOffsetSeconds).toBeCloseTo(3, 1);
+      // Consumed segment (playOrder 1) is strictly behind the new playhead
+      expect(mockSegmentRepo.delete).toHaveBeenCalledWith({
+        channelId,
+        playOrder: LessThan(2),
+      });
       expect(manifest).toContain('chunks/seg-2_0.mp3');
-      expect(manifest).toContain('#EXT-X-START:TIME=3.0');
+    });
+
+    it('should delete all consumed rows when advancing past the end of the queue', async () => {
+      const channelId = 'chan-1';
+      const lastRequestedAt = new Date(Date.now() - 5000); // 5s elapsed
+      const channel = Object.assign(new Channel(), {
+        id: channelId,
+        visibility: 'private',
+        currentSegmentId: 'seg-1',
+        playheadOffsetSeconds: 178, // only 2s left in segment (duration 180)
+        lastRequestedAt,
+      });
+
+      const segment1 = Object.assign(new SongSegment(), {
+        id: 'seg-1',
+        durationSeconds: 180,
+        playOrder: 1,
+      });
+
+      mockChannelRepo.findOneBy.mockResolvedValue(channel);
+      mockSegmentRepo.findOne
+        .mockResolvedValueOnce(segment1) // currentSegmentId fetch
+        .mockResolvedValueOnce(null) // no next segment (end of queue)
+        .mockResolvedValueOnce(null); // refetch after bufferAhead finds nothing
+      mockChannelRepo.save.mockResolvedValue(channel);
+      mockQueueGen.bufferAhead.mockResolvedValue(undefined);
+
+      // Everything in the queue was consumed — no segment remains to serve
+      await expect(service.getPlaylistManifest(channelId)).rejects.toThrow(
+        'No segments available',
+      );
+      expect(mockSegmentRepo.delete).toHaveBeenCalledWith({ channelId });
     });
   });
 
@@ -297,6 +333,41 @@ describe('ChannelPlaybackService', () => {
       expect(channel.currentSegmentId).toBe('seg-2');
       expect(channel.playheadOffsetSeconds).toBe(0);
       expect(mockChannelRepo.save).toHaveBeenCalledWith(channel);
+    });
+
+    it('should prune consumed rows when fast-forward skips past a short segment', async () => {
+      const channelId = 'chan-123';
+      const channel = Object.assign(new Channel(), {
+        id: channelId,
+        currentSegmentId: 'seg-1',
+        playheadOffsetSeconds: 1,
+      });
+
+      const segment1 = Object.assign(new SongSegment(), {
+        id: 'seg-1',
+        playOrder: 1,
+        durationSeconds: 18, // <= 20s
+      });
+
+      const segment2 = Object.assign(new SongSegment(), {
+        id: 'seg-2',
+        playOrder: 2,
+        durationSeconds: 180,
+      });
+
+      mockChannelRepo.findOneBy.mockResolvedValue(channel);
+      mockSegmentRepo.findOne
+        .mockResolvedValueOnce(segment1) // currentSegmentId fetch
+        .mockResolvedValueOnce(segment2); // next segment playOrder + 1 fetch
+
+      await service.fastForwardChannel(channelId, 30);
+
+      expect(channel.currentSegmentId).toBe('seg-2');
+      // Skipped segment (playOrder 1) is consumed
+      expect(mockSegmentRepo.delete).toHaveBeenCalledWith({
+        channelId,
+        playOrder: LessThan(2),
+      });
     });
   });
 });
