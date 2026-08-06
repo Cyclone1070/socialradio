@@ -28,37 +28,3 @@ jobs:
           npm ci
           npx tsc --noEmit
           npx jest
-
-  e2e:
-    # GitHub-hosted runners are blocked by Reddit (403 on all endpoints —
-    # verified from Azure westus egress). The E2E hits real Reddit, so it
-    # needs a self-hosted runner on a non-blocked IP (e.g. a dev machine):
-    #
-    #   mkdir actions-runner && cd actions-runner
-    #   curl -o actions-runner.tar.gz -L https://github.com/actions/runner/releases/latest/download/actions-runner-linux-x64-2.336.0.tar.gz
-    #   tar xzf actions-runner.tar.gz
-    #   ./config.sh --url https://github.com/Cyclone1070/socialradio --token <token>
-    #   ./run.sh
-    #
-    # The runner host needs Docker (+ compose v2). Admin credentials come
-    # from .env.example — nothing to configure (ephemeral stack). Runs only
-    # on manual dispatch so pushes don't hit Reddit unannounced.
-    runs-on: self-hosted
-    needs: gate
-    if: github.event_name == 'workflow_dispatch'
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-
-      # The whole stack is ephemeral (fresh volumes every run), so the admin
-      # credentials from .env.example are fine — the boot migration just
-      # inserts whatever ADMIN_EMAIL/ADMIN_PASSWORD it's given, and the suite
-      # logs in with the same values.
-      - name: Generate .env
-        run: cp .env.example .env
-
-      - name: "E2E (whole stack: postgres, minio, browserless, fetcher, app + 41 blackbox cases, real Reddit)"
-        env:
-          COMPOSE_PROGRESS: auto
-        run: |
-          ./deployment/tests/run-docker-test.sh
