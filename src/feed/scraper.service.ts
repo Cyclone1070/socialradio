@@ -45,12 +45,17 @@ export class ScraperService {
     subreddit.scrapeStartedAt = new Date();
     await this.subredditRepo.save(subreddit);
 
+    // True once the row has been deleted (isInvalid): never save again —
+    // TypeORM save() on the deleted entity would re-INSERT the row.
+    let deleted = false;
+
     try {
       // The fetcher reports isInvalid for private/banned/non-existent subs:
       // delete and exit (no separate validation page load needed).
       const { posts: rawPosts, isInvalid } =
         await this.redditScraperService.fetchTopPosts(subredditName, 100);
       if (isInvalid) {
+        deleted = true;
         await this.subredditRepo.delete({ id: subreddit.id });
         return { scrapedPostsCount: 0 };
       }
@@ -126,9 +131,12 @@ export class ScraperService {
 
       return { scrapedPostsCount: savedCount };
     } finally {
-      // Release the claim so future scrapes can run
-      subreddit.scrapeStartedAt = null;
-      await this.subredditRepo.save(subreddit);
+      // Release the claim so future scrapes can run — but never save a
+      // deleted entity back (it would resurrect the row).
+      if (!deleted) {
+        subreddit.scrapeStartedAt = null;
+        await this.subredditRepo.save(subreddit);
+      }
     }
   }
 

@@ -220,6 +220,14 @@ describe('ScraperService', () => {
         id: 'banned-uuid',
       });
       expect(mockRedditScraper.exists).not.toHaveBeenCalled();
+      // save() must not run after the delete: TypeORM would re-INSERT the
+      // deleted entity (new row with the same name) — the row must stay gone.
+      const deleteCall = mockSubredditRepo.delete.mock.invocationCallOrder[0];
+      expect(
+        mockSubredditRepo.save.mock.invocationCallOrder.every(
+          (n) => n < deleteCall,
+        ),
+      ).toBe(true);
     });
 
     it('should dedupe a scrape already in-flight via scrapeStartedAt', async () => {

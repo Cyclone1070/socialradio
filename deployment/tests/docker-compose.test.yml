@@ -1,18 +1,7 @@
 services:
-  seed:
-    image: postgres:17-alpine
-    depends_on:
-      app:
-        condition: service_healthy
-    environment:
-      PGPASSWORD: postgres
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - >
-        psql -h db -U postgres -d socialradio -f /scripts/seed-test-user.sql
-    volumes:
-      - ../tests/seed-test-user.sql:/scripts/seed-test-user.sql
-
+  # All SQL runs from inside the suite via the single psql_run helper
+  # (docker-test.sh) — the seed service below was removed when the suite
+  # gained psql access (one pattern, not two).
   tests:
     build:
       context: ../tests
@@ -26,11 +15,14 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ../tests/docker-test.sh:/scripts/docker-test.sh
+      - ../tests/seed-test-user.sql:/scripts/seed-test-user.sql
+      - ../tests/dead-sub-fixture.sql:/scripts/dead-sub-fixture.sql
     networks:
       - external_test_net
+      - default
     depends_on:
-      seed:
-        condition: service_completed_successfully
+      app:
+        condition: service_healthy
 
 networks:
   external_test_net:

@@ -1,6 +1,6 @@
 # E2E Tests — Blackbox Suite
 
-One command, full stack, real Reddit. 34 scenarios against a freshly composed environment: Postgres, MinIO, browserless, and the app — with a seeded admin (from `.env`) and a non-admin test user.
+One command, full stack, real Reddit. 41 scenarios against a freshly composed environment: Postgres, MinIO, browserless, and the app — with a seeded admin (from `.env`) and a non-admin test user.
 
 ## Running
 
@@ -8,15 +8,19 @@ One command, full stack, real Reddit. 34 scenarios against a freshly composed en
 ./deployment/tests/run-docker-test.sh
 ```
 
-Exit code `0` = all 34 pass. The suite must pass from a **clean state** (containers + volumes are torn down after every run).
+Exit code `0` = all 41 pass. The suite must pass from a **clean state** (containers + volumes are torn down after every run).
 
 **How it works**: the test container curls the app via `host.docker.internal:3000` on an isolated network. A `seed` service injects the non-admin fixture user (`user@socialradio.com` / `UserPass123!`) only after the app healthcheck confirms the schema exists. The test script itself is a thin wrapper — orchestration lives in compose.
+
+**SQL pattern**: one access point — the `psql_run` helper in `docker-test.sh` runs every
+database change (boot fixtures like `seed-test-user.sql` at suite start, mid-suite fixtures
+like `dead-sub-fixture.sql` with `-v` psql variables). No other SQL paths exist.
 
 **Assertion style**: every case checks more than status. Responses are verified with `jq` (field presence, values, error bodies — e.g. "Invalid credentials" on both login failures, proving no user enumeration). Mutations are **read back**: subscribe/unsubscribe are followed by `GET /channels/:id/subreddits` to prove the link changed. Error responses must confirm their status code in the body.
 
 **Structure**: cases are grouped **by feature**. Within each feature, happy paths come first, then that feature's failure cases. Every protected endpoint asserts its own auth negatives — a route missing its guard decorator fails the suite.
 
-## Scenario inventory — all 34, in order
+## Scenario inventory — all 41, in order
 
 ### Section 1: Healthcheck
 *The app must be alive.*
@@ -56,25 +60,32 @@ Exit code `0` = all 34 pass. The suite must pass from a **clean state** (contain
 | 19 | `POST /channels` no token | 401 body confirms |
 | 20 | Subscribe no token | 401 body confirms |
 | 21 | Unsubscribe no token | 401 body confirms |
+| 22 | **Subscribe invalid body** (non-string `subredditName`) | 400 + body confirms |
+| 23 | **Unsubscribe a sub that was never subscribed** | 404 + "Subreddit not found" |
 
 ### Section 4: Admin & Feeds
 *Admin-only routes work with admin token, and each asserts its own 401 (no token) and 403 (regular token).*
 
 | # | Scenario | Expected |
 |---|---|---|
-| 22 | **Scrape `r/AskReddit` with admin token** (real browserless + Reddit) | 2xx + `scrapedPostsCount > 0` |
-| 23 | `GET /admin/feeds/subreddits` (admin) | contains `askreddit` |
-| 24 | `GET /admin/channels/:id/topics` (admin) | topic id present + non-empty posts array |
-| 25 | `DELETE /admin/feeds/cache` (admin) | 200 + empty body |
-| 26 | Scrape no token | 401 body confirms |
-| 27 | Scrape tampered JWT | 401 body confirms |
-| 28 | Scrape regular user token | 403 body confirms |
-| 29 | Subreddits no token | 401 body confirms |
-| 30 | Subreddits regular user token | 403 body confirms |
-| 31 | Cache no token | 401 body confirms |
-| 32 | Cache regular user token | 403 body confirms |
-| 33 | Topics no token | 401 body confirms |
-| 34 | Topics regular user token | 403 body confirms |
+| 24 | **Scrape `r/AskReddit` with admin token** (real browserless + Reddit) | 2xx + `scrapedPostsCount > 0` |
+| 25 | `GET /admin/feeds/subreddits` (admin) | contains `askreddit` |
+| 26 | **Scrape a dead/non-existent sub** (fetcher `isInvalid` chain) | 2xx + `scrapedPostsCount = 0` |
+| 27 | `GET /admin/feeds/subreddits` read-back | dead sub **gone** (row deleted) |
+| 28 | **SQL fixture**: subscribe channel to a dead sub behind the API gate | read-back: dead sub subscribed (fixture applied) |
+| 29 | `GET /admin/channels/:id/topics` (admin) | 200, topic id present — triggers the **prod background scrape chain** |
+| 30 | **Poll** `GET /channels/:id/subreddits` | dead sub **auto-unsubscribed** (chain `isInvalid` → delete → FK cascade) |
+| 31 | `GET /admin/channels/:id/topics` (admin) | topic id present + non-empty posts array |
+| 32 | `DELETE /admin/feeds/cache` (admin) | 200 + empty body |
+| 33 | Scrape no token | 401 body confirms |
+| 34 | Scrape tampered JWT | 401 body confirms |
+| 35 | Scrape regular user token | 403 body confirms |
+| 36 | Subreddits no token | 401 body confirms |
+| 37 | Subreddits regular user token | 403 body confirms |
+| 38 | Cache no token | 401 body confirms |
+| 39 | Cache regular user token | 403 body confirms |
+| 40 | Topics no token | 401 body confirms |
+| 41 | Topics regular user token | 403 body confirms |
 
 ## Auth matrix covered
 
@@ -84,10 +95,10 @@ Exit code `0` = all 34 pass. The suite must pass from a **clean state** (contain
 | `POST /channels` | ✅ #19 | — | — |
 | `POST /channels/:id/subreddits` | ✅ #20 | — | — |
 | `DELETE /channels/:id/subreddits/:subName` | ✅ #21 | — | — |
-| `POST /admin/feeds/scrape` | ✅ #26 | ✅ #27 | ✅ #28 |
-| `GET /admin/feeds/subreddits` | ✅ #29 | — | ✅ #30 |
-| `DELETE /admin/feeds/cache` | ✅ #31 | — | ✅ #32 |
-| `GET /admin/channels/:id/topics` | ✅ #33 | — | ✅ #34 |
+| `POST /admin/feeds/scrape` | ✅ #29 | ✅ #30 | ✅ #31 |
+| `GET /admin/feeds/subreddits` | ✅ #32 | — | ✅ #33 |
+| `DELETE /admin/feeds/cache` | ✅ #34 | — | ✅ #35 |
+| `GET /admin/channels/:id/topics` | ✅ #40 | — | ✅ #41 |
 | `GET /channels/:id/subreddits` (read-back) | — | — | — |
 | `GET /channels/:id/playlist.m3u8` | ❌ excluded | — | — |
 | `GET /channels/:id/chunks/:filename` | ❌ excluded | — | — |

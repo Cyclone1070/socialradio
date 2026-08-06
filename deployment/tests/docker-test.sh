@@ -65,6 +65,20 @@ EMAIL="${ADMIN_EMAIL:?ADMIN_EMAIL is required}"
 PASSWORD="${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}"
 BASE_URL="${TARGET_URL:?TARGET_URL is required}"
 
+# ── SQL fixtures ──────────────────────────────────────────────────────
+# One SQL pattern for the whole suite: every database change runs through
+# this single helper (psql against the app DB). Boot fixtures are .sql files
+# applied here; mid-suite fixtures use the same helper with psql variables
+# (e.g. -v chan_id=... -f /scripts/dead-sub-fixture.sql).
+psql_run() {
+  PGPASSWORD=postgres psql -h db -U postgres -d socialradio \
+    -v ON_ERROR_STOP=1 "$@"
+}
+
+echo "SQL fixture 0: seed-test-user.sql (non-admin user)"
+psql_run -f /scripts/seed-test-user.sql >/dev/null || fail "seed-test-user.sql failed"
+echo "  ✓ user fixture seeded"
+
 # ── Section 1: Healthcheck ────────────────────────────────────────────
 
 echo ""
@@ -218,12 +232,23 @@ echo "21. DELETE /channels/$CHAN_ID/subreddits/AskReddit (No Auth -> 401)"
 assert_status DELETE "$BASE_URL/channels/$CHAN_ID/subreddits/AskReddit" 401
 assert_jq '.statusCode == 401' 'body confirms 401'
 
+echo "22. POST /channels/$CHAN_ID/subreddits (Invalid body -> 400)"
+assert_status POST "$BASE_URL/channels/$CHAN_ID/subreddits" 400 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"subredditName":123}'
+assert_jq '.statusCode == 400' 'body confirms 400'
+
+echo "23. DELETE /channels/$CHAN_ID/subreddits/nonexistent_subreddit_e2e_92831 (Not subscribed -> 404)"
+assert_status DELETE "$BASE_URL/channels/$CHAN_ID/subreddits/nonexistent_subreddit_e2e_92831" 404 \
+  -H "Authorization: Bearer $TOKEN"
+assert_jq '.message == "Subreddit not found"' '404 message'
+
 # ── Section 4: Admin & Feeds ─────────────────────────────────────────
 
 echo ""
 echo "=== Section 4: Admin & Feeds ==="
 
-echo "22. POST /admin/feeds/scrape (Admin Token, r/AskReddit)"
+echo "24. POST /admin/feeds/scrape (Admin Token, r/AskReddit)"
 assert_2xx POST "$BASE_URL/admin/feeds/scrape" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" -d '{"subredditName":"AskReddit"}'
@@ -231,60 +256,99 @@ COUNT=$(echo "$BODY" | jq -r '.scrapedPostsCount // 0')
 echo "  Scraped posts: $COUNT"
 [ "$COUNT" -gt 0 ] 2>/dev/null || fail "expected scrapedPostsCount > 0, got: $BODY"
 
-echo "23. GET /admin/feeds/subreddits (Admin -> 200)"
+echo "25. GET /admin/feeds/subreddits (Admin -> 200)"
 assert_status GET "$BASE_URL/admin/feeds/subreddits" 200 -H "Authorization: Bearer $TOKEN"
 assert_jq 'map(.name) | index("askreddit") != null' 'askreddit present in list'
 
-echo "24. GET /admin/channels/$CHAN_ID/topics (Admin -> 200)"
+echo "26. POST /admin/feeds/scrape (Dead sub -> 2xx, zero posts)"
+assert_2xx POST "$BASE_URL/admin/feeds/scrape" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"subredditName":"nonexistent_subreddit_e2e_92831"}'
+DEAD_COUNT=$(echo "$BODY" | jq -r '.scrapedPostsCount // 0')
+echo "  Scraped posts: $DEAD_COUNT"
+[ "$DEAD_COUNT" = "0" ] || fail "expected scrapedPostsCount 0, got: $BODY"
+
+echo "27. GET /admin/feeds/subreddits (Dead sub deleted -> not in list)"
+assert_status GET "$BASE_URL/admin/feeds/subreddits" 200 -H "Authorization: Bearer $TOKEN"
+assert_jq 'map(.name) | index("nonexistent_subreddit_e2e_92831") == null' 'dead sub gone (isInvalid chain)'
+
+echo "28. SQL fixture: subscribe channel to dead_prod_sub_e2e_77401 (behind the API gate)"
+psql_run -v chan_id="$CHAN_ID" -f /scripts/dead-sub-fixture.sql >/dev/null \
+  || fail "dead-sub fixture failed"
+assert_status GET "$BASE_URL/channels/$CHAN_ID/subreddits" 200 \
+  -H "Authorization: Bearer $TOKEN"
+assert_jq 'map(.name) | index("dead_prod_sub_e2e_77401") != null' 'dead sub subscribed (fixture applied)'
+
+echo "29. GET /admin/channels/$CHAN_ID/topics (triggers the prod background scrape chain)"
+assert_status GET "$BASE_URL/admin/channels/$CHAN_ID/topics" 200 \
+  -H "Authorization: Bearer $TOKEN"
+assert_jq '.id | type == "string" and length > 0' 'topic id present (phase 2 unaffected by chain)'
+
+echo "30. Poll: dead sub auto-unsubscribed by the prod scrape chain"
+GONE=1
+i=0
+while [ $i -lt 45 ]; do
+  req GET "$BASE_URL/channels/$CHAN_ID/subreddits" -H "Authorization: Bearer $TOKEN"
+  if echo "$BODY" | jq -e 'map(.name) | index("dead_prod_sub_e2e_77401") == null' >/dev/null 2>&1; then
+    GONE=0
+    break
+  fi
+  i=$((i+1))
+  sleep 3
+done
+[ "$GONE" = 0 ] || fail "dead sub still subscribed after 135s (chain delete + cascade did not run)"
+echo "  ✓ dead sub gone (chain isInvalid -> delete -> cascade) after ~$((i * 3))s"
+
+echo "31. GET /admin/channels/$CHAN_ID/topics (Admin -> 200)"
 assert_status GET "$BASE_URL/admin/channels/$CHAN_ID/topics" 200 \
   -H "Authorization: Bearer $TOKEN"
 assert_jq '.id | type == "string" and length > 0' 'topic id present'
 assert_jq '(.posts | type == "array" and length > 0)' 'non-empty posts array'
 
-echo "25. DELETE /admin/feeds/cache (Admin -> 200)"
+echo "32. DELETE /admin/feeds/cache (Admin -> 200)"
 assert_status DELETE "$BASE_URL/admin/feeds/cache" 200 -H "Authorization: Bearer $TOKEN"
 assert_empty_body
 
-echo "26. POST /admin/feeds/scrape (No Auth -> 401)"
+echo "33. POST /admin/feeds/scrape (No Auth -> 401)"
 assert_status POST "$BASE_URL/admin/feeds/scrape" 401 \
   -H "Content-Type: application/json" -d '{"subredditName":"AskReddit"}'
 assert_jq '.statusCode == 401' 'body confirms 401'
 
-echo "27. POST /admin/feeds/scrape (Tampered JWT -> 401)"
+echo "34. POST /admin/feeds/scrape (Tampered JWT -> 401)"
 assert_status POST "$BASE_URL/admin/feeds/scrape" 401 \
   -H "Authorization: Bearer ${TOKEN}tampered" \
   -H "Content-Type: application/json" -d '{"subredditName":"AskReddit"}'
 assert_jq '.statusCode == 401' 'body confirms 401'
 
-echo "28. POST /admin/feeds/scrape (Regular Token -> 403)"
+echo "35. POST /admin/feeds/scrape (Regular Token -> 403)"
 assert_status POST "$BASE_URL/admin/feeds/scrape" 403 \
   -H "Authorization: Bearer $REG_TOKEN" \
   -H "Content-Type: application/json" -d '{"subredditName":"AskReddit"}'
 assert_jq '.statusCode == 403' 'body confirms 403'
 
-echo "29. GET /admin/feeds/subreddits (No Auth -> 401)"
+echo "36. GET /admin/feeds/subreddits (No Auth -> 401)"
 assert_status GET "$BASE_URL/admin/feeds/subreddits" 401
 assert_jq '.statusCode == 401' 'body confirms 401'
 
-echo "30. GET /admin/feeds/subreddits (Regular Token -> 403)"
+echo "37. GET /admin/feeds/subreddits (Regular Token -> 403)"
 assert_status GET "$BASE_URL/admin/feeds/subreddits" 403 \
   -H "Authorization: Bearer $REG_TOKEN"
 assert_jq '.statusCode == 403' 'body confirms 403'
 
-echo "31. DELETE /admin/feeds/cache (No Auth -> 401)"
+echo "38. DELETE /admin/feeds/cache (No Auth -> 401)"
 assert_status DELETE "$BASE_URL/admin/feeds/cache" 401
 assert_jq '.statusCode == 401' 'body confirms 401'
 
-echo "32. DELETE /admin/feeds/cache (Regular Token -> 403)"
+echo "39. DELETE /admin/feeds/cache (Regular Token -> 403)"
 assert_status DELETE "$BASE_URL/admin/feeds/cache" 403 \
   -H "Authorization: Bearer $REG_TOKEN"
 assert_jq '.statusCode == 403' 'body confirms 403'
 
-echo "33. GET /admin/channels/$CHAN_ID/topics (No Auth -> 401)"
+echo "40. GET /admin/channels/$CHAN_ID/topics (No Auth -> 401)"
 assert_status GET "$BASE_URL/admin/channels/$CHAN_ID/topics" 401
 assert_jq '.statusCode == 401' 'body confirms 401'
 
-echo "34. GET /admin/channels/$CHAN_ID/topics (Regular Token -> 403)"
+echo "41. GET /admin/channels/$CHAN_ID/topics (Regular Token -> 403)"
 assert_status GET "$BASE_URL/admin/channels/$CHAN_ID/topics" 403 \
   -H "Authorization: Bearer $REG_TOKEN"
 assert_jq '.statusCode == 403' 'body confirms 403'

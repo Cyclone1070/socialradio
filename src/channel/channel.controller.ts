@@ -14,6 +14,7 @@ import * as express from 'express';
 import { ChannelService } from './channel.service';
 import { ChannelPlaybackService } from './channel-playback.service';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
+import { SubscribeSubredditDto } from './dto/subscribe-subreddit.dto';
 import { ChannelResponseDto } from './dto/channel-response.dto';
 import { StorageService } from '../storage/storage.service';
 
@@ -46,7 +47,7 @@ export class ChannelController {
   @UseGuards(AuthGuard('jwt'))
   async subscribeToSubreddit(
     @Param('id') id: string,
-    @Body() dto: { subredditName: string },
+    @Body() dto: SubscribeSubredditDto,
   ): Promise<void> {
     await this.channelService.subscribeToSubreddit(id, dto.subredditName);
   }

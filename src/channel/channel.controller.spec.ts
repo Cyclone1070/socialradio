@@ -1,10 +1,12 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import { Test, TestingModule } from '@nestjs/testing';
+import { ValidationPipe } from '@nestjs/common';
 import { ChannelController } from './channel.controller';
 import { StorageService } from '../storage/storage.service';
 import { ChannelService } from './channel.service';
 import { ChannelPlaybackService } from './channel-playback.service';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
+import { SubscribeSubredditDto } from './dto/subscribe-subreddit.dto';
 import { Request, Response } from 'express';
 
 describe('ChannelController', () => {
@@ -182,6 +184,28 @@ describe('ChannelController', () => {
         'audio/mpeg',
       );
       expect(mockRes.send).toHaveBeenCalledWith(Buffer.from('audio'));
+    });
+  });
+
+  describe('SubscribeSubredditDto validation', () => {
+    it('rejects a non-string subredditName via the validation pipe', async () => {
+      const pipe = new ValidationPipe();
+      await expect(
+        pipe.transform(
+          { subredditName: 123 },
+          { type: 'body', metatype: SubscribeSubredditDto },
+        ),
+      ).rejects.toThrow();
+    });
+
+    it('rejects an empty subredditName via the validation pipe', async () => {
+      const pipe = new ValidationPipe();
+      await expect(
+        pipe.transform(
+          { subredditName: '' },
+          { type: 'body', metatype: SubscribeSubredditDto },
+        ),
+      ).rejects.toThrow();
     });
   });
 });
