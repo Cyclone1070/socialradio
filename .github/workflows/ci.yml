@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Backend gate (format + lint + tsc + unit tests)
+        run: |
+          npm ci
+          npm run gate
+
+      - name: reddit-fetcher unit tests
+        working-directory: reddit-fetcher
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npx jest
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: gate
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # The whole stack is ephemeral (fresh volumes every run), so the admin
+      # credentials from .env.example are fine — the boot migration just
+      # inserts whatever ADMIN_EMAIL/ADMIN_PASSWORD it's given, and the suite
+      # logs in with the same values.
+      - name: Generate .env
+        run: cp .env.example .env
+
+      - name: E2E (whole stack: postgres, minio, browserless, fetcher, app + 41 blackbox cases, real Reddit)
+        env:
+          COMPOSE_PROGRESS: auto
+        run: |
+          ./deployment/tests/run-docker-test.sh
