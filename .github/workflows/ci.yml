@@ -43,7 +43,7 @@ jobs:
       - name: Generate .env
         run: cp .env.example .env
 
-      - name: E2E (whole stack: postgres, minio, browserless, fetcher, app + 41 blackbox cases, real Reddit)
+      - name: "E2E (whole stack: postgres, minio, browserless, fetcher, app + 41 blackbox cases, real Reddit)"
         env:
           COMPOSE_PROGRESS: auto
         run: |
