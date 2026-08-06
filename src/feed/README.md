@@ -1,6 +1,6 @@
 # Feed — Reddit Content Acquisition
 
-Acquires real Reddit conversations for the radio: fetches subreddit posts, pulls their comments, and persists only content good enough to become a radio segment.
+Acquires real Reddit conversations for the radio: fetches subreddit posts, pulls their comments, and persists only content good enough to become a radio segment. **Browsing happens in the `reddit-fetcher` container** (owns browserless, per-subreddit contexts, and the global 1–2s pacing queue) — the backend calls it over REST.
 
 ## Public API
 
@@ -17,10 +17,11 @@ All routes admin-only (`JwtAuthGuard` + `RolesGuard` + `@Roles('admin')`).
 For one subreddit, one scrape run does:
 
 ```
-fetch up to 100 top posts
+fetch up to 100 top posts   (reddit-fetcher:  GET /top-posts/:r?limit=100 → { posts, isInvalid })
   └─ keep only posts with num_comments >= 40      (cost pre-filter: needs a real conversation)
+    isInvalid (private/banned/non-existent) → delete subreddit row, return {0} (no separate validation load)
 for each candidate post:
-  ├─ fetch comments  (./.json?sort=top&limit=500&showmore=false)
+  ├─ fetch comments  (reddit-fetcher: GET /comments/:r/:postId → { comments })
   ├─ word-count guard: total words across ALL comments >= 2500
   └─ if it qualifies: save post + all its comments
 cap: max 20 posts saved per run
@@ -32,13 +33,19 @@ cap: max 20 posts saved per run
 - `limit=500` — maximum batch Reddit serves (~500 comment nodes; higher values are clamped). `limit` counts *all* comments across all nesting depths, not just top-level.
 - `sort=top` — highest-scored comments first, nested replies score-sorted too.
 
+These params live in `reddit-fetcher/src/scraper.ts` — **the fetcher is the single owner of Reddit browsing behaviour**, plus:
+
+- per-subreddit **context affinity** (one fingerprint/cookie identity per sub, reused across that sub's requests)
+- the **global pacing queue**: every request through one container, spaced 1–2s apart — safe with any number of backend replicas
+- `GET /exists/:r` for subscribe-time validation (`validateSubreddit`, 1 request)
+
 **Word-count guard is the quality bar**: it's what separates a segment-worthy thread from a dead one, and it feeds the script generator's 2500–3500 word budget.
 
 ### Re-scrape semantics
 
 - **Same subreddit, second scrape**: posts already in the DB are skipped (dedupe by Reddit post ID) — no duplicates ever, only *new* posts get saved. `lastScrapedAt` refreshes on every run.
-- **Invalid subreddit** (private, banned, or non-existent): the subreddit stub row is deleted and the run returns `{ "scrapedPostsCount": 0 }` — no error, a no-op.
-- **Cache TTL**: posts expire after 72 hours via `DELETE /admin/feeds/cache` (also run at the start of every scrape).
+- **Invalid subreddit** (private, banned, or non-existent): the fetcher marks the feed `isInvalid`; the subreddit stub row is deleted and the run returns `{ "scrapedPostsCount": 0 }` — no error, a no-op. Same signal powers subscribe-time validation via `GET /exists/:r`.
+- **Cache TTL**: posts expire after 72 hours via `DELETE /admin/feeds/cache` (also run at the end of every scrape, per-sub, AFTER saving new posts).
 
 ### Who else triggers scrapes
 

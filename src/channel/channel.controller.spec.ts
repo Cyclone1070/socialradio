@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import { Test, TestingModule } from '@nestjs/testing';
 import { ChannelController } from './channel.controller';
+import { StorageService } from '../storage/storage.service';
 import { ChannelService } from './channel.service';
 import { ChannelPlaybackService } from './channel-playback.service';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
@@ -37,7 +38,7 @@ describe('ChannelController', () => {
           useValue: mockPlaybackService,
         },
         {
-          provide: 'StorageService',
+          provide: StorageService,
           useValue: mockStorageService,
         },
       ],

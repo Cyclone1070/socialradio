@@ -42,7 +42,7 @@ services:
     env_file: ../../.env
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/socialradio
-      BROWSERLESS_WS_URL: ws://browserless:3000/playwright
+      REDDIT_FETCHER_URL: http://fetcher:3001
       STORAGE_ENDPOINT: http://minio:9000
       STORAGE_BUCKET: socialradio-media
       STORAGE_ACCESS_KEY: minioadmin
@@ -57,12 +57,26 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      browserless:
+      fetcher:
         condition: service_started
       minio:
         condition: service_healthy
     volumes:
       - hf_cache:/home/node/.cache
+
+  # Dedicated Reddit scraping container: owns browserless config, per-subreddit
+  # contexts, and the global 1–2s pacing queue. Single container by design —
+  # it IS the pacing point (scale-out = more (browserless + fetcher) pairs).
+  fetcher:
+    build:
+      context: ../../reddit-fetcher
+      dockerfile: Dockerfile
+    environment:
+      BROWSERLESS_WS_URL: ws://browserless:3000/playwright
+    depends_on:
+      browserless:
+        condition: service_started
+    restart: always
 
   browserless:
     image: browserless/chrome:latest

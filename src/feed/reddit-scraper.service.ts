@@ -1,77 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { chromium } from 'playwright-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { FingerprintGenerator } from 'fingerprint-generator';
-import type { Page } from 'playwright-core';
-import { z } from 'zod';
 
-// ── Zod schemas for Reddit JSON API ──────────────────────────────────
-const ListingChildDataSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  selftext: z.string(),
-  author: z.string(),
-  score: z.number(),
-  num_comments: z.number(),
-  created_utc: z.number(),
-});
-
-const ListingChildSchema = z.object({
-  kind: z.string(),
-  data: ListingChildDataSchema,
-});
-
-const ListingResponseSchema = z.object({
-  data: z.object({
-    children: z.array(ListingChildSchema),
-  }),
-});
-
-// Recursive comment node for deeply nested replies
-interface InternalCommentNode {
-  kind: string;
-  data: {
-    id: string;
-    body: string;
-    author: string;
-    score: number;
-    parent_id: string;
-    created_utc: number;
-    replies?: { data: { children: InternalCommentNode[] } } | string;
-  };
-}
-
-const CommentChildSchema: z.ZodType<InternalCommentNode> = z.lazy(() =>
-  z.object({
-    kind: z.string(),
-    data: z.object({
-      id: z.string(),
-      body: z.string(),
-      author: z.string(),
-      score: z.number(),
-      parent_id: z.string(),
-      created_utc: z.number(),
-      replies: z
-        .object({
-          data: z.object({
-            children: z.array(CommentChildSchema),
-          }),
-        })
-        .or(z.string())
-        .optional(),
-    }),
-  }),
-);
-
-const CommentResponseSchema = z.object({
-  data: z.object({
-    children: z.array(CommentChildSchema),
-  }),
-});
-
-// ── Public types ─────────────────────────────────────────────────────
-
+// Public data shapes produced by the reddit-fetcher container (mirrors
+// `reddit-fetcher/src/types.ts` — identity/UA/cookies live there now).
 export interface RedditPostData {
   id: string;
   title: string;
@@ -90,188 +21,56 @@ export interface RedditCommentData {
   created_utc: number;
 }
 
+/**
+ * Thin HTTP client for the reddit-fetcher container. All browser-driven
+ * scraping (playwright/stealth/fingerprints), per-subreddit contexts and the
+ * global 1–2s pacing live in that container — this service only forwards
+ * requests over REST.
+ */
 @Injectable()
 export class RedditScraperService {
-  private readonly fingerprintGenerator = new FingerprintGenerator();
+  constructor(private readonly configService: ConfigService) {}
 
-  constructor(private readonly configService: ConfigService) {
-    // Register the canon stealth plugin
-    chromium.use(StealthPlugin());
-  }
-
-  private async connect() {
-    const wsEndpoint = this.configService.get<string>('BROWSERLESS_WS_URL');
-    if (!wsEndpoint) {
-      throw new Error('BROWSERLESS_WS_URL is not configured');
+  private get baseUrl(): string {
+    const url = this.configService.get<string>('REDDIT_FETCHER_URL');
+    if (!url) {
+      throw new Error('REDDIT_FETCHER_URL is not configured');
     }
-    return chromium.connect(wsEndpoint);
+    return url;
   }
 
-  private getFingerprintContextOptions() {
-    const { fingerprint } = this.fingerprintGenerator.getFingerprint({
-      browsers: ['chrome'],
-      devices: ['desktop'],
-      operatingSystems: ['macos'],
-    });
-
-    return {
-      userAgent: fingerprint.navigator.userAgent,
-      viewport: {
-        width: fingerprint.screen.width,
-        height: fingerprint.screen.height,
-      },
-      locale: fingerprint.navigator.language,
-    };
-  }
-
-  private async withPage<T>(fn: (page: Page) => Promise<T>): Promise<T> {
-    const browser = await this.connect();
-    const contextOptions = this.getFingerprintContextOptions();
-    const context = await browser.newContext(contextOptions);
-    const page = await context.newPage();
-
-    try {
-      return await fn(page);
-    } finally {
-      await page.close();
-      await context.close();
-      await browser.close();
+  private async getJson(path: string): Promise<unknown> {
+    const res = await fetch(`${this.baseUrl}${path}`);
+    if (!res.ok) {
+      throw new Error(`reddit-fetcher ${path} failed: ${res.status}`);
     }
+    return res.json();
   }
 
   async fetchTopPosts(
     subredditName: string,
     limit: number,
-  ): Promise<RedditPostData[]> {
-    return this.withPage(async (page) => {
-      const url = `https://www.reddit.com/r/${subredditName}/`;
-
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await page.waitForSelector('shreddit-post', { timeout: 15000 });
-
-      const rawJson: unknown = await page.evaluate(
-        async (feedLimit): Promise<unknown> => {
-          const res = await fetch(`./.json?limit=${feedLimit}`);
-          if (!res.ok) {
-            throw new Error(
-              `Failed to fetch subreddit feed JSON: ${res.status}`,
-            );
-          }
-          return res.json();
-        },
-        limit,
-      );
-
-      const listing = ListingResponseSchema.parse(rawJson);
-      const children = listing.data.children || [];
-      const posts: RedditPostData[] = children
-        .filter((child) => {
-          const d = child.data;
-          return d && Number(d.num_comments) >= 40;
-        })
-        .map((child) => {
-          const d = child.data;
-          return {
-            id: d.id || '',
-            title: d.title || '',
-            selftext: d.selftext || '',
-            author: d.author || '',
-            score: Number(d.score) || 0,
-            created_utc: Number(d.created_utc) || 0,
-          };
-        });
-
-      return posts.slice(0, limit);
-    });
+  ): Promise<{ posts: RedditPostData[]; isInvalid: boolean }> {
+    const body = await this.getJson(
+      `/top-posts/${subredditName}?limit=${limit}`,
+    );
+    return body as { posts: RedditPostData[]; isInvalid: boolean };
   }
 
   async exists(subredditName: string): Promise<boolean> {
-    return this.withPage(async (page) => {
-      const url = `https://www.reddit.com/r/${subredditName}/`;
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-      try {
-        // Wait for all dynamic fetches to settle
-        await page.waitForLoadState('networkidle', { timeout: 8000 });
-      } catch {
-        // Ignore networkidle timeouts to verify what loaded
-      }
-
-      const postCount = await page.evaluate(
-        () => document.querySelectorAll('shreddit-post').length,
-      );
-      return postCount > 0;
-    });
+    const body = await this.getJson(`/exists/${subredditName}`);
+    const { valid } = body as { valid: boolean };
+    return valid;
   }
 
   async fetchPostComments(
     subredditName: string,
     postRedditId: string,
   ): Promise<RedditCommentData[]> {
-    // Randomized throttle delay of 1s to 2s between requests to mimic human browsing
-    const delayMs = Math.floor(Math.random() * 1000) + 1000;
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-
-    return this.withPage(async (page) => {
-      const url = `https://www.reddit.com/r/${subredditName}/comments/${postRedditId}/`;
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await page.waitForSelector('shreddit-post', { timeout: 15000 });
-
-      // sort=top: highest-scored comments first; limit=500: max batch Reddit
-      // serves; showmore=false: drops "more" placeholder nodes that break
-      // CommentChildSchema (undocumented param — tolerant schema is the fallback)
-      const commentsUrl = './.json?sort=top&limit=500&showmore=false';
-      const rawJson: unknown = await page.evaluate(
-        async (commentsPageUrl): Promise<unknown> => {
-          const res = await fetch(commentsPageUrl);
-          if (!res.ok) {
-            throw new Error(`Failed to fetch comments JSON: ${res.status}`);
-          }
-          return res.json();
-        },
-        commentsUrl,
-      );
-
-      const parsed = z.tuple([z.any(), CommentResponseSchema]).parse(rawJson);
-      const commentsListing = parsed[1];
-
-      const flattenComments = (
-        children: InternalCommentNode[] | undefined,
-      ): RedditCommentData[] => {
-        const results: RedditCommentData[] = [];
-        if (!children) return results;
-
-        for (const child of children) {
-          if (child.kind !== 't1') continue;
-          const d: InternalCommentNode['data'] = child.data;
-          if (!d) continue;
-
-          // Strip prefixes for standard IDs
-          const cleanId = (d.id || '').replace(/^t1_|^t3_/, '');
-          const cleanParentId = (d.parent_id || '').replace(/^t1_|^t3_/, '');
-
-          results.push({
-            id: cleanId,
-            body: (d.body || '').trim(),
-            author: d.author || '',
-            score: Number(d.score) || 0,
-            parent_id: cleanParentId,
-            created_utc: Number(d.created_utc) || 0,
-          });
-
-          if (
-            d.replies &&
-            typeof d.replies === 'object' &&
-            d.replies.data?.children
-          ) {
-            results.push(...flattenComments(d.replies.data.children));
-          }
-        }
-        return results;
-      };
-
-      const flattened = flattenComments(commentsListing.data.children);
-      return flattened;
-    });
+    const body = await this.getJson(
+      `/comments/${subredditName}/${postRedditId}`,
+    );
+    const { comments } = body as { comments: RedditCommentData[] };
+    return comments;
   }
 }

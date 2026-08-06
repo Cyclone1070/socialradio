@@ -8,7 +8,6 @@ import {
   Req,
   Res,
   UseGuards,
-  Inject,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import * as express from 'express';
@@ -16,14 +15,13 @@ import { ChannelService } from './channel.service';
 import { ChannelPlaybackService } from './channel-playback.service';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { ChannelResponseDto } from './dto/channel-response.dto';
-import type { StorageService } from '../domain/types/storage.interface';
+import { StorageService } from '../storage/storage.service';
 
 @Controller('channels')
 export class ChannelController {
   constructor(
     private readonly channelService: ChannelService,
     private readonly playbackService: ChannelPlaybackService,
-    @Inject('StorageService')
     private readonly storageService: StorageService,
   ) {}
 

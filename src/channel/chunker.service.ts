@@ -1,12 +1,9 @@
-import { Injectable, Inject } from '@nestjs/common';
-import type { StorageService } from '../domain/types/storage.interface';
+import { Injectable } from '@nestjs/common';
+import { StorageService } from '../storage/storage.service';
 
 @Injectable()
 export class ChunkerService {
-  constructor(
-    @Inject('StorageService')
-    private readonly storageService: StorageService,
-  ) {}
+  constructor(private readonly storageService: StorageService) {}
 
   getStorageKey(
     channelId: string,

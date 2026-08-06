@@ -33,7 +33,7 @@ cp .env.example .env    # fill in ADMIN_EMAIL / ADMIN_PASSWORD / JWT_SECRET
 docker compose -f deployment/docker/docker-compose.yml up --build
 ```
 
-E2E suite (spins up the full stack + browserless + test fixture):
+E2E suite (spins up the full stack — Postgres, MinIO, browserless, the reddit-fetcher container, and the app — plus a test fixture):
 
 ```sh
 ./deployment/tests/run-docker-test.sh

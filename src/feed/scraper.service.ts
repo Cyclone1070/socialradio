@@ -46,17 +46,14 @@ export class ScraperService {
     await this.subredditRepo.save(subreddit);
 
     try {
-      // Gracefully delete and exit if subreddit is private, banned, or non-existent
-      const isValid = await this.validateSubreddit(subredditName);
-      if (!isValid) {
+      // The fetcher reports isInvalid for private/banned/non-existent subs:
+      // delete and exit (no separate validation page load needed).
+      const { posts: rawPosts, isInvalid } =
+        await this.redditScraperService.fetchTopPosts(subredditName, 100);
+      if (isInvalid) {
         await this.subredditRepo.delete({ id: subreddit.id });
         return { scrapedPostsCount: 0 };
       }
-
-      const rawPosts = await this.redditScraperService.fetchTopPosts(
-        subredditName,
-        100,
-      );
       let savedCount = 0;
 
       for (const rawPost of rawPosts) {

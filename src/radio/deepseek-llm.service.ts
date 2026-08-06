@@ -2,14 +2,16 @@ import { Injectable } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { lastValueFrom } from 'rxjs';
-import { LlmService } from './interfaces/llm-service.interface';
+import { LlmService } from './llm-service';
 
 @Injectable()
-export class DeepSeekLlmService implements LlmService {
+export class DeepSeekLlmService extends LlmService {
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
-  ) {}
+  ) {
+    super();
+  }
 
   async generateText(
     systemPrompt: string,

@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ScriptService } from './script.service';
+import { LlmService } from './llm-service';
 import { Post } from '../feed/entities/post.entity';
 import { Comment } from '../feed/entities/comment.entity';
 
@@ -14,7 +15,7 @@ describe('ScriptService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ScriptService,
-        { provide: 'LlmService', useValue: mockLlmService },
+        { provide: LlmService, useValue: mockLlmService },
       ],
     }).compile();
 

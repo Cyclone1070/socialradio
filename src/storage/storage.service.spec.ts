@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { S3StorageService } from './s3-storage.service';
+import { StorageService } from './storage.service';
 import {
   S3Client,
   PutObjectCommand,
@@ -11,8 +11,8 @@ import {
 
 jest.mock('@aws-sdk/client-s3');
 
-describe('S3StorageService', () => {
-  let service: S3StorageService;
+describe('StorageService', () => {
+  let service: StorageService;
   let mockS3Send: jest.Mock;
 
   beforeEach(async () => {
@@ -25,7 +25,7 @@ describe('S3StorageService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        S3StorageService,
+        StorageService,
         {
           provide: ConfigService,
           useValue: {
@@ -44,7 +44,7 @@ describe('S3StorageService', () => {
       ],
     }).compile();
 
-    service = module.get<S3StorageService>(S3StorageService);
+    service = module.get<StorageService>(StorageService);
   });
 
   it('should be defined', () => {

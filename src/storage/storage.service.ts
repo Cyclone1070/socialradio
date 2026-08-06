@@ -7,11 +7,11 @@ import {
   HeadObjectCommand,
   DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
-import { StorageService, WriteParams } from '../domain/types/storage.interface';
+import { WriteParams } from '../domain/types/write-params';
 
 @Injectable()
-export class S3StorageService implements StorageService {
-  private readonly logger = new Logger(S3StorageService.name);
+export class StorageService {
+  private readonly logger = new Logger(StorageService.name);
   private readonly s3Client: S3Client;
   private readonly bucketName: string;
   private readonly publicBaseUrl: string;

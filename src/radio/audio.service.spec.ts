@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { AudioService } from './audio.service';
+import { StorageService } from '../storage/storage.service';
 import { of } from 'rxjs';
 import type { AxiosResponse } from 'axios';
 
@@ -30,7 +31,7 @@ describe('AudioService', () => {
             }),
           },
         },
-        { provide: 'StorageService', useValue: mockStorageService },
+        { provide: StorageService, useValue: mockStorageService },
       ],
     }).compile();
 

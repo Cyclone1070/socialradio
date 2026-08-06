@@ -64,7 +64,6 @@ describe('ScraperService', () => {
 
       mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
       mockSubredditRepo.save.mockResolvedValue(subEntity);
-      mockRedditScraper.exists.mockResolvedValue(true);
 
       // We return 3 raw posts.
       // Post 1: 2200 words (Should be skipped due to < 2500)
@@ -96,7 +95,10 @@ describe('ScraperService', () => {
           created_utc: 1719999999,
         },
       ];
-      mockRedditScraper.fetchTopPosts.mockResolvedValue(rawPosts);
+      mockRedditScraper.fetchTopPosts.mockResolvedValue({
+        posts: rawPosts,
+        isInvalid: false,
+      });
       mockPostRepo.findOneBy.mockResolvedValue(null); // None exist in DB yet
 
       // Mock word count comments
@@ -161,7 +163,7 @@ describe('ScraperService', () => {
 
       expect(result).toEqual({ scrapedPostsCount: 1 });
       expect(cleanupSpy).toHaveBeenCalled();
-      expect(mockRedditScraper.exists).toHaveBeenCalledWith(subName);
+      expect(mockRedditScraper.exists).not.toHaveBeenCalled();
       expect(mockSubredditRepo.findOneBy).toHaveBeenCalledWith({
         name: subName,
       });
@@ -196,7 +198,7 @@ describe('ScraperService', () => {
       expect(savedPostIds).not.toContain('post2');
     });
 
-    it('should delete subreddit completely and resolve gracefully when validateSubreddit returns false', async () => {
+    it('should delete subreddit completely when fetchTopPosts reports isInvalid', async () => {
       const subName = 'bannedSub';
       const subEntity = {
         id: 'banned-uuid',
@@ -205,14 +207,19 @@ describe('ScraperService', () => {
       };
 
       mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
-      mockRedditScraper.exists.mockResolvedValue(false); // Invalid subreddit
+      mockSubredditRepo.save.mockResolvedValue(subEntity);
+      mockRedditScraper.fetchTopPosts.mockResolvedValue({
+        posts: [],
+        isInvalid: true,
+      });
 
-      await expect(service.scrapeSubreddit(subName)).resolves.not.toThrow();
+      const result = await service.scrapeSubreddit(subName);
 
+      expect(result).toEqual({ scrapedPostsCount: 0 });
       expect(mockSubredditRepo.delete).toHaveBeenCalledWith({
         id: 'banned-uuid',
       });
-      expect(mockRedditScraper.fetchTopPosts).not.toHaveBeenCalled();
+      expect(mockRedditScraper.exists).not.toHaveBeenCalled();
     });
 
     it('should dedupe a scrape already in-flight via scrapeStartedAt', async () => {
@@ -241,8 +248,10 @@ describe('ScraperService', () => {
       });
       mockSubredditRepo.findOneBy.mockResolvedValue(subreddit);
       mockSubredditRepo.save.mockResolvedValue(subreddit);
-      mockRedditScraper.exists.mockResolvedValue(true);
-      mockRedditScraper.fetchTopPosts.mockResolvedValue([]);
+      mockRedditScraper.fetchTopPosts.mockResolvedValue({
+        posts: [],
+        isInvalid: false,
+      });
 
       const result = await service.scrapeSubreddit(subName);
 
@@ -265,13 +274,15 @@ describe('ScraperService', () => {
       });
       mockSubredditRepo.findOneBy.mockResolvedValue(subreddit);
       mockSubredditRepo.save.mockResolvedValue(subreddit);
-      mockRedditScraper.exists.mockResolvedValue(true);
-      mockRedditScraper.fetchTopPosts.mockResolvedValue([]);
+      mockRedditScraper.fetchTopPosts.mockResolvedValue({
+        posts: [],
+        isInvalid: false,
+      });
 
       const result = await service.scrapeSubreddit(subName, true);
 
-      // The scrape actually ran (validation happened, posts fetched)
-      expect(mockRedditScraper.exists).toHaveBeenCalled();
+      // The scrape actually ran (posts fetched, no separate validation call)
+      expect(mockRedditScraper.exists).not.toHaveBeenCalled();
       expect(mockRedditScraper.fetchTopPosts).toHaveBeenCalled();
       expect(result).toEqual({ scrapedPostsCount: 0 });
     });
@@ -281,7 +292,6 @@ describe('ScraperService', () => {
       const subEntity = { id: 'sub-1', name: subName, lastScrapedAt: null };
       mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
       mockSubredditRepo.save.mockResolvedValue(subEntity);
-      mockRedditScraper.exists.mockResolvedValue(true);
 
       const rawPosts = [
         {
@@ -293,7 +303,10 @@ describe('ScraperService', () => {
           created_utc: 1719999999,
         },
       ];
-      mockRedditScraper.fetchTopPosts.mockResolvedValue(rawPosts);
+      mockRedditScraper.fetchTopPosts.mockResolvedValue({
+        posts: rawPosts,
+        isInvalid: false,
+      });
       mockRedditScraper.fetchPostComments.mockResolvedValue([
         {
           id: 'c1',
@@ -335,7 +348,6 @@ describe('ScraperService', () => {
       const subEntity = { id: 'down-uuid', name: subName, lastScrapedAt: null };
 
       mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
-      mockRedditScraper.exists.mockResolvedValue(true);
       mockRedditScraper.fetchTopPosts.mockRejectedValue(
         new Error('Browser connection lost'),
       );

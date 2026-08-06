@@ -10,6 +10,7 @@ import { DomainModule } from '../domain/domain.module';
 import { FeedModule } from '../feed/feed.module';
 import { StorageModule } from '../storage/storage.module';
 import { DeepSeekLlmService } from './deepseek-llm.service';
+import { LlmService } from './llm-service';
 
 @Module({
   imports: [
@@ -24,10 +25,10 @@ import { DeepSeekLlmService } from './deepseek-llm.service';
     AudioService,
     RadioService,
     {
-      provide: 'LlmService',
+      provide: LlmService,
       useClass: DeepSeekLlmService,
     },
   ],
-  exports: [RadioService, 'LlmService', TypeOrmModule],
+  exports: [RadioService, LlmService, TypeOrmModule],
 })
 export class RadioModule {}

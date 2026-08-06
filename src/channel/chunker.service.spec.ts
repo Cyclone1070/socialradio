@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ChunkerService } from './chunker.service';
+import { StorageService } from '../storage/storage.service';
 
 describe('ChunkerService', () => {
   let service: ChunkerService;
@@ -13,7 +14,7 @@ describe('ChunkerService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ChunkerService,
-        { provide: 'StorageService', useValue: mockStorageService },
+        { provide: StorageService, useValue: mockStorageService },
       ],
     }).compile();
 

@@ -1,7 +1,7 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
-import type { StorageService } from '../domain/types/storage.interface';
+import { StorageService } from '../storage/storage.service';
 import { lastValueFrom } from 'rxjs';
 
 @Injectable()
@@ -9,7 +9,6 @@ export class AudioService {
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
-    @Inject('StorageService')
     private readonly storageService: StorageService,
   ) {}
 
