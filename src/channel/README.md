@@ -36,7 +36,7 @@ User-facing stations: each channel subscribes to subreddits, maintains a never-e
 
 Picking the next topic for a channel runs in two phases:
 
-1. **Fire background scrapes (always)**: for each subscribed subreddit, check if it needs a fresh scrape: **stale** (last scrape > 72h ago) **or exhausted** (every post in the DB for that sub has already been played). If so, fire scrapes in a **sequential background chain** — sub A completes before sub B starts, never awaited, and each Reddit request is spaced 1–2s (proper request spacing, no parallel scraping). The scraper itself deduplicates (an in-flight claim, TTL-bounded) and skips subs cooling down after a 0-new-post scrape; the admin force-scrape bypasses both.
+1. **Fire background scrapes (always)**: for each subscribed subreddit, check if it needs a fresh scrape: **stale** (last scrape > 72h ago) **or exhausted** (every post in the DB for that sub has already been played). If so, fire scrapes in a **sequential background chain** — sub A completes before sub B starts, never awaited, and each Reddit request is serialised (proper request spacing, no parallel scraping). The scraper itself deduplicates (an in-flight claim, TTL-bounded) and skips subs cooling down after a 0-new-post scrape; the admin force-scrape bypasses both.
 2. **Read the topic from the current DB**: unplayed posts are clustered into topics; the best cluster becomes the next talk segment — or null, and a filler is appended.
 
 This is the *pull* path into the feed slice — scraping happens on demand (preventively refreshing the DB even while topics are available), not on a schedule.

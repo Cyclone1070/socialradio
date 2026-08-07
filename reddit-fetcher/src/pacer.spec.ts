@@ -1,38 +1,30 @@
 import { Pacer } from './pacer';
 
 describe('Pacer', () => {
-  beforeEach(() => {
-    jest.useFakeTimers();
-    jest.spyOn(Math, 'random').mockReturnValue(0); // delay = exactly 1000ms
-  });
-
-  afterEach(() => {
-    jest.useRealTimers();
-    jest.restoreAllMocks();
-  });
-
-  it('fires the first request immediately and waits 1-2s before the next', async () => {
+  it('fires the first request immediately and serializes every next', async () => {
     const pacer = new Pacer();
     const order: string[] = [];
 
     const first = pacer.run(async () => {
       order.push('first');
+      await new Promise((r) => setTimeout(r, 50));
     });
     await Promise.resolve(); // let the first request start
 
     const second = pacer.run(async () => {
       order.push('second');
     });
+    const third = pacer.run(async () => {
+      order.push('third');
+    });
 
-    // Before the 1s minimum delay elapses, the second must not have fired
-    await jest.advanceTimersByTimeAsync(999);
+    // While the first is still running, neither second nor third have fired
+    await new Promise((r) => setTimeout(r, 25));
     expect(order).toEqual(['first']);
 
-    // At 1s after the first completed, the second fires
-    await jest.advanceTimersByTimeAsync(1);
-    expect(order).toEqual(['first', 'second']);
-
-    await first;
-    await second;
+    // All later requests fire in order, immediately after the previous
+    // completes — no artificial delay between them.
+    await Promise.all([first, second, third]);
+    expect(order).toEqual(['first', 'second', 'third']);
   });
 });

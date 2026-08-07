@@ -13,10 +13,10 @@ The backend must scale horizontally, but Reddit traffic must stay a single paced
 | Method | Path | Behaviour |
 |---|---|---|
 | `GET` | `/top-posts/:subreddit?limit=100` | `{ posts, isInvalid }` — up to `limit` posts with `num_comments >= 40`. `isInvalid: true` = private/banned/non-existent (page loaded, zero posts). Errors → `502`. |
-| `GET` | `/comments/:subreddit/:postId` | `{ comments }` — flattened comment tree (`sort=top&limit=500&showmore=false`, prefix-stripped ids). Errors → `502`. |
+| `GET` | `/comments/:subreddit/:postId` | `{ comments }` — flattened comment tree (`sort=top&limit=250&showmore=false`, prefix-stripped ids). Errors → `502`. |
 | `GET` | `/exists/:subreddit` | `{ valid }` — subscribe-time validation, 1 request. |
 
-Every request passes through the single `Pacer`: first fires immediately, each next waits 1–2s after the previous *completes* (`floor(random*1000)+1000`).
+Every request passes through the single `Pacer`: first fires immediately, each next fires as soon as the previous *completes* — no artificial gap. Reddit's real per-request latency (~3–4s) is the spacing; the queue's only job is serialization (one paced stream regardless of how many backend replicas call in).
 
 ## Behaviour
 

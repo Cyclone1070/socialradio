@@ -51,33 +51,36 @@ describe('RedditScraper.fetchTopPosts', () => {
   it('returns { posts, isInvalid: false } mapping listing JSON', async () => {
     const page = makePageMock();
     page.evaluate.mockResolvedValue({
-      data: {
-        children: [
-          {
-            kind: 't3',
-            data: {
-              id: 'abc',
-              title: 'Post title',
-              selftext: 'body',
-              author: 'u1',
-              score: 500,
-              num_comments: 60,
-              created_utc: 1000,
+      ok: true,
+      json: {
+        data: {
+          children: [
+            {
+              kind: 't3',
+              data: {
+                id: 'abc',
+                title: 'Post title',
+                selftext: 'body',
+                author: 'u1',
+                score: 500,
+                num_comments: 60,
+                created_utc: 1000,
+              },
             },
-          },
-          {
-            kind: 't3',
-            data: {
-              id: 'low',
-              title: 'Too few comments',
-              selftext: '',
-              author: 'u2',
-              score: 2,
-              num_comments: 3,
-              created_utc: 2000,
+            {
+              kind: 't3',
+              data: {
+                id: 'low',
+                title: 'Too few comments',
+                selftext: '',
+                author: 'u2',
+                score: 2,
+                num_comments: 3,
+                created_utc: 2000,
+              },
             },
-          },
-        ],
+          ],
+        },
       },
     });
     chromium.connect.mockResolvedValue(makeBrowserMock(page));
@@ -103,18 +106,22 @@ describe('RedditScraper.fetchTopPosts', () => {
       expect.anything(),
     );
     expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 10);
+    // The .json response carries the page-real signal — the shreddit-post
+    // selector wait was a leftover from the DOM-scraping era and must not
+    // run (it adds 2.5–15s per request).
+    expect(page.waitForSelector).not.toHaveBeenCalled();
   });
 
-  it('returns { posts: [], isInvalid: true } for a dead subreddit (no posts selector)', async () => {
+  it('returns { posts: [], isInvalid: true } when the feed JSON does not resolve (dead sub)', async () => {
     const page = makePageMock();
-    page.waitForSelector.mockRejectedValue(new Error('Timeout 15000ms exceeded'));
+    page.evaluate.mockResolvedValue({ ok: false });
     chromium.connect.mockResolvedValue(makeBrowserMock(page));
 
     const scraper = new RedditScraper('ws://browserless:3000');
     const result = await scraper.fetchTopPosts('deadsub', 10);
 
     expect(result).toEqual({ posts: [], isInvalid: true });
-    expect(page.evaluate).not.toHaveBeenCalled();
+    expect(page.waitForSelector).not.toHaveBeenCalled();
   });
 });
 
@@ -181,17 +188,20 @@ describe('RedditScraper.fetchPostComments', () => {
         created_utc: 222,
       },
     ]);
+    // The comments JSON is fetched as soon as the page shell is up — the
+    // shreddit-post selector wait must not run (2.5–15s per comment request).
+    expect(page.waitForSelector).not.toHaveBeenCalled();
   });
 
-  it('throws when the comments JSON fails to parse', async () => {
+  it('throws when the comments fetch/parse fails', async () => {
     const page = makePageMock();
-    page.waitForSelector.mockRejectedValue(new Error('Timeout 15000ms exceeded'));
+    page.evaluate.mockRejectedValue(new Error('Failed to fetch comments JSON'));
     chromium.connect.mockResolvedValue(makeBrowserMock(page));
 
     const scraper = new RedditScraper('ws://browserless:3000');
     await expect(
       scraper.fetchPostComments('webdev', 'postabc'),
-    ).rejects.toThrow('Timeout');
+    ).rejects.toThrow('Failed to fetch comments JSON');
   });
 });
 
@@ -258,21 +268,24 @@ describe('RedditScraper dead-connection recovery', () => {
     );
     const livePage = makePageMock();
     livePage.evaluate.mockResolvedValue({
-      data: {
-        children: [
-          {
-            kind: 't3',
-            data: {
-              id: 'abc',
-              title: 'T',
-              selftext: '',
-              author: 'u1',
-              score: 5,
-              num_comments: 60,
-              created_utc: 1000,
+      ok: true,
+      json: {
+        data: {
+          children: [
+            {
+              kind: 't3',
+              data: {
+                id: 'abc',
+                title: 'T',
+                selftext: '',
+                author: 'u1',
+                score: 5,
+                num_comments: 60,
+                created_utc: 1000,
+              },
             },
-          },
-        ],
+          ],
+        },
       },
     });
     chromium.connect

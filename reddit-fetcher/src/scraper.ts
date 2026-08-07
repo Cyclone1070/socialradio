@@ -183,6 +183,35 @@ export class RedditScraper {
     }
   }
 
+  /**
+   * Reddit's SPA reloads the document right after domcontentloaded (redirect
+   * chains, param normalization), which destroys an in-flight evaluate
+   * context. Retry the whole evaluate after the navigation settles;
+   * connection-killed errors still bubble up to withRetryOnDeadBrowser,
+   * which reconnects the browser and retries the operation once.
+   */
+  private async evaluateSafely<T>(
+    page: Page,
+    fn: (arg: any) => unknown,
+    arg?: unknown,
+  ): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        return (await page.evaluate(fn as never, arg)) as T;
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : String(error);
+        if (/closed|connection/i.test(message)) {
+          throw error; // let withRetryOnDeadBrowser reconnect the browser
+        }
+        lastError = error;
+        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+      }
+    }
+    throw lastError;
+  }
+
   async fetchTopPosts(
     subredditName: string,
     limit: number,
@@ -191,27 +220,34 @@ export class RedditScraper {
       const url = `https://www.reddit.com/r/${subredditName}/`;
 
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      try {
-        await page.waitForSelector('shreddit-post', { timeout: 15000 });
-      } catch {
-        // Page loaded but has no posts: private, banned, or non-existent
-        return { posts: [], isInvalid: true };
-      }
 
-      const rawJson: unknown = await page.evaluate(
-        async (feedLimit): Promise<unknown> => {
-          const res = await fetch(`./.json?limit=${feedLimit}`);
-          if (!res.ok) {
-            throw new Error(
-              `Failed to fetch subreddit feed JSON: ${res.status}`,
-            );
+      // The feed JSON is the source of truth — no shreddit-post selector
+      // wait (a leftover from the DOM-scraping era that cost 2.5–15s per
+      // request). A 404 = truly dead; 403/429/network blips get a bounded
+      // retry inside the page before we give up and report isInvalid.
+      const result = await this.evaluateSafely<{ ok: boolean; json?: unknown }>(
+        page,
+        async (feedLimit: number): Promise<{ ok: boolean; json?: unknown }> => {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              const res = await fetch(`./.json?limit=${feedLimit}`);
+              if (res.ok) return { ok: true, json: await res.json() };
+              if (res.status === 404) return { ok: false };
+            } catch {
+              // transient network/parse blips — retry
+            }
+            await new Promise((r) => setTimeout(r, 750 * (attempt + 1)));
           }
-          return res.json();
+          return { ok: false };
         },
         limit,
       );
 
-      const listing = ListingResponseSchema.parse(rawJson);
+      if (!result.ok) {
+        return { posts: [], isInvalid: true };
+      }
+
+      const listing = ListingResponseSchema.parse(result.json);
       const children = listing.data.children || [];
       const posts: RedditPostData[] = children
         .filter((child) => {
@@ -260,19 +296,26 @@ export class RedditScraper {
     return this.withRetryOnDeadBrowser(subredditName, async (page) => {
       const url = `https://www.reddit.com/r/${subredditName}/comments/${postRedditId}/`;
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await page.waitForSelector('shreddit-post', { timeout: 15000 });
 
-      // sort=top: highest-scored comments first; limit=500: max batch Reddit
-      // serves; showmore=false: drops "more" placeholder nodes that break
-      // CommentChildSchema (undocumented param — tolerant schema is the fallback)
-      const commentsUrl = './.json?sort=top&limit=500&showmore=false';
-      const rawJson: unknown = await page.evaluate(
-        async (commentsPageUrl): Promise<unknown> => {
-          const res = await fetch(commentsPageUrl);
-          if (!res.ok) {
-            throw new Error(`Failed to fetch comments JSON: ${res.status}`);
+      // sort=top: highest-scored comments first; limit=250: enough comments
+      // to clear the 2500-word guard (measured sweet spot — 500 pulled a
+      // 1.2MB payload for zero extra yield); showmore=false: drops "more"
+      // placeholder nodes that break CommentChildSchema (undocumented param
+      // — tolerant schema is the fallback).
+      const commentsUrl = './.json?sort=top&limit=250&showmore=false';
+      const rawJson = await this.evaluateSafely<unknown>(
+        page,
+        async (commentsPageUrl: string): Promise<unknown> => {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              const res = await fetch(commentsPageUrl);
+              if (res.ok) return await res.json();
+            } catch {
+              // transient 403/429/network blips — retry
+            }
+            await new Promise((r) => setTimeout(r, 750 * (attempt + 1)));
           }
-          return res.json();
+          throw new Error('Failed to fetch comments JSON');
         },
         commentsUrl,
       );
