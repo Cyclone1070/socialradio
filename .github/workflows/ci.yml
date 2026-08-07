@@ -19,12 +19,12 @@ jobs:
 
       - name: Backend gate (format + lint + tsc + unit tests)
         run: |
-          npm ci
+          npm ci || npm ci  # retry once: install downloads (registry/CDN) can time out transiently
           npm run gate
 
       - name: reddit-fetcher unit tests
         working-directory: reddit-fetcher
         run: |
-          npm ci
+          npm ci || npm ci
           npx tsc --noEmit
           npx jest
