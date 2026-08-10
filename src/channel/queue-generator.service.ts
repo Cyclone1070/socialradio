@@ -14,7 +14,7 @@ import { Post } from '../feed/entities/post.entity';
 import { RadioService } from '../radio/radio.service';
 import { MediaService } from '../media/media.service';
 import { clusterPosts } from './utils/topic-clustering.util';
-import { ScraperService } from '../feed/scraper.service';
+import { ScraperService, SCRAPE_WINDOW_MS } from '../feed/scraper.service';
 import { ChunkerService } from './chunker.service';
 import { Topic } from './interfaces/topic.interface';
 
@@ -205,7 +205,7 @@ export class QueueGeneratorService {
     });
 
     const subsToScrape: string[] = [];
-    const ttlMs = 72 * 60 * 60 * 1000; // 72 hours cache TTL
+    const ttlMs = SCRAPE_WINDOW_MS;
 
     for (const subRelation of subs) {
       const sub = subRelation.subreddit;

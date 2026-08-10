@@ -9,24 +9,39 @@ jest.mock('./scraper', () => ({
   })),
 }));
 
-const RedditScraperMock = RedditScraper as jest.MockedClass<typeof RedditScraper>;
+const scraper: { fetchTopPosts: jest.Mock } = {
+  fetchTopPosts: jest.fn(),
+};
 
 describe('GET /top-posts/:subreddit', () => {
-  it('relays the scraper result with the limit query param', async () => {
-    const scraper = new RedditScraperMock('ws://unused');
+  it('relays the limit and after query params to the scraper', async () => {
     const posts = [
-      { id: 'abc', title: 'T', selftext: '', author: 'u', score: 5, created_utc: 1 },
+      {
+        id: 'abc',
+        title: 'T',
+        selftext: '',
+        author: 'u',
+        score: 5,
+        created_utc: 1,
+      },
     ];
-    (scraper.fetchTopPosts as jest.Mock).mockResolvedValue({
+    scraper.fetchTopPosts.mockResolvedValue({
       posts,
+      after: null,
       isInvalid: false,
     });
 
-    const app = createApp(scraper, new Pacer());
-    const res = await request(app).get('/top-posts/webdev?limit=10');
+    const app = createApp(
+      scraper as unknown as RedditScraper,
+      new Pacer({ minDelayMs: 0, maxDelayMs: 0 }),
+    );
+    const res = await request(app).get('/top-posts/webdev?limit=10&after=t3_x');
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ posts, isInvalid: false });
-    expect(scraper.fetchTopPosts).toHaveBeenCalledWith('webdev', 10);
+    expect(res.body).toEqual({ posts, after: null, isInvalid: false });
+    expect(scraper.fetchTopPosts).toHaveBeenCalledWith('webdev', {
+      limit: 10,
+      after: 't3_x',
+    });
   });
 });

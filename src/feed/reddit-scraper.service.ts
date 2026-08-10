@@ -49,12 +49,20 @@ export class RedditScraperService {
 
   async fetchTopPosts(
     subredditName: string,
-    limit: number,
-  ): Promise<{ posts: RedditPostData[]; isInvalid: boolean }> {
-    const body = await this.getJson(
-      `/top-posts/${subredditName}?limit=${limit}`,
-    );
-    return body as { posts: RedditPostData[]; isInvalid: boolean };
+    opts: { limit?: number; after?: string } = {},
+  ): Promise<{
+    posts: RedditPostData[];
+    after: string | null;
+    isInvalid: boolean;
+  }> {
+    const limit = opts.limit ?? 100;
+    const query = `limit=${limit}${opts.after ? `&after=${opts.after}` : ''}`;
+    const body = await this.getJson(`/top-posts/${subredditName}?${query}`);
+    return body as {
+      posts: RedditPostData[];
+      after: string | null;
+      isInvalid: boolean;
+    };
   }
 
   async exists(subredditName: string): Promise<boolean> {

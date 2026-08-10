@@ -16,6 +16,12 @@ const CLAIM_TTL_MS = 30 * 60 * 1000;
 // Cooldown applied after a scrape that yielded 0 new posts
 const SCRAPE_COOLDOWN_MS = 2 * 60 * 60 * 1000;
 
+// One window knob: how old a scrape may be before the feed is stale, and
+// how old posts must be before the retention purge drops them.
+// (The fetcher serves a week of Reddit listings — t=week — so 7 days is
+// exactly one pool: a stale sub re-scrapes the same window the purge kept.)
+export const SCRAPE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class ScraperService {
   constructor(
@@ -50,71 +56,105 @@ export class ScraperService {
     let deleted = false;
 
     try {
-      // The fetcher reports isInvalid for private/banned/non-existent subs:
-      // delete and exit (no separate validation page load needed).
-      const { posts: rawPosts, isInvalid } =
-        await this.redditScraperService.fetchTopPosts(subredditName, 100);
-      if (isInvalid) {
-        deleted = true;
-        await this.subredditRepo.delete({ id: subreddit.id });
-        return { scrapedPostsCount: 0 };
-      }
+      // The walk: page by page, evaluating every stop condition as we go.
+      // The moment 20 posts are saved the loop halts — remaining posts on
+      // the page are never visited, no further pages are fetched.
       let savedCount = 0;
+      let cursor: string | null = null;
+      let prevFirstPostId: string | null = null;
 
-      for (const rawPost of rawPosts) {
-        if (savedCount >= 20) {
+      while (true) {
+        // A failed page fetch (!ok from the fetcher: 403/429/network after
+        // its in-page retries) stops the walk quietly — partials are kept
+        // and the subreddit row survives. Only isInvalid deletes.
+        let page;
+        try {
+          page = await this.redditScraperService.fetchTopPosts(subredditName, {
+            limit: 100,
+            ...(cursor ? { after: cursor } : {}),
+          });
+        } catch {
           break;
         }
-
-        const exists = await this.postRepo.findOneBy({ redditId: rawPost.id });
-        if (exists) continue;
-
-        const rawComments = await this.redditScraperService.fetchPostComments(
-          subredditName,
-          rawPost.id,
-        );
-
-        // Word count guard: total words across all comments must be >= 2500
-        const totalWords = rawComments.reduce((sum, c) => {
-          const body = c.body || '';
-          return sum + body.split(/\s+/).filter(Boolean).length;
-        }, 0);
-
-        if (totalWords < 2500) {
-          continue;
+        const { posts: rawPosts, isInvalid, after } = page;
+        if (isInvalid) {
+          deleted = true;
+          await this.subredditRepo.delete({ id: subreddit.id });
+          return { scrapedPostsCount: 0 };
         }
 
-        const post = this.postRepo.create({
-          subredditId: subreddit.id,
-          redditId: rawPost.id,
-          title: rawPost.title,
-          body: rawPost.selftext || '',
-          score: rawPost.score,
-          redditCreatedAt: new Date(rawPost.created_utc * 1000),
-        });
+        for (const rawPost of rawPosts) {
+          if (savedCount >= 20) {
+            break;
+          }
 
-        // Save post first so comments can reference its ID via database relation
-        const savedPost = await this.postRepo.save(post);
-
-        const comments = rawComments.map((rawComment) => {
-          const isOp = rawComment.author === rawPost.author;
-          const parentRedditId = rawComment.parent_id.startsWith('t1_')
-            ? rawComment.parent_id.replace('t1_', '')
-            : null;
-
-          return this.commentRepo.create({
-            postId: savedPost.id,
-            redditId: rawComment.id,
-            body: rawComment.body,
-            score: rawComment.score,
-            parentRedditId,
-            isOp,
-            redditCreatedAt: new Date(rawComment.created_utc * 1000),
+          const exists = await this.postRepo.findOneBy({
+            redditId: rawPost.id,
           });
-        });
-        await this.commentRepo.save(comments);
+          if (exists) continue;
 
-        savedCount++;
+          const rawComments = await this.redditScraperService.fetchPostComments(
+            subredditName,
+            rawPost.id,
+          );
+
+          // Word count guard: total words across all comments must be >= 2500
+          const totalWords = rawComments.reduce((sum, c) => {
+            const body = c.body || '';
+            return sum + body.split(/\s+/).filter(Boolean).length;
+          }, 0);
+
+          if (totalWords < 2500) {
+            continue;
+          }
+
+          const post = this.postRepo.create({
+            subredditId: subreddit.id,
+            redditId: rawPost.id,
+            title: rawPost.title,
+            body: rawPost.selftext || '',
+            score: rawPost.score,
+            redditCreatedAt: new Date(rawPost.created_utc * 1000),
+          });
+
+          // Save post first so comments can reference its ID via database relation
+          const savedPost = await this.postRepo.save(post);
+
+          const comments = rawComments.map((rawComment) => {
+            const isOp = rawComment.author === rawPost.author;
+            const parentRedditId = rawComment.parent_id.startsWith('t1_')
+              ? rawComment.parent_id.replace('t1_', '')
+              : null;
+
+            return this.commentRepo.create({
+              postId: savedPost.id,
+              redditId: rawComment.id,
+              body: rawComment.body,
+              score: rawComment.score,
+              parentRedditId,
+              isOp,
+              redditCreatedAt: new Date(rawComment.created_utc * 1000),
+            });
+          });
+          await this.commentRepo.save(comments);
+
+          savedCount++;
+        }
+
+        // Belt + braces: Reddit's cursor never loops, but a pathological
+        // page repeating the previous page's first post id ends the walk.
+        const firstPostId = rawPosts[0]?.id ?? null;
+        if (firstPostId !== null && firstPostId === prevFirstPostId) {
+          break;
+        }
+        prevFirstPostId = firstPostId;
+
+        // Stop when the job is done (20 saved) or the pool is exhausted
+        // (no cursor back from the fetcher).
+        if (savedCount >= 20 || !after) {
+          break;
+        }
+        cursor = after;
       }
 
       // Purge this sub's posts older than 72h AFTER saving new ones, so new
@@ -162,7 +202,7 @@ export class ScraperService {
   }
 
   async cleanupOldData(subredditId?: string): Promise<void> {
-    const cutoff = new Date(Date.now() - 72 * 60 * 60 * 1000);
+    const cutoff = new Date(Date.now() - SCRAPE_WINDOW_MS);
     // Deleting posts cascadedly deletes their comments
     await this.postRepo.delete({
       ...(subredditId ? { subredditId } : {}),

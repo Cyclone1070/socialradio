@@ -1,4 +1,5 @@
 import { RedditScraper } from './scraper';
+import type { RedditPostData } from './types';
 
 jest.mock('playwright-extra', () => ({
   chromium: { use: jest.fn(), connect: jest.fn() },
@@ -17,6 +18,10 @@ jest.mock('fingerprint-generator', () => ({
     })),
   })),
 }));
+
+const { chromium } = jest.requireMock<{
+  chromium: { use: jest.Mock; connect: jest.Mock };
+}>('playwright-extra');
 
 function makePageMock() {
   const page = {
@@ -38,22 +43,23 @@ function makeBrowserMock(page: ReturnType<typeof makePageMock>) {
   };
 }
 
-function makeDeadBrowserMock() {
-  return {
-    newContext: jest.fn().mockRejectedValue(new Error('Browser has been closed')),
-    close: jest.fn().mockResolvedValue(undefined),
-  };
-}
-
-const chromium = jest.requireMock('playwright-extra').chromium;
+const mappedPost: RedditPostData = {
+  id: 'abc',
+  title: 'Post title',
+  selftext: 'body',
+  author: 'u1',
+  score: 500,
+  created_utc: 1000,
+};
 
 describe('RedditScraper.fetchTopPosts', () => {
-  it('returns { posts, isInvalid: false } mapping listing JSON', async () => {
+  it('returns { posts, after, isInvalid: false } mapping one listing page', async () => {
     const page = makePageMock();
     page.evaluate.mockResolvedValue({
       ok: true,
       json: {
         data: {
+          after: 't3_after',
           children: [
             {
               kind: 't3',
@@ -86,41 +92,126 @@ describe('RedditScraper.fetchTopPosts', () => {
     chromium.connect.mockResolvedValue(makeBrowserMock(page));
 
     const scraper = new RedditScraper('ws://browserless:3000');
-    const result = await scraper.fetchTopPosts('webdev', 10);
+    const result = await scraper.fetchTopPosts('webdev', { limit: 10 });
 
     expect(result).toEqual({
-      posts: [
-        {
-          id: 'abc',
-          title: 'Post title',
-          selftext: 'body',
-          author: 'u1',
-          score: 500,
-          created_utc: 1000,
-        },
-      ],
+      posts: [mappedPost],
+      after: 't3_after',
       isInvalid: false,
     });
     expect(page.goto).toHaveBeenCalledWith(
       'https://www.reddit.com/r/webdev/',
       expect.anything(),
     );
-    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 10);
+    expect(page.evaluate).toHaveBeenCalledWith(
+      expect.any(Function),
+      './.json?limit=10&t=week',
+    );
     // The .json response carries the page-real signal — the shreddit-post
     // selector wait was a leftover from the DOM-scraping era and must not
     // run (it adds 2.5–15s per request).
     expect(page.waitForSelector).not.toHaveBeenCalled();
   });
 
-  it('returns { posts: [], isInvalid: true } when the feed JSON does not resolve (dead sub)', async () => {
+  it('passes the after cursor into the page URL and returns the next cursor', async () => {
+    const page = makePageMock();
+    page.evaluate
+      .mockResolvedValueOnce({
+        ok: true,
+        json: {
+          data: {
+            after: 't3_next',
+            children: [
+              {
+                kind: 't3',
+                data: {
+                  id: 'abc',
+                  title: 'Post title',
+                  selftext: 'body',
+                  author: 'u1',
+                  score: 500,
+                  num_comments: 60,
+                  created_utc: 1000,
+                },
+              },
+            ],
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: { data: { after: null, children: [] } },
+      });
+    chromium.connect.mockResolvedValue(makeBrowserMock(page));
+
+    const scraper = new RedditScraper('ws://browserless:3000');
+
+    const withCursor = await scraper.fetchTopPosts('webdev', {
+      after: 't3_x',
+    });
+    expect(withCursor).toEqual({
+      posts: [mappedPost],
+      after: 't3_next',
+      isInvalid: false,
+    });
+    expect(page.evaluate).toHaveBeenNthCalledWith(
+      1,
+      expect.any(Function),
+      './.json?limit=100&t=week&after=t3_x',
+    );
+
+    // No cursor arg → the URL carries no &after=, and the reply reports the
+    // exhausted pool as after: null.
+    const withoutCursor = await scraper.fetchTopPosts('webdev', {});
+    expect(withoutCursor).toEqual({ posts: [], after: null, isInvalid: false });
+    expect(page.evaluate).toHaveBeenNthCalledWith(
+      2,
+      expect.any(Function),
+      './.json?limit=100&t=week',
+    );
+  });
+
+  it('collapses a zero-viable page to after: null even when the listing still carries a cursor', async () => {
+    const page = makePageMock();
+    page.evaluate.mockResolvedValue({
+      ok: true,
+      json: {
+        data: {
+          after: 't3_further', // pool NOT exhausted
+          children: [
+            {
+              kind: 't3',
+              data: {
+                id: 'low',
+                title: 'Too few comments',
+                selftext: '',
+                author: 'u2',
+                score: 2,
+                num_comments: 3,
+                created_utc: 2000,
+              },
+            },
+          ],
+        },
+      },
+    });
+    chromium.connect.mockResolvedValue(makeBrowserMock(page));
+
+    const scraper = new RedditScraper('ws://browserless:3000');
+    const result = await scraper.fetchTopPosts('small', {});
+
+    expect(result).toEqual({ posts: [], after: null, isInvalid: false });
+  });
+
+  it('returns { posts: [], after: null, isInvalid: true } when the feed JSON does not resolve (dead sub)', async () => {
     const page = makePageMock();
     page.evaluate.mockResolvedValue({ ok: false });
     chromium.connect.mockResolvedValue(makeBrowserMock(page));
 
     const scraper = new RedditScraper('ws://browserless:3000');
-    const result = await scraper.fetchTopPosts('deadsub', 10);
+    const result = await scraper.fetchTopPosts('deadsub', { limit: 10 });
 
-    expect(result).toEqual({ posts: [], isInvalid: true });
+    expect(result).toEqual({ posts: [], after: null, isInvalid: true });
     expect(page.waitForSelector).not.toHaveBeenCalled();
   });
 });
@@ -248,9 +339,9 @@ describe('RedditScraper context affinity', () => {
     chromium.connect.mockResolvedValue(browserMock);
 
     const scraper = new RedditScraper('ws://browserless:3000');
-    await scraper.fetchTopPosts('webdev', 10);
-    await scraper.fetchTopPosts('webdev', 10);
-    await scraper.fetchTopPosts('javascript', 10);
+    await scraper.fetchTopPosts('webdev', {});
+    await scraper.fetchTopPosts('webdev', {});
+    await scraper.fetchTopPosts('javascript', {});
 
     expect(browserMock.newContext).toHaveBeenCalledTimes(2);
   });
@@ -271,6 +362,7 @@ describe('RedditScraper dead-connection recovery', () => {
       ok: true,
       json: {
         data: {
+          after: null,
           children: [
             {
               kind: 't3',
@@ -293,7 +385,7 @@ describe('RedditScraper dead-connection recovery', () => {
       .mockResolvedValueOnce(makeBrowserMock(livePage));
 
     const scraper = new RedditScraper('ws://browserless:3000');
-    const result = await scraper.fetchTopPosts('webdev', 10);
+    const result = await scraper.fetchTopPosts('webdev', {});
 
     expect(result).toEqual({
       posts: [
@@ -306,6 +398,7 @@ describe('RedditScraper dead-connection recovery', () => {
           created_utc: 1000,
         },
       ],
+      after: null,
       isInvalid: false,
     });
     expect(chromium.connect).toHaveBeenCalledTimes(2);
@@ -318,7 +411,7 @@ describe('RedditScraper dead-connection recovery', () => {
     chromium.connect.mockResolvedValue(makeBrowserMock(page));
 
     const scraper = new RedditScraper('ws://browserless:3000');
-    await expect(scraper.fetchTopPosts('webdev', 10)).rejects.toThrow(
+    await expect(scraper.fetchTopPosts('webdev', {})).rejects.toThrow(
       'Unexpected end of JSON input',
     );
     expect(chromium.connect).toHaveBeenCalledTimes(1);

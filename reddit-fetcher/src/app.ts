@@ -8,8 +8,8 @@ function errMessage(err: unknown): string {
 
 /**
  * HTTP surface of the fetcher. Every handler routes through the single
- * Pacer, so all Reddit traffic out of this container is globally spaced
- * 1–2s apart regardless of how many backend replicas call in.
+ * Pacer: up to 5 concurrent requests, same-subreddit requests sequential,
+ * a random 500–1000ms delay per request.
  */
 export function createApp(
   scraper: RedditScraper,
@@ -21,11 +21,18 @@ export function createApp(
     const subreddit = req.params.subreddit;
     const parsedLimit = Number(req.query.limit ?? 100);
     const limit = Number.isFinite(parsedLimit) ? parsedLimit : 100;
+    const after =
+      typeof req.query.after === 'string' && req.query.after.length > 0
+        ? req.query.after
+        : undefined;
 
     void pacer
-      .run(async () => {
+      .run(subreddit, async () => {
         try {
-          const result = await scraper.fetchTopPosts(subreddit, limit);
+          const result = await scraper.fetchTopPosts(subreddit, {
+            limit,
+            after,
+          });
           res.json(result);
         } catch (err) {
           console.error('[top-posts]', subreddit, err);
@@ -39,12 +46,9 @@ export function createApp(
     const { subreddit, postId } = req.params;
 
     void pacer
-      .run(async () => {
+      .run(subreddit, async () => {
         try {
-          const comments = await scraper.fetchPostComments(
-            subreddit,
-            postId,
-          );
+          const comments = await scraper.fetchPostComments(subreddit, postId);
           res.json({ comments });
         } catch (err) {
           res.status(502).json({ error: errMessage(err) });
@@ -57,7 +61,7 @@ export function createApp(
     const subreddit = req.params.subreddit;
 
     void pacer
-      .run(async () => {
+      .run(subreddit, async () => {
         try {
           const valid = await scraper.exists(subreddit);
           res.json({ valid });

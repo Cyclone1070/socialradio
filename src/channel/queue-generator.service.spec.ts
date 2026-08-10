@@ -138,9 +138,33 @@ describe('QueueGeneratorService', () => {
       );
     });
 
-    it('should trigger scraping if lastScrapedAt is older than 72 hours', async () => {
+    it('should NOT trigger scraping at 4 days since the last scrape (7-day window)', async () => {
       const channelId = 'chan-1';
-      const staleDate = new Date(Date.now() - 73 * 60 * 60 * 1000); // 73 hours ago
+      // 96h ago is stale under the old 72h window but NOT under 7 days —
+      // this discriminates the two windows (73h sat on the old knife-edge).
+      const nearlyFresh = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000);
+      mockSegmentRepo.count.mockResolvedValue(0);
+      mockSubredditRepo.find.mockResolvedValue([
+        {
+          subredditId: 'sub-1',
+          subreddit: { id: 'sub-1', name: 'news', lastScrapedAt: nearlyFresh },
+        },
+      ]);
+      // An unplayed post exists, so the exhausted arm cannot mask the
+      // stale check: only the window decides.
+      mockProgressRepo.find.mockResolvedValue([]);
+      mockPostRepo.find.mockResolvedValue([
+        { id: 'post-1', subredditId: 'sub-1', title: 'news title' },
+      ]);
+
+      await service.bufferAhead(channelId);
+
+      expect(mockScraperService.scrapeSubreddit).not.toHaveBeenCalled();
+    });
+
+    it('should trigger scraping if lastScrapedAt is older than 7 days', async () => {
+      const channelId = 'chan-1';
+      const staleDate = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000); // 8 days ago
       mockSegmentRepo.count.mockResolvedValue(0);
       mockSubredditRepo.find.mockResolvedValue([
         {

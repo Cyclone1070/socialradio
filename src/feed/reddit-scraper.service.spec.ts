@@ -28,7 +28,7 @@ describe('RedditScraperService (HTTP client)', () => {
   });
 
   describe('fetchTopPosts', () => {
-    it('returns the { posts, isInvalid } superset from the fetcher', async () => {
+    it('returns the { posts, after, isInvalid } superset from the fetcher', async () => {
       const posts = [
         {
           id: 'abc',
@@ -41,14 +41,18 @@ describe('RedditScraperService (HTTP client)', () => {
       ];
       fetchMock.mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ posts, isInvalid: false }),
+        json: () =>
+          Promise.resolve({ posts, after: 't3_next', isInvalid: false }),
       });
 
-      const result = await service.fetchTopPosts('webdev', 10);
+      const result = await service.fetchTopPosts('webdev', {
+        limit: 10,
+        after: 't3_x',
+      });
 
-      expect(result).toEqual({ posts, isInvalid: false });
+      expect(result).toEqual({ posts, after: 't3_next', isInvalid: false });
       expect(fetchMock).toHaveBeenCalledWith(
-        'http://fetcher:3001/top-posts/webdev?limit=10',
+        'http://fetcher:3001/top-posts/webdev?limit=10&after=t3_x',
       );
     });
 
@@ -58,7 +62,9 @@ describe('RedditScraperService (HTTP client)', () => {
         status: 502,
       });
 
-      await expect(service.fetchTopPosts('webdev', 10)).rejects.toThrow(/502/);
+      await expect(
+        service.fetchTopPosts('webdev', { limit: 10 }),
+      ).rejects.toThrow(/502/);
     });
   });
 });

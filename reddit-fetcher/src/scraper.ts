@@ -23,6 +23,7 @@ const ListingChildSchema = z.object({
 
 const ListingResponseSchema = z.object({
   data: z.object({
+    after: z.string().nullish(),
     children: z.array(ListingChildSchema),
   }),
 });
@@ -151,7 +152,9 @@ export class RedditScraper {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (!/closed|connection/i.test(message)) throw err;
-      console.error('[scraper] browser session died, reconnecting and retrying');
+      console.error(
+        '[scraper] browser session died, reconnecting and retrying',
+      );
       await this.invalidateConnection();
       return this.withPage(subredditName, fn);
     }
@@ -198,10 +201,9 @@ export class RedditScraper {
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        return (await page.evaluate(fn as never, arg)) as T;
+        return await page.evaluate(fn as never, arg);
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : String(error);
+        const message = error instanceof Error ? error.message : String(error);
         if (/closed|connection/i.test(message)) {
           throw error; // let withRetryOnDeadBrowser reconnect the browser
         }
@@ -214,8 +216,12 @@ export class RedditScraper {
 
   async fetchTopPosts(
     subredditName: string,
-    limit: number,
-  ): Promise<{ posts: RedditPostData[]; isInvalid: boolean }> {
+    opts: { limit?: number; after?: string } = {},
+  ): Promise<{
+    posts: RedditPostData[];
+    after: string | null;
+    isInvalid: boolean;
+  }> {
     return this.withRetryOnDeadBrowser(subredditName, async (page) => {
       const url = `https://www.reddit.com/r/${subredditName}/`;
 
@@ -225,12 +231,15 @@ export class RedditScraper {
       // wait (a leftover from the DOM-scraping era that cost 2.5–15s per
       // request). A 404 = truly dead; 403/429/network blips get a bounded
       // retry inside the page before we give up and report isInvalid.
+      // t=week is the 7-day scrape window; after=<cursor> walks the pool.
+      const limit = opts.limit ?? 100;
+      const feedUrl = `./.json?limit=${limit}&t=week${opts.after ? `&after=${opts.after}` : ''}`;
       const result = await this.evaluateSafely<{ ok: boolean; json?: unknown }>(
         page,
-        async (feedLimit: number): Promise<{ ok: boolean; json?: unknown }> => {
+        async (pageUrl: string): Promise<{ ok: boolean; json?: unknown }> => {
           for (let attempt = 0; attempt < 3; attempt++) {
             try {
-              const res = await fetch(`./.json?limit=${feedLimit}`);
+              const res = await fetch(pageUrl);
               if (res.ok) return { ok: true, json: await res.json() };
               if (res.status === 404) return { ok: false };
             } catch {
@@ -240,11 +249,11 @@ export class RedditScraper {
           }
           return { ok: false };
         },
-        limit,
+        feedUrl,
       );
 
       if (!result.ok) {
-        return { posts: [], isInvalid: true };
+        return { posts: [], after: null, isInvalid: true };
       }
 
       const listing = ListingResponseSchema.parse(result.json);
@@ -266,7 +275,14 @@ export class RedditScraper {
           };
         });
 
-      return { posts: posts.slice(0, limit), isInvalid: false };
+      return {
+        posts: posts.slice(0, limit),
+        // A page with no viable posts is a stop signal — the walk would
+        // only meet more of the same. Collapse the cursor even if the
+        // listing says the pool continues.
+        after: posts.length > 0 ? (listing.data.after ?? null) : null,
+        isInvalid: false,
+      };
     });
   }
 
