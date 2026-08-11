@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, LessThan } from 'typeorm';
+import { randomUUID } from 'crypto';
 import { Subreddit } from '../domain/entities/subreddit.entity';
 import { Post } from './entities/post.entity';
 import { Comment } from './entities/comment.entity';
 import { RedditScraperService } from './reddit-scraper.service';
+import { createServiceLogger } from '../logging/logging.module';
 
 export interface ScrapeSubredditResult {
   scrapedPostsCount: number;
@@ -34,16 +36,30 @@ export class ScraperService {
     private readonly redditScraperService: RedditScraperService,
   ) {}
 
+  private readonly logger = createServiceLogger(ScraperService.name);
+
   async scrapeSubreddit(
     subredditName: string,
     force = false,
   ): Promise<ScrapeSubredditResult> {
+    // One id per run so every line of a walk is one grep.
+    const scrapeId = randomUUID();
+    const startMs = Date.now();
+
     // Claim the subreddit to dedupe concurrent scrapes (multi-instance safe).
     // Stale claims older than 30min are considered abandoned (TTL reclaim).
     let subreddit = await this.subredditRepo.findOneBy({ name: subredditName });
-    if (this.isScrapeBlocked(subreddit, force)) {
+    const blocked = this.isScrapeBlocked(subreddit, force);
+    if (blocked) {
+      // A blocked scrape is silently Nothing: the queue generator's chain
+      // must be able to tell why nothing happened.
+      this.logger.warn(
+        { sub: subredditName, reason: blocked },
+        'scrape skipped',
+      );
       return { scrapedPostsCount: 0 }; // in-flight or cooling down
     }
+    this.logger.info({ scrapeId, sub: subredditName }, 'scrape starting');
     if (!subreddit) {
       subreddit = this.subredditRepo.create({ name: subredditName });
       subreddit = await this.subredditRepo.save(subreddit);
@@ -60,8 +76,10 @@ export class ScraperService {
       // The moment 20 posts are saved the loop halts — remaining posts on
       // the page are never visited, no further pages are fetched.
       let savedCount = 0;
+      let pageCount = 0;
       let cursor: string | null = null;
       let prevFirstPostId: string | null = null;
+      let stopReason = '';
 
       while (true) {
         // A failed page fetch (!ok from the fetcher: 403/429/network after
@@ -73,25 +91,61 @@ export class ScraperService {
             limit: 100,
             ...(cursor ? { after: cursor } : {}),
           });
-        } catch {
+        } catch (err) {
+          stopReason = 'fetch-fail';
+          this.logger.error(
+            {
+              scrapeId,
+              sub: subredditName,
+              page: pageCount + 1,
+              cursor,
+              stopReason,
+              err: err instanceof Error ? err : new Error(String(err)),
+            },
+            'page fetch failed — stopping the walk',
+          );
           break;
         }
+        pageCount++;
         const { posts: rawPosts, isInvalid, after } = page;
         if (isInvalid) {
           deleted = true;
+          stopReason = 'is-invalid';
+          this.logger.warn(
+            { scrapeId, sub: subredditName, stopReason },
+            'subreddit invalid — deleting row',
+          );
           await this.subredditRepo.delete({ id: subreddit.id });
           return { scrapedPostsCount: 0 };
         }
+        this.logger.debug(
+          {
+            scrapeId,
+            sub: subredditName,
+            page: pageCount,
+            cursor,
+            viable: rawPosts.length,
+            saved: savedCount,
+          },
+          'walk page fetched',
+        );
 
         for (const rawPost of rawPosts) {
           if (savedCount >= 20) {
+            stopReason = 'saved-20';
             break;
           }
 
           const exists = await this.postRepo.findOneBy({
             redditId: rawPost.id,
           });
-          if (exists) continue;
+          if (exists) {
+            this.logger.debug(
+              { scrapeId, sub: subredditName, postId: rawPost.id },
+              'post already in DB — dedup skip',
+            );
+            continue;
+          }
 
           const rawComments = await this.redditScraperService.fetchPostComments(
             subredditName,
@@ -105,6 +159,16 @@ export class ScraperService {
           }, 0);
 
           if (totalWords < 2500) {
+            this.logger.debug(
+              {
+                scrapeId,
+                sub: subredditName,
+                postId: rawPost.id,
+                words: totalWords,
+                threshold: 2500,
+              },
+              'post below word guard',
+            );
             continue;
           }
 
@@ -145,6 +209,7 @@ export class ScraperService {
         // page repeating the previous page's first post id ends the walk.
         const firstPostId = rawPosts[0]?.id ?? null;
         if (firstPostId !== null && firstPostId === prevFirstPostId) {
+          stopReason = 'cursor-loop-guard';
           break;
         }
         prevFirstPostId = firstPostId;
@@ -152,13 +217,16 @@ export class ScraperService {
         // Stop when the job is done (20 saved) or the pool is exhausted
         // (no cursor back from the fetcher).
         if (savedCount >= 20 || !after) {
+          stopReason =
+            stopReason || (savedCount >= 20 ? 'saved-20' : 'pool-exhausted');
           break;
         }
         cursor = after;
       }
 
-      // Purge this sub's posts older than 72h AFTER saving new ones, so new
-      // content is persisted before any cleanup runs (no availability gap).
+      // Purge this sub's posts older than the 7-day window AFTER saving new
+      // ones, so new content is persisted before any cleanup runs (no
+      // availability gap).
       await this.cleanupOldData(subreddit.id);
 
       subreddit.lastScrapedAt = new Date();
@@ -168,6 +236,18 @@ export class ScraperService {
         );
       }
       await this.subredditRepo.save(subreddit);
+
+      this.logger.info(
+        {
+          scrapeId,
+          sub: subredditName,
+          saved: savedCount,
+          pages: pageCount,
+          durationMs: Date.now() - startMs,
+          stopReason,
+        },
+        'scrape walk finished',
+      );
 
       return { scrapedPostsCount: savedCount };
     } finally {
@@ -181,33 +261,45 @@ export class ScraperService {
   }
 
   /**
-   * Whether a scrape should be skipped: an in-flight claim (TTL-bounded) or a
-   * cooldown after a 0-new-post scrape. `force` bypasses both.
+   * Why a scrape should be skipped: an in-flight claim (TTL-bounded) or a
+   * cooldown after a 0-new-post scrape. `force` bypasses both. Returns null
+   * when the scrape may proceed.
    */
   private isScrapeBlocked(
     subreddit: Subreddit | null,
     force: boolean,
-  ): boolean {
-    if (force || !subreddit) return false;
+  ): string | null {
+    if (force || !subreddit) return null;
     if (
       subreddit.scrapeStartedAt &&
       Date.now() - subreddit.scrapeStartedAt.getTime() < CLAIM_TTL_MS
     ) {
-      return true;
+      return 'in-flight claim';
     }
-    return (
-      !!subreddit.scrapeCooldownUntil &&
+    if (
+      subreddit.scrapeCooldownUntil &&
       subreddit.scrapeCooldownUntil.getTime() > Date.now()
-    );
+    ) {
+      return 'cooldown';
+    }
+    return null;
   }
 
   async cleanupOldData(subredditId?: string): Promise<void> {
     const cutoff = new Date(Date.now() - SCRAPE_WINDOW_MS);
     // Deleting posts cascadedly deletes their comments
-    await this.postRepo.delete({
+    const result = await this.postRepo.delete({
       ...(subredditId ? { subredditId } : {}),
       scrapedAt: LessThan(cutoff),
     });
+    this.logger.info(
+      {
+        scope: subredditId ?? 'all',
+        cutoffAgeDays: SCRAPE_WINDOW_MS / (24 * 60 * 60 * 1000),
+        deletedCount: (result ?? { affected: 0 }).affected ?? 0,
+      },
+      'purged old posts',
+    );
   }
 
   async validateSubreddit(subredditName: string): Promise<boolean> {

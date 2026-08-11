@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { HttpService } from '@nestjs/axios';
+import { PinoLogger } from 'nestjs-pino';
 import { ConfigService } from '@nestjs/config';
 import { AudioService } from './audio.service';
 import { StorageService } from '../storage/storage.service';
@@ -71,5 +72,30 @@ describe('AudioService', () => {
       }),
     );
     expect(duration).toBeGreaterThan(0);
+  });
+
+  it('logs ONE TTS line with sizes + latency at info', async () => {
+    const fakeAudioBase64 = Buffer.from('fake mp3 audio content').toString(
+      'base64',
+    );
+    mockHttpService.post.mockReturnValue(
+      of({ data: { audioContent: fakeAudioBase64 } } as Partial<AxiosResponse>),
+    );
+
+    const infoSpy = jest
+      .spyOn(PinoLogger.prototype, 'info')
+      .mockImplementation(() => {});
+
+    await service.generateSpeech('Hello world', 'talk/test.mp3');
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        textChars: 'Hello world'.length,
+        bytes: Buffer.from(fakeAudioBase64, 'base64').length,
+        outKey: 'talk/test.mp3',
+        ms: expect.any(Number) as number,
+      }),
+      expect.stringContaining('TTS'),
+    );
   });
 });

@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { PinoLogger } from 'nestjs-pino';
 import { ChannelPlaybackService } from './channel-playback.service';
 import { ChunkerService } from './chunker.service';
 import { QueueGeneratorService } from './queue-generator.service';
@@ -251,6 +252,76 @@ describe('ChannelPlaybackService', () => {
         'No segments available',
       );
       expect(mockSegmentRepo.delete).toHaveBeenCalledWith({ channelId });
+    });
+  });
+
+  describe('playback logs', () => {
+    it('logs WHY bufferAhead was triggered (low runway) at info', async () => {
+      const channelId = 'chan-1';
+      const channel = Object.assign(new Channel(), {
+        id: channelId,
+        visibility: 'private',
+        currentSegmentId: 'seg-1',
+        playheadOffsetSeconds: 12,
+        lastRequestedAt: new Date(Date.now() - 5000),
+      });
+      const segment = Object.assign(new SongSegment(), {
+        id: 'seg-1',
+        durationSeconds: 180,
+        playOrder: 1,
+      });
+      mockChannelRepo.findOneBy.mockResolvedValue(channel);
+      mockSegmentRepo.findOne.mockResolvedValue(segment);
+      mockSegmentRepo.count.mockResolvedValue(2); // low remaining count
+      mockChannelRepo.save.mockResolvedValue(channel);
+      mockQueueGen.bufferAhead.mockResolvedValue(undefined);
+
+      const infoSpy = jest
+        .spyOn(PinoLogger.prototype, 'info')
+        .mockImplementation(() => {});
+
+      await service.getPlaylistManifest(channelId);
+
+      expect(infoSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ channelId, reason: 'low-runway' }),
+        expect.stringContaining('bufferAhead'),
+      );
+    });
+
+    it('logs the channelId when no segments can be served', async () => {
+      const channelId = 'chan-1';
+      const channel = Object.assign(new Channel(), {
+        id: channelId,
+        visibility: 'private',
+        currentSegmentId: 'seg-1',
+        playheadOffsetSeconds: 178,
+        lastRequestedAt: new Date(Date.now() - 5000),
+      });
+      const segment1 = Object.assign(new SongSegment(), {
+        id: 'seg-1',
+        durationSeconds: 180,
+        playOrder: 1,
+      });
+      mockChannelRepo.findOneBy.mockResolvedValue(channel);
+      mockSegmentRepo.findOne
+        .mockResolvedValueOnce(segment1) // currentSegmentId fetch
+        .mockResolvedValueOnce(null) // no next segment (end of queue)
+        .mockResolvedValueOnce(null); // refetch after bufferAhead finds nothing
+      mockChannelRepo.save.mockResolvedValue(channel);
+      mockQueueGen.bufferAhead.mockResolvedValue(undefined);
+
+      const errorSpy = jest
+        .spyOn(PinoLogger.prototype, 'error')
+        .mockImplementation(() => {});
+
+      await expect(service.getPlaylistManifest(channelId)).rejects.toThrow(
+        'No segments available',
+      );
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ channelId }),
+        expect.stringContaining('No segments'),
+      );
     });
   });
 

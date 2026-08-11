@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { PinoLogger } from 'nestjs-pino';
 import { UserService } from './user.service';
 import { User } from './entities/user.entity';
 import { ConflictException } from '@nestjs/common';
@@ -56,6 +57,28 @@ describe('UserService', () => {
         email: user.email,
         createdAt: user.createdAt,
       });
+    });
+
+    it('logs the new userId at info', async () => {
+      const user = {
+        id: 'uuid-1',
+        email: 'new@example.com',
+        passwordHash: 'hash',
+      };
+      mockUserRepo.findOneBy.mockResolvedValue(null);
+      mockUserRepo.create.mockReturnValue(user);
+      mockUserRepo.save.mockResolvedValue(user);
+
+      const infoSpy = jest
+        .spyOn(PinoLogger.prototype, 'info')
+        .mockImplementation(() => {});
+
+      await service.create({ email: 'new@example.com', password: 'x' }, 'hash');
+
+      expect(infoSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'uuid-1' }),
+        expect.stringContaining('registered'),
+      );
     });
 
     it('should throw ConflictException if email is already registered', async () => {

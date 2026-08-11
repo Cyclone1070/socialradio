@@ -2,9 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { LlmService } from './llm-service';
 import { Post } from '../feed/entities/post.entity';
 import { Comment } from '../feed/entities/comment.entity';
+import { createServiceLogger } from '../logging/logging.module';
 
 @Injectable()
 export class ScriptService {
+  private readonly logger = createServiceLogger(ScriptService.name);
+
   constructor(private readonly llmService: LlmService) {}
 
   private collectChain(
@@ -121,6 +124,20 @@ Deliver it smoothly. Do not mention Reddit terms (like "OP", "upvote", "subreddi
 
     userPrompt += `Please write the complete spoken dialogue script now.`;
 
-    return this.llmService.generateText(systemPrompt, userPrompt);
+    const startMs = Date.now();
+    const script = await this.llmService.generateText(systemPrompt, userPrompt);
+    // LLM calls are the slowest + most expensive step in the chain — size
+    // and latency are the ops signal for cost and time-to-queue.
+    this.logger.info(
+      {
+        posts: posts.length,
+        comments: comments.length,
+        inputWords: userPrompt.split(/\s+/).filter(Boolean).length,
+        outputWords: script.split(/\s+/).filter(Boolean).length,
+        ms: Date.now() - startMs,
+      },
+      'LLM script generation',
+    );
+    return script;
   }
 }

@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { PinoLogger } from 'nestjs-pino';
 import { ChannelService } from './channel.service';
 import { Channel } from './entities/channel.entity';
 import { ChannelSubreddit } from './entities/channel-subreddit.entity';
@@ -132,6 +133,51 @@ describe('ChannelService', () => {
         subredditId: 'sub-1',
       });
       expect(mockChannelSubredditRepo.save).toHaveBeenCalled();
+    });
+
+    it('logs the subscription at info', async () => {
+      const channelId = 'chan-1';
+      const subName = 'pics';
+      mockChannelRepo.findOneBy.mockResolvedValue({ id: channelId });
+      mockSubredditRepo.findOneBy.mockResolvedValue(null);
+      mockScraperService.validateSubreddit.mockResolvedValue(true);
+      const subreddit = { id: 'sub-2', name: subName };
+      mockSubredditRepo.create.mockReturnValue(subreddit);
+      mockSubredditRepo.save.mockResolvedValue(subreddit);
+      const subscription = { channelId, subredditId: subreddit.id };
+      mockChannelSubredditRepo.create.mockReturnValue(subscription);
+      mockChannelSubredditRepo.save.mockResolvedValue(subscription);
+
+      const infoSpy = jest
+        .spyOn(PinoLogger.prototype, 'info')
+        .mockImplementation(() => {});
+
+      await service.subscribeToSubreddit(channelId, subName);
+
+      expect(infoSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ channelId, subreddit: subName }),
+        expect.stringContaining('subscribed'),
+      );
+    });
+
+    it('warns when a subreddit is rejected (does not exist / private)', async () => {
+      const channelId = 'chan-1';
+      mockChannelRepo.findOneBy.mockResolvedValue({ id: channelId });
+      mockSubredditRepo.findOneBy.mockResolvedValue(null);
+      mockScraperService.validateSubreddit.mockResolvedValue(false);
+
+      const warnSpy = jest
+        .spyOn(PinoLogger.prototype, 'warn')
+        .mockImplementation(() => {});
+
+      await expect(
+        service.subscribeToSubreddit(channelId, 'private_sub'),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ channelId, subreddit: 'private_sub' }),
+        expect.stringContaining('rejected'),
+      );
     });
 
     it('should skip API validation if Subreddit already exists in database', async () => {

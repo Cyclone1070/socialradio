@@ -5,9 +5,12 @@ import { Channel } from './entities/channel.entity';
 import { Segment } from './entities/segment.entity';
 import { ChunkerService } from './chunker.service';
 import { QueueGeneratorService } from './queue-generator.service';
+import { createServiceLogger } from '../logging/logging.module';
 
 @Injectable()
 export class ChannelPlaybackService {
+  private readonly logger = createServiceLogger(ChannelPlaybackService.name);
+
   constructor(
     @InjectRepository(Channel)
     private readonly channelRepo: Repository<Channel>,
@@ -63,6 +66,10 @@ export class ChannelPlaybackService {
 
     // If there is still no segment, buffer ahead and fetch again
     if (!segment) {
+      this.logger.info(
+        { channelId, reason: 'empty-queue' },
+        'bufferAhead triggered',
+      );
       await this.queueGen.bufferAhead(channelId);
       segment = await this.segmentRepo.findOne({
         where: { channelId },
@@ -102,6 +109,10 @@ export class ChannelPlaybackService {
 
       // If we ran out of segments, buffer ahead in the background and try to fetch
       if (!segment) {
+        this.logger.info(
+          { channelId, reason: 'empty-queue' },
+          'bufferAhead triggered',
+        );
         await this.queueGen.bufferAhead(channelId);
         segment = await this.segmentRepo.findOne({
           where: { channelId },
@@ -119,6 +130,7 @@ export class ChannelPlaybackService {
     await this.channelRepo.save(channel);
 
     if (!segment || !segment.durationSeconds) {
+      this.logger.error({ channelId }, 'No segments available');
       throw new Error('No segments available');
     }
 
@@ -127,6 +139,10 @@ export class ChannelPlaybackService {
       where: { channelId, playOrder: MoreThan(segment.playOrder) },
     });
     if (remainingCount < 3) {
+      this.logger.info(
+        { channelId, reason: 'low-runway' },
+        'bufferAhead triggered',
+      );
       this.queueGen.bufferAhead(channelId).catch(() => {});
     }
 

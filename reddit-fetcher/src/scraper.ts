@@ -4,6 +4,7 @@ import { FingerprintGenerator } from 'fingerprint-generator';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 import { z } from 'zod';
 import type { RedditCommentData, RedditPostData } from './types';
+import pino from 'pino';
 
 // ── Zod schemas for Reddit JSON API ──────────────────────────────────
 const ListingChildDataSchema = z.object({
@@ -81,7 +82,12 @@ export class RedditScraper {
   private readonly contexts = new Map<string, BrowserContext>();
   private readonly lastUsedAt = new Map<string, number>();
 
-  constructor(private readonly wsEndpoint: string) {
+  constructor(
+    private readonly wsEndpoint: string,
+    private readonly logger: pino.Logger = pino({
+      level: process.env.LOG_LEVEL ?? 'info',
+    }),
+  ) {
     // Register the canon stealth plugin
     chromium.use(StealthPlugin());
   }
@@ -89,6 +95,7 @@ export class RedditScraper {
   private async connect(): Promise<Browser> {
     if (!this.browser) {
       this.browser = await chromium.connect(this.wsEndpoint);
+      this.logger.info({}, 'browser connected');
     }
     return this.browser;
   }
@@ -122,6 +129,7 @@ export class RedditScraper {
     for (const [sub, context] of this.contexts) {
       const lastUsed = this.lastUsedAt.get(sub) ?? 0;
       if (now - lastUsed > CONTEXT_IDLE_MS) {
+        this.logger.debug({ subreddit: sub }, 'idle context evicted');
         await context.close().catch(() => {});
         this.contexts.delete(sub);
         this.lastUsedAt.delete(sub);
@@ -152,8 +160,9 @@ export class RedditScraper {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (!/closed|connection/i.test(message)) throw err;
-      console.error(
-        '[scraper] browser session died, reconnecting and retrying',
+      this.logger.warn(
+        { subreddit: subredditName },
+        'browser session died, reconnecting and retrying',
       );
       await this.invalidateConnection();
       return this.withPage(subredditName, fn);
@@ -171,6 +180,7 @@ export class RedditScraper {
     );
     this.contexts.clear();
     this.lastUsedAt.clear();
+    this.logger.info({}, 'browser connection invalidated');
   }
 
   private async withPage<T>(
@@ -225,7 +235,12 @@ export class RedditScraper {
     return this.withRetryOnDeadBrowser(subredditName, async (page) => {
       const url = `https://www.reddit.com/r/${subredditName}/`;
 
+      const startMs = Date.now();
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      this.logger.debug(
+        { subreddit: subredditName, ms: Date.now() - startMs },
+        'page loaded',
+      );
 
       // The feed JSON is the source of truth — no shreddit-post selector
       // wait (a leftover from the DOM-scraping era that cost 2.5–15s per
@@ -301,6 +316,10 @@ export class RedditScraper {
       const postCount = await page.evaluate(
         () => document.querySelectorAll('shreddit-post').length,
       );
+      this.logger.info(
+        { subreddit: subredditName, valid: postCount > 0 },
+        'subreddit exists check',
+      );
       return postCount > 0;
     });
   }
@@ -311,7 +330,12 @@ export class RedditScraper {
   ): Promise<RedditCommentData[]> {
     return this.withRetryOnDeadBrowser(subredditName, async (page) => {
       const url = `https://www.reddit.com/r/${subredditName}/comments/${postRedditId}/`;
+      const startMs = Date.now();
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      this.logger.debug(
+        { subreddit: subredditName, ms: Date.now() - startMs },
+        'page loaded',
+      );
 
       // sort=top: highest-scored comments first; limit=250: enough comments
       // to clear the 2500-word guard (measured sweet spot — 500 pulled a

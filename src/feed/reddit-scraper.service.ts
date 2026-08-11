@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { createServiceLogger } from '../logging/logging.module';
 
 // Public data shapes produced by the reddit-fetcher container (mirrors
 // `reddit-fetcher/src/types.ts` — identity/UA/cookies live there now).
@@ -29,6 +30,8 @@ export interface RedditCommentData {
  */
 @Injectable()
 export class RedditScraperService {
+  private readonly logger = createServiceLogger(RedditScraperService.name);
+
   constructor(private readonly configService: ConfigService) {}
 
   private get baseUrl(): string {
@@ -40,10 +43,22 @@ export class RedditScraperService {
   }
 
   private async getJson(path: string): Promise<unknown> {
+    const startMs = Date.now();
     const res = await fetch(`${this.baseUrl}${path}`);
+    const ms = Date.now() - startMs;
     if (!res.ok) {
+      // The walk converts this into a quiet stop; the warn is how ops sees
+      // the fetcher's health (rate limiting, browserless trouble, …).
+      this.logger.warn(
+        { path, status: res.status, ms },
+        'reddit-fetcher non-ok response',
+      );
       throw new Error(`reddit-fetcher ${path} failed: ${res.status}`);
     }
+    this.logger.debug(
+      { path, status: res.status, ms },
+      'reddit-fetcher round trip',
+    );
     return res.json();
   }
 

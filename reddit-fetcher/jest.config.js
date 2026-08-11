@@ -7,4 +7,5 @@ module.exports = {
     '^.+\\.(t|j)s$': ['ts-jest', { tsconfig: 'tsconfig.json' }],
   },
   testEnvironment: 'node',
+  setupFiles: ['<rootDir>/../jest.logging-setup.js'],
 };

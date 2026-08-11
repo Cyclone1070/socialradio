@@ -1,5 +1,6 @@
 import { RedditScraper } from './scraper';
 import type { RedditPostData } from './types';
+import pino from 'pino';
 
 jest.mock('playwright-extra', () => ({
   chromium: { use: jest.fn(), connect: jest.fn() },
@@ -51,6 +52,16 @@ const mappedPost: RedditPostData = {
   score: 500,
   created_utc: 1000,
 };
+
+function makeFakeLogger() {
+  return {
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    fatal: jest.fn(),
+  } as unknown as pino.Logger;
+}
 
 describe('RedditScraper.fetchTopPosts', () => {
   it('returns { posts, after, isInvalid: false } mapping one listing page', async () => {
@@ -415,5 +426,72 @@ describe('RedditScraper dead-connection recovery', () => {
       'Unexpected end of JSON input',
     );
     expect(chromium.connect).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('RedditScraper logging', () => {
+  beforeEach(() => {
+    chromium.connect.mockReset();
+  });
+
+  it('warns once when a dead browser session forces a reconnect', async () => {
+    const deadPage = makePageMock();
+    deadPage.evaluate.mockRejectedValue(
+      new Error('Target page, context or browser has been closed'),
+    );
+    const livePage = makePageMock();
+    livePage.evaluate.mockResolvedValue({
+      ok: true,
+      json: { data: { after: null, children: [] } },
+    });
+    chromium.connect
+      .mockResolvedValueOnce(makeBrowserMock(deadPage))
+      .mockResolvedValueOnce(makeBrowserMock(livePage));
+    const logger = makeFakeLogger();
+
+    const scraper = new RedditScraper('ws://browserless:3000', logger);
+    await scraper.fetchTopPosts('webdev', {});
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ subreddit: 'webdev' }),
+      expect.stringContaining('reconnect'),
+    );
+  });
+
+  it('logs a page-load timing at debug for every navigation', async () => {
+    const page = makePageMock();
+    page.evaluate.mockResolvedValue({
+      ok: true,
+      json: { data: { after: null, children: [] } },
+    });
+    chromium.connect.mockResolvedValue(makeBrowserMock(page));
+    const logger = makeFakeLogger();
+
+    const scraper = new RedditScraper('ws://browserless:3000', logger);
+    await scraper.fetchTopPosts('webdev', {});
+
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subreddit: 'webdev',
+        ms: expect.any(Number) as number,
+      }),
+      expect.stringContaining('page'),
+    );
+  });
+
+  it('reports the exists() verdict at info', async () => {
+    const page = makePageMock();
+    page.evaluate.mockResolvedValue(5);
+    chromium.connect.mockResolvedValue(makeBrowserMock(page));
+    const logger = makeFakeLogger();
+
+    const scraper = new RedditScraper('ws://browserless:3000', logger);
+    await scraper.exists('webdev');
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ subreddit: 'webdev', valid: true }),
+      expect.stringContaining('exists'),
+    );
   });
 });

@@ -4,9 +4,12 @@ import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
 import { RegisterDto } from './dto/register.dto';
 import { UserResponseDto } from './dto/user-response.dto';
+import { createServiceLogger } from '../logging/logging.module';
 
 @Injectable()
 export class UserService {
+  private readonly logger = createServiceLogger(UserService.name);
+
   constructor(
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
@@ -27,6 +30,8 @@ export class UserService {
     });
 
     const saved = await this.userRepo.save(user);
+
+    this.logger.info({ userId: saved.id }, 'user registered');
 
     return {
       id: saved.id,

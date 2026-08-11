@@ -5,6 +5,7 @@ import { MusicTrack } from './entities/music-track.entity';
 import { AdTrack } from './entities/ad-track.entity';
 import { Jingle } from './entities/jingle.entity';
 import { NotFoundException } from '@nestjs/common';
+import { PinoLogger } from 'nestjs-pino';
 
 describe('MediaService', () => {
   let service: MediaService;
@@ -70,6 +71,20 @@ describe('MediaService', () => {
       mockMusicRepo.find.mockResolvedValue([]);
 
       await expect(service.getRandomMusic()).rejects.toThrow(NotFoundException);
+    });
+
+    it('warns with the catalog type when a pool is empty', async () => {
+      mockMusicRepo.find.mockResolvedValue([]);
+      const warnSpy = jest
+        .spyOn(PinoLogger.prototype, 'warn')
+        .mockImplementation(() => {});
+
+      await expect(service.getRandomMusic()).rejects.toThrow(NotFoundException);
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'music' }),
+        expect.stringContaining('empty'),
+      );
     });
   });
 

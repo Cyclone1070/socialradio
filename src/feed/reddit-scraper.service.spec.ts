@@ -1,5 +1,6 @@
 import { RedditScraperService } from './reddit-scraper.service';
 import { ConfigService } from '@nestjs/config';
+import { PinoLogger } from 'nestjs-pino';
 
 describe('RedditScraperService (HTTP client)', () => {
   let service: RedditScraperService;
@@ -65,6 +66,53 @@ describe('RedditScraperService (HTTP client)', () => {
       await expect(
         service.fetchTopPosts('webdev', { limit: 10 }),
       ).rejects.toThrow(/502/);
+    });
+  });
+
+  describe('round-trip logs', () => {
+    it('logs a debug line per successful fetcher call with path, status and ms', async () => {
+      const debugSpy = jest
+        .spyOn(PinoLogger.prototype, 'debug')
+        .mockImplementation(() => {});
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({ posts: [], after: null, isInvalid: false }),
+      });
+
+      await service.fetchTopPosts('webdev', { limit: 10 });
+
+      expect(debugSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          path: '/top-posts/webdev?limit=10',
+          status: 200,
+          ms: expect.any(Number) as number,
+        }),
+        expect.stringContaining('fetcher'),
+      );
+    });
+
+    it('warns when the fetcher returns a non-ok status, with status in the log', async () => {
+      const warnSpy = jest
+        .spyOn(PinoLogger.prototype, 'warn')
+        .mockImplementation(() => {});
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 502,
+      });
+
+      await expect(
+        service.fetchTopPosts('webdev', { limit: 10 }),
+      ).rejects.toThrow();
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          path: '/top-posts/webdev?limit=10',
+          status: 502,
+        }),
+        expect.stringContaining('non-ok'),
+      );
     });
   });
 });

@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { PinoLogger } from 'nestjs-pino';
 import { ScriptService } from './script.service';
 import { LlmService } from './llm-service';
 import { Post } from '../feed/entities/post.entity';
@@ -61,6 +62,42 @@ describe('ScriptService', () => {
         expect.stringContaining('Post Title 1'),
       );
       expect(result).toBe('Mocked radio script text.');
+    });
+
+    it('logs ONE LLM call line with sizes + latency at info', async () => {
+      const posts = [
+        { id: 'post-1', title: 'Post Title 1', body: 'Post Body 1' },
+      ] as unknown as Post[];
+      const comments = [
+        {
+          body: 'Comment Body 1',
+          postId: 'post-1',
+          redditId: 'comment-1',
+          parentRedditId: null,
+          isOp: false,
+          score: 10,
+        },
+      ] as unknown as Comment[];
+      mockLlmService.generateText.mockResolvedValue(
+        'Mocked radio script text.',
+      );
+
+      const infoSpy = jest
+        .spyOn(PinoLogger.prototype, 'info')
+        .mockImplementation(() => {});
+
+      await service.generateScript(posts, comments);
+
+      expect(infoSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          posts: 1,
+          comments: 1,
+          inputWords: expect.any(Number) as number,
+          outputWords: expect.any(Number) as number,
+          ms: expect.any(Number) as number,
+        }),
+        expect.stringContaining('LLM'),
+      );
     });
 
     it('should select complete comment chains until the 2500-word input budget is met, then exclude further chains', async () => {

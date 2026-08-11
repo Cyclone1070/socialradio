@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { PinoLogger } from 'nestjs-pino';
 import { ScraperService, SCRAPE_WINDOW_MS } from './scraper.service';
 import { RedditScraperService } from './reddit-scraper.service';
 import { Subreddit } from '../domain/entities/subreddit.entity';
@@ -858,6 +859,137 @@ describe('ScraperService', () => {
 
       expect(result).toBe(false);
       expect(mockRedditScraper.exists).toHaveBeenCalledWith('private');
+    });
+  });
+
+  describe('scraping logs', () => {
+    const subName = 'askreddit';
+    const subEntity = { id: 'sub-uuid', name: subName, lastScrapedAt: null };
+
+    function mockFullPostSave() {
+      mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
+      mockSubredditRepo.save.mockResolvedValue(subEntity);
+      jest.spyOn(service, 'cleanupOldData').mockResolvedValue(undefined);
+      mockPostRepo.findOneBy.mockResolvedValue(null); // all posts new
+      mockRedditScraper.fetchPostComments.mockResolvedValue([
+        {
+          id: 'c',
+          body: 'hello '.repeat(2600).trim(), // passes the 2500-word guard
+          author: 'user',
+          score: 10,
+          parent_id: 't3_p',
+          created_utc: 1719999999,
+        },
+      ]);
+      mockCommentRepo.create.mockImplementation((c): Partial<Comment> => ({
+        id: 'c-uuid',
+        ...c,
+      }));
+      mockCommentRepo.save.mockImplementation((c): Promise<Partial<Comment>> =>
+        Promise.resolve(c),
+      );
+      mockPostRepo.create.mockImplementation((p): Partial<Post> => ({
+        id: 'p-uuid',
+        ...p,
+      }));
+      mockPostRepo.save.mockImplementation((p): Promise<Partial<Post>> =>
+        Promise.resolve(p),
+      );
+    }
+
+    function pageOf(
+      count: number,
+      prefix: string,
+    ): Array<{
+      id: string;
+      title: string;
+      selftext: string;
+      author: string;
+      score: number;
+      created_utc: number;
+    }> {
+      return Array.from({ length: count }, (_, i) => ({
+        id: `${prefix}${i + 1}`,
+        title: `T ${i + 1}`,
+        selftext: '',
+        author: 'op',
+        score: 10,
+        created_utc: 1719999999,
+      }));
+    }
+
+    it('logs ONE summary line with stopReason when the walk finishes', async () => {
+      mockFullPostSave();
+      const infoSpy = jest
+        .spyOn(PinoLogger.prototype, 'info')
+        .mockImplementation(() => {});
+      mockRedditScraper.fetchTopPosts.mockResolvedValue({
+        posts: pageOf(25, 'p'),
+        after: null,
+        isInvalid: false,
+      });
+
+      const result = await service.scrapeSubreddit(subName);
+
+      expect(result).toEqual({ scrapedPostsCount: 20 });
+      expect(infoSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sub: subName,
+          saved: 20,
+          pages: 1,
+          stopReason: 'saved-20',
+          scrapeId: expect.any(String) as string,
+        }),
+        'scrape walk finished',
+      );
+    });
+
+    it('warns with the reason when a scrape is blocked (cooldown)', async () => {
+      const cooling = Object.assign(new Subreddit(), {
+        id: 'sub-1',
+        name: subName,
+        lastScrapedAt: new Date(),
+        scrapeStartedAt: null,
+        scrapeCooldownUntil: new Date(Date.now() + 60_000),
+      });
+      mockSubredditRepo.findOneBy.mockResolvedValue(cooling);
+      const warnSpy = jest
+        .spyOn(PinoLogger.prototype, 'warn')
+        .mockImplementation(() => {});
+
+      const result = await service.scrapeSubreddit(subName);
+
+      expect(result).toEqual({ scrapedPostsCount: 0 });
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ sub: subName, reason: 'cooldown' }),
+        expect.stringContaining('skipped'),
+      );
+    });
+
+    it('logs an error with stopReason when a page fetch fails mid-walk', async () => {
+      mockFullPostSave();
+      const errorSpy = jest
+        .spyOn(PinoLogger.prototype, 'error')
+        .mockImplementation(() => {});
+      mockRedditScraper.fetchTopPosts
+        .mockResolvedValueOnce({
+          posts: pageOf(5, 'p'),
+          after: 't3_x',
+          isInvalid: false,
+        })
+        .mockRejectedValueOnce(new Error('502 from fetcher'));
+
+      const result = await service.scrapeSubreddit(subName);
+
+      expect(result).toEqual({ scrapedPostsCount: 5 });
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sub: subName,
+          stopReason: 'fetch-fail',
+          err: expect.any(Error) as Error,
+        }),
+        expect.stringContaining('page fetch'),
+      );
     });
   });
 });

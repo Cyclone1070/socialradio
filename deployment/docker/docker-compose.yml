@@ -63,6 +63,12 @@ services:
         condition: service_healthy
     volumes:
       - hf_cache:/home/node/.cache
+    # JSON lines on stdout; docker json-file driver bounds the disk copy.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # Dedicated Reddit scraping container: owns browserless config, per-subreddit
   # contexts, and the global 1–2s pacing queue. Single container by design —
@@ -77,6 +83,11 @@ services:
       browserless:
         condition: service_started
     restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   browserless:
     image: browserless/chrome:latest

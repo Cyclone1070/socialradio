@@ -8,10 +8,13 @@ import { Comment } from '../feed/entities/comment.entity';
 import { ScriptService } from './script.service';
 import { AudioService } from './audio.service';
 import { TalkRef } from '../domain/types/audio-file-ref.interface';
+import { createServiceLogger } from '../logging/logging.module';
 import * as path from 'path';
 
 @Injectable()
 export class RadioService {
+  private readonly logger = createServiceLogger(RadioService.name);
+
   constructor(
     @InjectRepository(TopicScript)
     private readonly scriptRepo: Repository<TopicScript>,
@@ -31,6 +34,7 @@ export class RadioService {
       postId: primaryPostId,
     });
     if (cachedAudio) {
+      this.logger.debug({ postIds, cacheHit: true }, 'voice track cache hit');
       return {
         filePath: cachedAudio.filePath,
         durationSeconds: cachedAudio.durationSeconds,
@@ -41,6 +45,8 @@ export class RadioService {
     const posts = await this.postRepo.find({
       where: postIds.map((id) => ({ id })),
     });
+
+    const startMs = Date.now();
 
     let comments: Comment[] = [];
     if (postIds.length > 0) {
@@ -73,6 +79,15 @@ export class RadioService {
       durationSeconds,
     });
     const savedAudio = await this.audioRepo.save(audio);
+
+    this.logger.info(
+      {
+        postIds,
+        durationSeconds: savedAudio.durationSeconds,
+        ms: Date.now() - startMs,
+      },
+      'voice track generated',
+    );
 
     return {
       filePath: savedAudio.filePath,

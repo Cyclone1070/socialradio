@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { LoggingModule } from './logging/logging.module';
 import { DomainModule } from './domain/domain.module';
 import { UserModule } from './user/user.module';
 import { AuthModule } from './auth/auth.module';
@@ -17,6 +18,7 @@ import { AddScrapeStatusColumns1790000000000 } from './database/migrations/17900
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    LoggingModule.forRoot(),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => {

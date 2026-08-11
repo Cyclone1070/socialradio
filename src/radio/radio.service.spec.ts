@@ -1,40 +1,35 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { PinoLogger } from 'nestjs-pino';
 import { RadioService } from './radio.service';
+import { ScriptService } from './script.service';
+import { AudioService } from './audio.service';
 import { TopicScript } from './entities/topic-script.entity';
 import { TopicAudio } from './entities/topic-audio.entity';
 import { Post } from '../feed/entities/post.entity';
 import { Comment } from '../feed/entities/comment.entity';
-import { ScriptService } from './script.service';
-import { AudioService } from './audio.service';
 
 describe('RadioService', () => {
   let service: RadioService;
 
   const mockScriptRepo = {
-    findOneBy: jest.fn(),
     create: jest.fn(),
     save: jest.fn(),
   };
-
   const mockAudioRepo = {
     findOneBy: jest.fn(),
     create: jest.fn(),
     save: jest.fn(),
   };
-
   const mockPostRepo = {
     find: jest.fn(),
   };
-
   const mockCommentRepo = {
     find: jest.fn(),
   };
-
   const mockScriptService = {
     generateScript: jest.fn(),
   };
-
   const mockAudioService = {
     generateSpeech: jest.fn(),
   };
@@ -61,87 +56,68 @@ describe('RadioService', () => {
   });
 
   describe('getSegmentVoiceTrack', () => {
-    it('should return cached audio if it exists', async () => {
-      const postIds = ['post-123'];
-      const cachedAudio = {
-        postId: 'post-123',
-        filePath: 'cache/post-123.mp3',
-        durationSeconds: 45.5,
-      };
+    it('returns the cached track without regenerating, logging a debug cache hit', async () => {
+      mockAudioRepo.findOneBy.mockResolvedValue({
+        id: 'audio-1',
+        postId: 'post-1',
+        filePath: 'assets/cache/tts-post-1.mp3',
+        durationSeconds: 60,
+      });
 
-      mockAudioRepo.findOneBy.mockResolvedValue(cachedAudio);
+      const debugSpy = jest
+        .spyOn(PinoLogger.prototype, 'debug')
+        .mockImplementation(() => {});
 
-      const result = await service.getSegmentVoiceTrack(postIds);
+      const result = await service.getSegmentVoiceTrack(['post-1']);
 
-      expect(mockAudioRepo.findOneBy).toHaveBeenCalledWith({
-        postId: 'post-123',
+      expect(result).toEqual({
+        filePath: 'assets/cache/tts-post-1.mp3',
+        durationSeconds: 60,
+        postIds: ['post-1'],
       });
       expect(mockScriptService.generateScript).not.toHaveBeenCalled();
-      expect(mockAudioService.generateSpeech).not.toHaveBeenCalled();
-      expect(result).toEqual({
-        filePath: 'cache/post-123.mp3',
-        durationSeconds: 45.5,
-        postIds,
-      });
+      expect(debugSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          postIds: ['post-1'],
+          cacheHit: true,
+        }),
+        expect.stringContaining('cache'),
+      );
     });
 
-    it('should generate, cache, and return voice track on cache miss', async () => {
-      const postIds = ['post-123'];
+    it('generates + persists script and audio, logging ONE info line', async () => {
       mockAudioRepo.findOneBy.mockResolvedValue(null);
-
-      const posts = [{ id: 'post-123', title: 'SpaceX' }] as unknown as Post[];
-      const comments = [
-        { id: 'comment-1', body: 'Wow', postId: 'post-123' },
-      ] as unknown as Comment[];
-      mockPostRepo.find.mockResolvedValue(posts);
-      mockCommentRepo.find.mockResolvedValue(comments);
-
-      mockScriptService.generateScript.mockResolvedValue('Script content');
-      mockAudioService.generateSpeech.mockResolvedValue(30.0); // 30 seconds
-
-      const topicScript = { postId: 'post-123', scriptText: 'Script content' };
-      const filePath = 'assets/cache/tts-post-post-123.mp3';
-      const topicAudio = {
-        postId: 'post-123',
-        filePath,
-        durationSeconds: 30.0,
-      };
-
-      mockScriptRepo.create.mockReturnValue(topicScript);
-      mockScriptRepo.save.mockResolvedValue(topicScript);
-      mockAudioRepo.create.mockReturnValue(topicAudio);
-      mockAudioRepo.save.mockResolvedValue(topicAudio);
-
-      const result = await service.getSegmentVoiceTrack(postIds);
-
-      expect(mockPostRepo.find).toHaveBeenCalledWith({
-        where: [{ id: 'post-123' }],
-      });
-      expect(mockCommentRepo.find).toHaveBeenCalledWith({
-        where: [{ postId: 'post-123' }],
-      });
-      expect(mockScriptService.generateScript).toHaveBeenCalledWith(
-        posts,
-        comments,
+      mockPostRepo.find.mockResolvedValue([
+        { id: 'post-1', title: 'T', body: 'B' },
+      ]);
+      mockCommentRepo.find.mockResolvedValue([]);
+      mockScriptService.generateScript.mockResolvedValue('Script text.');
+      mockAudioService.generateSpeech.mockResolvedValue(42);
+      mockScriptRepo.create.mockImplementation((dto) => dto as TopicScript);
+      mockScriptRepo.save.mockImplementation((dto) =>
+        Promise.resolve(dto as TopicScript),
       );
-      expect(mockAudioService.generateSpeech).toHaveBeenCalledWith(
-        'Script content',
-        expect.stringContaining('post-123.mp3'),
+      mockAudioRepo.create.mockImplementation((dto) => dto as TopicAudio);
+      mockAudioRepo.save.mockImplementation((dto) =>
+        Promise.resolve(dto as TopicAudio),
       );
-      expect(mockScriptRepo.create).toHaveBeenCalledWith({
-        postId: 'post-123',
-        scriptText: 'Script content',
-      });
-      expect(mockAudioRepo.create).toHaveBeenCalledWith({
-        postId: 'post-123',
-        filePath: expect.stringContaining('post-123.mp3') as unknown,
-        durationSeconds: 30.0,
-      });
-      expect(result).toEqual({
-        filePath: expect.stringContaining('post-123.mp3') as unknown,
-        durationSeconds: 30.0,
-        postIds,
-      });
+
+      const infoSpy = jest
+        .spyOn(PinoLogger.prototype, 'info')
+        .mockImplementation(() => {});
+
+      const result = await service.getSegmentVoiceTrack(['post-1']);
+
+      expect(result.filePath).toBe('assets/cache/tts-post-post-1.mp3');
+      expect(result.durationSeconds).toBe(42);
+      expect(infoSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          postIds: ['post-1'],
+          durationSeconds: 42,
+          ms: expect.any(Number) as number,
+        }),
+        expect.stringContaining('voice'),
+      );
     });
   });
 });

@@ -17,9 +17,12 @@ import { clusterPosts } from './utils/topic-clustering.util';
 import { ScraperService, SCRAPE_WINDOW_MS } from '../feed/scraper.service';
 import { ChunkerService } from './chunker.service';
 import { Topic } from './interfaces/topic.interface';
+import { createServiceLogger } from '../logging/logging.module';
 
 @Injectable()
 export class QueueGeneratorService {
+  private readonly logger = createServiceLogger(QueueGeneratorService.name);
+
   constructor(
     @InjectRepository(Segment)
     private readonly segmentRepo: Repository<Segment>,
@@ -110,9 +113,19 @@ export class QueueGeneratorService {
             voiceTrack.filePath,
           );
         })
-        .catch(async () => {
+        .catch(async (err) => {
           savedTalkItem.status = 'failed';
           await this.segmentRepo.save(savedTalkItem);
+          // A dead segment is invisible in the queue — this line is how
+          // ops sees TTS/LLM trouble.
+          this.logger.error(
+            {
+              channelId,
+              segmentId: savedTalkItem.id,
+              err: err instanceof Error ? err : new Error(String(err)),
+            },
+            'voice generation failed',
+          );
         });
       return playOrder + 1;
     }
@@ -221,12 +234,34 @@ export class QueueGeneratorService {
       );
       const isExhausted = unplayedInSub.length === 0;
 
+      // The why behind every background scrape decision — the cheapest way
+      // to see the chain's health from logs alone.
+      const decision = isStale ? 'stale' : isExhausted ? 'exhausted' : 'fresh';
+      this.logger.debug(
+        {
+          channelId,
+          sub: sub.name,
+          decision,
+          staleAgeMs: sub.lastScrapedAt
+            ? Date.now() - sub.lastScrapedAt.getTime()
+            : null,
+          unplayed: unplayedInSub.length,
+        },
+        'scrape decision',
+      );
+
       if (isStale || isExhausted) {
         subsToScrape.push(sub.name);
       }
     }
 
     if (subsToScrape.length > 0) {
+      // Every background scrape chain is visible as one line, so a channel's
+      // scrape history is one grep.
+      this.logger.info(
+        { channelId, subsToScrape },
+        'background scrape chain started',
+      );
       // Sequential background chain: each sub's scrape completes before the
       // next starts — proper request spacing matters (no parallel scraping).
       // Never blocks topic generation: the whole chain runs in the background.

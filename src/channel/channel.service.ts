@@ -11,9 +11,12 @@ import { Subreddit } from '../domain/entities/subreddit.entity';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { ChannelResponseDto } from './dto/channel-response.dto';
 import { ScraperService } from '../feed/scraper.service';
+import { createServiceLogger } from '../logging/logging.module';
 
 @Injectable()
 export class ChannelService {
+  private readonly logger = createServiceLogger(ChannelService.name);
+
   constructor(
     @InjectRepository(Channel)
     private readonly channelRepo: Repository<Channel>,
@@ -61,6 +64,10 @@ export class ChannelService {
       const isValid =
         await this.scraperService.validateSubreddit(normalizedName);
       if (!isValid) {
+        this.logger.warn(
+          { channelId, subreddit: normalizedName },
+          'subreddit rejected',
+        );
         throw new BadRequestException('Subreddit does not exist or is private');
       }
       subreddit = this.subredditRepo.create({ name: normalizedName });
@@ -80,6 +87,11 @@ export class ChannelService {
       subredditId: subreddit.id,
     });
     await this.channelSubredditRepo.save(subscription);
+
+    this.logger.info(
+      { channelId, subreddit: normalizedName },
+      'subreddit subscribed',
+    );
   }
 
   async getChannelSubreddits(

@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { PinoLogger } from 'nestjs-pino';
 import { QueueGeneratorService } from './queue-generator.service';
 import {
   Segment,
@@ -535,6 +536,132 @@ describe('QueueGeneratorService', () => {
       expect(uniqueItems[4]).toBeInstanceOf(AdSegment);
       expect(uniqueItems[5]).toBeInstanceOf(AdSegment);
       expect(uniqueItems[6]).toBeInstanceOf(JingleSegment);
+    });
+  });
+
+  it('logs an error with the segmentId when voice generation fails', async () => {
+    const channelId = 'chan-1';
+    mockSegmentRepo.count.mockResolvedValue(0);
+    mockSubredditRepo.find.mockResolvedValue([
+      {
+        subredditId: 'sub-1',
+        subreddit: { id: 'sub-1', name: 'news', lastScrapedAt: null },
+      },
+    ]);
+    mockProgressRepo.find.mockResolvedValue([]);
+    mockPostRepo.find.mockResolvedValue([
+      { id: 'post-1', subredditId: 'sub-1', title: 'news title' },
+    ]);
+    mockScraperService.scrapeSubreddit.mockResolvedValue(undefined);
+    mockRadioService.getSegmentVoiceTrack.mockRejectedValue(
+      new Error('TTS quota exceeded'),
+    );
+
+    const savedItems: Array<Record<string, unknown>> = [];
+    mockSegmentRepo.create.mockImplementation((dto): Segment => dto);
+    mockSegmentRepo.save.mockImplementation((item): Promise<Segment> =>
+      Promise.resolve({
+        ...(item as Record<string, unknown>),
+        id: 'seg-' + (savedItems.length + 1),
+      } as unknown as Segment),
+    );
+
+    const errorSpy = jest
+      .spyOn(PinoLogger.prototype, 'error')
+      .mockImplementation(() => {});
+
+    await service.bufferAhead(channelId);
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelId,
+        segmentId: expect.any(String) as string,
+        err: expect.any(Error) as Error,
+      }),
+      expect.stringContaining('voice'),
+    );
+  });
+
+  describe('scraping-chain logs', () => {
+    it('logs the background chain with channelId + sub list when scrapes are fired', async () => {
+      const channelId = 'chan-1';
+      mockSegmentRepo.count.mockResolvedValue(0);
+      mockSubredditRepo.find.mockResolvedValue([
+        {
+          subredditId: 'sub-1',
+          subreddit: { id: 'sub-1', name: 'news', lastScrapedAt: null },
+        },
+      ]);
+      mockProgressRepo.find.mockResolvedValue([]);
+      mockPostRepo.find.mockResolvedValue([]);
+      mockScraperService.scrapeSubreddit.mockResolvedValue(undefined);
+
+      const infoSpy = jest
+        .spyOn(PinoLogger.prototype, 'info')
+        .mockImplementation(() => {});
+
+      await service.findPendingTopicSegment(channelId);
+
+      expect(infoSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channelId,
+          subsToScrape: ['news'],
+        }),
+        expect.stringContaining('chain'),
+      );
+    });
+
+    it('logs the per-sub decision (stale vs exhausted vs fresh) at debug', async () => {
+      const channelId = 'chan-1';
+      mockSegmentRepo.count.mockResolvedValue(0);
+      // sub-1 stale, sub-2 fresh-but-exhausted, sub-3 fresh with unplayed
+      mockSubredditRepo.find.mockResolvedValue([
+        {
+          subredditId: 'sub-1',
+          subreddit: { id: 'sub-1', name: 'news', lastScrapedAt: null },
+        },
+        {
+          subredditId: 'sub-2',
+          subreddit: {
+            id: 'sub-2',
+            name: 'pics',
+            lastScrapedAt: new Date(),
+          },
+        },
+        {
+          subredditId: 'sub-3',
+          subreddit: {
+            id: 'sub-3',
+            name: 'music',
+            lastScrapedAt: new Date(),
+          },
+        },
+      ]);
+      mockProgressRepo.find.mockResolvedValue([{ postId: 'post-2' }]);
+      mockPostRepo.find.mockResolvedValue([
+        { id: 'post-2', subredditId: 'sub-2', title: 'pics title' },
+        { id: 'post-3', subredditId: 'sub-3', title: 'music title' },
+      ]);
+      mockScraperService.scrapeSubreddit.mockResolvedValue(undefined);
+
+      const debugSpy = jest
+        .spyOn(PinoLogger.prototype, 'debug')
+        .mockImplementation(() => {});
+
+      await service.findPendingTopicSegment(channelId);
+
+      expect(debugSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ sub: 'news', decision: 'stale' }),
+        expect.any(String),
+      );
+      expect(debugSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ sub: 'pics', decision: 'exhausted' }),
+        expect.any(String),
+      );
+      expect(debugSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ sub: 'music', decision: 'fresh' }),
+        expect.any(String),
+      );
     });
   });
 });
