@@ -81,9 +81,20 @@ export class RedditScraperService {
   }
 
   async exists(subredditName: string): Promise<boolean> {
-    const body = await this.getJson(`/exists/${subredditName}`);
-    const { valid } = body as { valid: boolean };
-    return valid;
+    try {
+      const body = await this.getJson(`/exists/${subredditName}`);
+      const { valid } = body as { valid: boolean };
+      return valid;
+    } catch (err) {
+      this.logger.warn(
+        {
+          subredditName,
+          err: err instanceof Error ? err : new Error(String(err)),
+        },
+        'exists fetch failed',
+      );
+      return false;
+    }
   }
 
   async fetchPostComments(

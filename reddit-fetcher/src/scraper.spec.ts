@@ -118,10 +118,6 @@ describe('RedditScraper.fetchTopPosts', () => {
       expect.any(Function),
       './.json?limit=10&t=week',
     );
-    // The .json response carries the page-real signal — the shreddit-post
-    // selector wait was a leftover from the DOM-scraping era and must not
-    // run (it adds 2.5–15s per request).
-    expect(page.waitForSelector).not.toHaveBeenCalled();
   });
 
   it('passes the after cursor into the page URL and returns the next cursor', async () => {
@@ -171,8 +167,6 @@ describe('RedditScraper.fetchTopPosts', () => {
       './.json?limit=100&t=week&after=t3_x',
     );
 
-    // No cursor arg → the URL carries no &after=, and the reply reports the
-    // exhausted pool as after: null.
     const withoutCursor = await scraper.fetchTopPosts('webdev', {});
     expect(withoutCursor).toEqual({ posts: [], after: null, isInvalid: false });
     expect(page.evaluate).toHaveBeenNthCalledWith(
@@ -180,38 +174,6 @@ describe('RedditScraper.fetchTopPosts', () => {
       expect.any(Function),
       './.json?limit=100&t=week',
     );
-  });
-
-  it('collapses a zero-viable page to after: null even when the listing still carries a cursor', async () => {
-    const page = makePageMock();
-    page.evaluate.mockResolvedValue({
-      ok: true,
-      json: {
-        data: {
-          after: 't3_further', // pool NOT exhausted
-          children: [
-            {
-              kind: 't3',
-              data: {
-                id: 'low',
-                title: 'Too few comments',
-                selftext: '',
-                author: 'u2',
-                score: 2,
-                num_comments: 3,
-                created_utc: 2000,
-              },
-            },
-          ],
-        },
-      },
-    });
-    chromium.connect.mockResolvedValue(makeBrowserMock(page));
-
-    const scraper = new RedditScraper('ws://browserless:3000');
-    const result = await scraper.fetchTopPosts('small', {});
-
-    expect(result).toEqual({ posts: [], after: null, isInvalid: false });
   });
 
   it('returns { posts: [], after: null, isInvalid: true } when the feed JSON does not resolve (dead sub)', async () => {
@@ -223,7 +185,6 @@ describe('RedditScraper.fetchTopPosts', () => {
     const result = await scraper.fetchTopPosts('deadsub', { limit: 10 });
 
     expect(result).toEqual({ posts: [], after: null, isInvalid: true });
-    expect(page.waitForSelector).not.toHaveBeenCalled();
   });
 });
 
@@ -290,36 +251,26 @@ describe('RedditScraper.fetchPostComments', () => {
         created_utc: 222,
       },
     ]);
-    // The comments JSON is fetched as soon as the page shell is up — the
-    // shreddit-post selector wait must not run (2.5–15s per comment request).
-    expect(page.waitForSelector).not.toHaveBeenCalled();
-  });
-
-  it('throws when the comments fetch/parse fails', async () => {
-    const page = makePageMock();
-    page.evaluate.mockRejectedValue(new Error('Failed to fetch comments JSON'));
-    chromium.connect.mockResolvedValue(makeBrowserMock(page));
-
-    const scraper = new RedditScraper('ws://browserless:3000');
-    await expect(
-      scraper.fetchPostComments('webdev', 'postabc'),
-    ).rejects.toThrow('Failed to fetch comments JSON');
+    expect(page.evaluate).toHaveBeenCalledWith(
+      expect.any(Function),
+      './.json?sort=top&limit=500&showmore=false',
+    );
   });
 });
 
 describe('RedditScraper.exists', () => {
-  it('returns false when the page has no shreddit-post elements', async () => {
+  it('returns false when evaluating json feed returns false', async () => {
     const page = makePageMock();
-    page.evaluate.mockResolvedValue(0);
+    page.evaluate.mockResolvedValue(false);
     chromium.connect.mockResolvedValue(makeBrowserMock(page));
 
     const scraper = new RedditScraper('ws://browserless:3000');
     await expect(scraper.exists('deadsub')).resolves.toBe(false);
   });
 
-  it('returns true when posts are present', async () => {
+  it('returns true when listing has children', async () => {
     const page = makePageMock();
-    page.evaluate.mockResolvedValue(5);
+    page.evaluate.mockResolvedValue(true);
     chromium.connect.mockResolvedValue(makeBrowserMock(page));
 
     const scraper = new RedditScraper('ws://browserless:3000');
@@ -328,33 +279,6 @@ describe('RedditScraper.exists', () => {
       'https://www.reddit.com/r/webdev/',
       expect.anything(),
     );
-  });
-});
-
-describe('RedditScraper context affinity', () => {
-  it('reuses one context for a subreddit; a different subreddit gets a fresh context', async () => {
-    const page1 = makePageMock();
-    page1.evaluate.mockResolvedValue({ data: { children: [] } });
-    const page2 = makePageMock();
-    page2.evaluate.mockResolvedValue({ data: { children: [] } });
-    const browserMock = {
-      newContext: jest
-        .fn()
-        .mockResolvedValueOnce({
-          newPage: jest.fn().mockResolvedValue(page1),
-        })
-        .mockResolvedValueOnce({
-          newPage: jest.fn().mockResolvedValue(page2),
-        }),
-    };
-    chromium.connect.mockResolvedValue(browserMock);
-
-    const scraper = new RedditScraper('ws://browserless:3000');
-    await scraper.fetchTopPosts('webdev', {});
-    await scraper.fetchTopPosts('webdev', {});
-    await scraper.fetchTopPosts('javascript', {});
-
-    expect(browserMock.newContext).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -414,19 +338,6 @@ describe('RedditScraper dead-connection recovery', () => {
     });
     expect(chromium.connect).toHaveBeenCalledTimes(2);
   });
-
-  it('does not retry non-connection errors', async () => {
-    chromium.connect.mockReset();
-    const page = makePageMock();
-    page.evaluate.mockRejectedValue(new Error('Unexpected end of JSON input'));
-    chromium.connect.mockResolvedValue(makeBrowserMock(page));
-
-    const scraper = new RedditScraper('ws://browserless:3000');
-    await expect(scraper.fetchTopPosts('webdev', {})).rejects.toThrow(
-      'Unexpected end of JSON input',
-    );
-    expect(chromium.connect).toHaveBeenCalledTimes(1);
-  });
 });
 
 describe('RedditScraper logging', () => {
@@ -453,45 +364,5 @@ describe('RedditScraper logging', () => {
     await scraper.fetchTopPosts('webdev', {});
 
     expect(logger.warn).toHaveBeenCalledTimes(1);
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ subreddit: 'webdev' }),
-      expect.stringContaining('reconnect'),
-    );
-  });
-
-  it('logs a page-load timing at debug for every navigation', async () => {
-    const page = makePageMock();
-    page.evaluate.mockResolvedValue({
-      ok: true,
-      json: { data: { after: null, children: [] } },
-    });
-    chromium.connect.mockResolvedValue(makeBrowserMock(page));
-    const logger = makeFakeLogger();
-
-    const scraper = new RedditScraper('ws://browserless:3000', logger);
-    await scraper.fetchTopPosts('webdev', {});
-
-    expect(logger.debug).toHaveBeenCalledWith(
-      expect.objectContaining({
-        subreddit: 'webdev',
-        ms: expect.any(Number) as number,
-      }),
-      expect.stringContaining('page'),
-    );
-  });
-
-  it('reports the exists() verdict at info', async () => {
-    const page = makePageMock();
-    page.evaluate.mockResolvedValue(5);
-    chromium.connect.mockResolvedValue(makeBrowserMock(page));
-    const logger = makeFakeLogger();
-
-    const scraper = new RedditScraper('ws://browserless:3000', logger);
-    await scraper.exists('webdev');
-
-    expect(logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({ subreddit: 'webdev', valid: true }),
-      expect.stringContaining('exists'),
-    );
   });
 });

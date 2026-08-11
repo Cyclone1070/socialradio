@@ -24,61 +24,62 @@ const ListingChildSchema = z.object({
 
 const ListingResponseSchema = z.object({
   data: z.object({
-    after: z.string().nullish(),
+    after: z.string().nullable(),
     children: z.array(ListingChildSchema),
   }),
 });
 
-// Recursive comment node for deeply nested replies
-interface InternalCommentNode {
-  kind: string;
-  data: {
-    id: string;
-    body: string;
-    author: string;
-    score: number;
-    parent_id: string;
-    created_utc: number;
-    replies?: { data: { children: InternalCommentNode[] } } | string;
-  };
-}
-
-const CommentChildSchema: z.ZodType<InternalCommentNode> = z.lazy(() =>
+const InternalCommentNodeSchema: z.ZodType<unknown> = z.lazy(() =>
   z.object({
     kind: z.string(),
     data: z.object({
-      id: z.string(),
-      body: z.string(),
-      author: z.string(),
-      score: z.number(),
-      parent_id: z.string(),
-      created_utc: z.number(),
+      id: z.string().optional(),
+      body: z.string().optional(),
+      author: z.string().optional(),
+      score: z.number().optional(),
+      parent_id: z.string().optional(),
+      created_utc: z.number().optional(),
       replies: z
-        .object({
-          data: z.object({
-            children: z.array(CommentChildSchema),
+        .union([
+          z.object({
+            data: z.object({
+              children: z.array(InternalCommentNodeSchema).optional(),
+            }),
           }),
-        })
-        .or(z.string())
+          z.string(),
+        ])
         .optional(),
     }),
   }),
 );
 
+type InternalCommentNode = {
+  kind: string;
+  data: {
+    id?: string;
+    body?: string;
+    author?: string;
+    score?: number;
+    parent_id?: string;
+    created_utc?: number;
+    replies?: { data: { children?: InternalCommentNode[] } } | string;
+  };
+};
+
 const CommentResponseSchema = z.object({
   data: z.object({
-    children: z.array(CommentChildSchema),
+    children: z.array(
+      InternalCommentNodeSchema as z.ZodType<InternalCommentNode>,
+    ),
   }),
 });
 
-// Context affinity: a subreddit keeps one browser context (its "identity":
-// fingerprint, cookies) for every request about that sub. Idle contexts are
-// closed after CONTEXT_IDLE_MS and evicted.
-const CONTEXT_IDLE_MS = 15 * 60 * 1000;
+// Cache eviction TTL: idle per-subreddit contexts closed after 10 minutes
+const CONTEXT_IDLE_MS = 10 * 60 * 1000;
 
 export class RedditScraper {
-  private readonly fingerprintGenerator = new FingerprintGenerator();
   private browser: Browser | null = null;
+  private readonly fingerprintGenerator = new FingerprintGenerator();
   private readonly contexts = new Map<string, BrowserContext>();
   private readonly lastUsedAt = new Map<string, number>();
 
@@ -192,7 +193,7 @@ export class RedditScraper {
     try {
       return await fn(page);
     } finally {
-      await page.close();
+      await page.close().catch(() => {});
     }
   }
 
@@ -242,11 +243,6 @@ export class RedditScraper {
         'page loaded',
       );
 
-      // The feed JSON is the source of truth — no shreddit-post selector
-      // wait (a leftover from the DOM-scraping era that cost 2.5–15s per
-      // request). A 404 = truly dead; 403/429/network blips get a bounded
-      // retry inside the page before we give up and report isInvalid.
-      // t=week is the 7-day scrape window; after=<cursor> walks the pool.
       const limit = opts.limit ?? 100;
       const feedUrl = `./.json?limit=${limit}&t=week${opts.after ? `&after=${opts.after}` : ''}`;
       const result = await this.evaluateSafely<{ ok: boolean; json?: unknown }>(
@@ -292,9 +288,6 @@ export class RedditScraper {
 
       return {
         posts: posts.slice(0, limit),
-        // A page with no viable posts is a stop signal — the walk would
-        // only meet more of the same. Collapse the cursor even if the
-        // listing says the pool continues.
         after: posts.length > 0 ? (listing.data.after ?? null) : null,
         isInvalid: false,
       };
@@ -304,23 +297,45 @@ export class RedditScraper {
   async exists(subredditName: string): Promise<boolean> {
     return this.withRetryOnDeadBrowser(subredditName, async (page) => {
       const url = `https://www.reddit.com/r/${subredditName}/`;
+      const startMs = Date.now();
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-      try {
-        // Wait for all dynamic fetches to settle
-        await page.waitForLoadState('networkidle', { timeout: 8000 });
-      } catch {
-        // Ignore networkidle timeouts to verify what loaded
-      }
-
-      const postCount = await page.evaluate(
-        () => document.querySelectorAll('shreddit-post').length,
+      this.logger.debug(
+        { subreddit: subredditName, ms: Date.now() - startMs },
+        'exists page loaded',
       );
+
+      const feedUrl = './.json?limit=1';
+      const valid = await this.evaluateSafely<boolean>(
+        page,
+        async (pageUrl: string): Promise<boolean> => {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              const res = await fetch(pageUrl);
+              if (res.ok) {
+                const json = (await res.json()) as {
+                  data?: { children?: unknown[] };
+                };
+                return (
+                  Array.isArray(json?.data?.children) &&
+                  json.data.children.length > 0
+                );
+              }
+              if (res.status === 404) return false;
+            } catch {
+              // retry on transient error
+            }
+            await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+          }
+          return false;
+        },
+        feedUrl,
+      ).catch(() => false);
+
       this.logger.info(
-        { subreddit: subredditName, valid: postCount > 0 },
+        { subreddit: subredditName, valid },
         'subreddit exists check',
       );
-      return postCount > 0;
+      return valid;
     });
   }
 
@@ -337,12 +352,7 @@ export class RedditScraper {
         'page loaded',
       );
 
-      // sort=top: highest-scored comments first; limit=250: enough comments
-      // to clear the 2500-word guard (measured sweet spot — 500 pulled a
-      // 1.2MB payload for zero extra yield); showmore=false: drops "more"
-      // placeholder nodes that break CommentChildSchema (undocumented param
-      // — tolerant schema is the fallback).
-      const commentsUrl = './.json?sort=top&limit=250&showmore=false';
+      const commentsUrl = './.json?sort=top&limit=500&showmore=false';
       const rawJson = await this.evaluateSafely<unknown>(
         page,
         async (commentsPageUrl: string): Promise<unknown> => {
