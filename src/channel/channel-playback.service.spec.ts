@@ -1,6 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { PinoLogger } from 'nestjs-pino';
 import { ChannelPlaybackService } from './channel-playback.service';
 import { ChunkerService } from './chunker.service';
 import { QueueGeneratorService } from './queue-generator.service';
@@ -15,10 +14,12 @@ describe('ChannelPlaybackService', () => {
   const mockChannelRepo = {
     findOneBy: jest.fn(),
     save: jest.fn(),
+    update: jest.fn(),
   };
 
   const mockSegmentRepo = {
     findOne: jest.fn(),
+    find: jest.fn(),
     count: jest.fn(),
     delete: jest.fn(),
   };
@@ -27,6 +28,7 @@ describe('ChannelPlaybackService', () => {
     getManifestUri: jest
       .fn()
       .mockImplementation((segmentId, idx) => `chunks/${segmentId}_${idx}.mp3`),
+    deleteSegmentChunks: jest.fn(),
   };
 
   const mockQueueGen = {
@@ -60,15 +62,18 @@ describe('ChannelPlaybackService', () => {
   });
 
   describe('getPlaylistManifest', () => {
-    it('should advance playhead and return manifest pointing to pre-chunked files', async () => {
+    it('calculates playhead offset statelessly using currentSegmentStartedAt and media sequence using createdAt', async () => {
       const channelId = 'chan-1';
-      const lastRequestedAt = new Date(Date.now() - 5000);
+      const createdAt = new Date('2026-08-12T10:00:00.000Z');
+      const now = new Date('2026-08-12T10:02:17.000Z'); // 137s after createdAt
+      const currentSegmentStartedAt = new Date('2026-08-12T10:02:00.000Z'); // 17s after startedAt
+
       const channel = Object.assign(new Channel(), {
         id: channelId,
         visibility: 'private',
         currentSegmentId: 'seg-1',
-        playheadOffsetSeconds: 12,
-        lastRequestedAt,
+        currentSegmentStartedAt,
+        createdAt,
       });
 
       const segment = Object.assign(new SongSegment(), {
@@ -80,116 +85,33 @@ describe('ChannelPlaybackService', () => {
       mockChannelRepo.findOneBy.mockResolvedValue(channel);
       mockSegmentRepo.findOne.mockResolvedValue(segment);
       mockSegmentRepo.count.mockResolvedValue(5);
-      mockChannelRepo.save.mockResolvedValue(channel);
 
-      const manifest = await service.getPlaylistManifest(channelId);
+      const manifest = await service.getPlaylistManifest(channelId, now);
 
-      expect(channel.playheadOffsetSeconds).toBeCloseTo(17, 1);
+      // media sequence = Math.floor(137 / 10) = 13
       expect(manifest).toContain('#EXTM3U');
       expect(manifest).toContain('#EXT-X-TARGETDURATION:10');
-      expect(manifest).toContain('#EXT-X-MEDIA-SEQUENCE:2');
+      expect(manifest).toContain('#EXT-X-MEDIA-SEQUENCE:13');
+      // offset 17s -> chunk_1 with start offset 7.0s
       expect(manifest).toContain('#EXT-X-START:TIME=7.0');
       expect(manifest).toContain('#EXTINF:10.0,\nchunks/seg-1_1.mp3');
+      // Active intra-segment polling does NOT call update/save
+      expect(mockChannelRepo.save).not.toHaveBeenCalled();
+      expect(mockChannelRepo.update).not.toHaveBeenCalled();
     });
 
-    it('should trigger fastForwardChannel (and wrap segment) if idle time is greater than 120s', async () => {
+    it('inserts #EXT-X-DISCONTINUITY and appends next segment chunk at segment boundaries', async () => {
       const channelId = 'chan-1';
-      // 200 seconds ago (idle)
-      const lastRequestedAt = new Date(Date.now() - 200000);
+      const createdAt = new Date('2026-08-12T10:00:00.000Z');
+      const now = new Date('2026-08-12T10:02:58.000Z'); // 178s after startedAt (2s remaining in seg-1)
+      const currentSegmentStartedAt = new Date('2026-08-12T10:00:00.000Z');
+
       const channel = Object.assign(new Channel(), {
         id: channelId,
         visibility: 'private',
         currentSegmentId: 'seg-1',
-        playheadOffsetSeconds: 12,
-        lastRequestedAt,
-      });
-
-      const segment = Object.assign(new SongSegment(), {
-        id: 'seg-1',
-        durationSeconds: 180,
-        playOrder: 1,
-      });
-
-      mockChannelRepo.findOneBy.mockResolvedValue(channel);
-      mockSegmentRepo.findOne.mockResolvedValue(segment);
-      mockSegmentRepo.count.mockResolvedValue(5);
-      mockChannelRepo.save.mockResolvedValue(channel);
-
-      // Mock random to 0.5. Wrap duration = floor(0.5 * 11) + 10 = 15 seconds.
-      // Expected playhead offset = 180 - 15 = 165 seconds.
-      mathRandomSpy.mockReturnValue(0.5);
-
-      await service.getPlaylistManifest(channelId);
-
-      expect(channel.playheadOffsetSeconds).toBe(165);
-    });
-
-    it('should NOT trigger fastForwardChannel (and advance playhead naturally) if idle time is less than 120s', async () => {
-      const channelId = 'chan-1';
-      // 60 seconds ago (< 120s)
-      const lastRequestedAt = new Date(Date.now() - 60000);
-      const channel = Object.assign(new Channel(), {
-        id: channelId,
-        visibility: 'private',
-        currentSegmentId: 'seg-1',
-        playheadOffsetSeconds: 12,
-        lastRequestedAt,
-      });
-
-      const segment = Object.assign(new SongSegment(), {
-        id: 'seg-1',
-        durationSeconds: 180,
-        playOrder: 1,
-      });
-
-      mockChannelRepo.findOneBy.mockResolvedValue(channel);
-      mockSegmentRepo.findOne.mockResolvedValue(segment);
-      mockSegmentRepo.count.mockResolvedValue(5);
-      mockChannelRepo.save.mockResolvedValue(channel);
-
-      await service.getPlaylistManifest(channelId);
-
-      // 12s offset + 60s elapsed = 72s offset
-      expect(channel.playheadOffsetSeconds).toBeCloseTo(72, 1);
-    });
-
-    it('should trigger bufferAhead in background if remaining count in queue is low (< 3)', async () => {
-      const channelId = 'chan-1';
-      const lastRequestedAt = new Date(Date.now() - 5000);
-      const channel = Object.assign(new Channel(), {
-        id: channelId,
-        visibility: 'private',
-        currentSegmentId: 'seg-1',
-        playheadOffsetSeconds: 12,
-        lastRequestedAt,
-      });
-
-      const segment = Object.assign(new SongSegment(), {
-        id: 'seg-1',
-        durationSeconds: 180,
-        playOrder: 1,
-      });
-
-      mockChannelRepo.findOneBy.mockResolvedValue(channel);
-      mockSegmentRepo.findOne.mockResolvedValue(segment);
-      mockSegmentRepo.count.mockResolvedValue(2); // low remaining count
-      mockChannelRepo.save.mockResolvedValue(channel);
-      mockQueueGen.bufferAhead.mockResolvedValue(undefined);
-
-      await service.getPlaylistManifest(channelId);
-
-      expect(mockQueueGen.bufferAhead).toHaveBeenCalledWith(channelId);
-    });
-
-    it('should prune consumed segments behind the new playhead when advancing past the current segment', async () => {
-      const channelId = 'chan-1';
-      const lastRequestedAt = new Date(Date.now() - 5000); // 5s elapsed
-      const channel = Object.assign(new Channel(), {
-        id: channelId,
-        visibility: 'private',
-        currentSegmentId: 'seg-1',
-        playheadOffsetSeconds: 178, // only 2s left in segment (duration 180)
-        lastRequestedAt,
+        currentSegmentStartedAt,
+        createdAt,
       });
 
       const segment1 = Object.assign(new SongSegment(), {
@@ -206,239 +128,110 @@ describe('ChannelPlaybackService', () => {
 
       mockChannelRepo.findOneBy.mockResolvedValue(channel);
       mockSegmentRepo.findOne
-        .mockResolvedValueOnce(segment1) // currentSegmentId fetch
-        .mockResolvedValueOnce(segment2); // next segment playOrder + 1 fetch
+        .mockResolvedValueOnce(segment1)
+        .mockResolvedValueOnce(segment2);
       mockSegmentRepo.count.mockResolvedValue(5);
-      mockChannelRepo.save.mockResolvedValue(channel);
 
-      const manifest = await service.getPlaylistManifest(channelId);
+      const manifest = await service.getPlaylistManifest(channelId, now);
 
-      expect(channel.currentSegmentId).toBe('seg-2');
-      // Consumed segment (playOrder 1) is strictly behind the new playhead
-      expect(mockSegmentRepo.delete).toHaveBeenCalledWith({
-        channelId,
-        playOrder: LessThan(2),
-      });
+      expect(manifest).toContain('chunks/seg-1_17.mp3');
+      expect(manifest).toContain('#EXT-X-DISCONTINUITY');
       expect(manifest).toContain('chunks/seg-2_0.mp3');
     });
 
-    it('should delete all consumed rows when advancing past the end of the queue', async () => {
+    it('prunes segments older than 100 positions behind current playhead and deletes CDN chunks from MinIO S3', async () => {
       const channelId = 'chan-1';
-      const lastRequestedAt = new Date(Date.now() - 5000); // 5s elapsed
+      const now = new Date('2026-08-12T10:05:00.000Z');
+      const currentSegmentStartedAt = new Date('2026-08-12T10:02:00.000Z');
+
       const channel = Object.assign(new Channel(), {
         id: channelId,
-        visibility: 'private',
-        currentSegmentId: 'seg-1',
-        playheadOffsetSeconds: 178, // only 2s left in segment (duration 180)
-        lastRequestedAt,
+        currentSegmentId: 'seg-105',
+        currentSegmentStartedAt,
+        createdAt: new Date('2026-08-12T08:00:00.000Z'),
       });
 
-      const segment1 = Object.assign(new SongSegment(), {
+      const activeSegment = Object.assign(new SongSegment(), {
+        id: 'seg-105',
+        durationSeconds: 180,
+        playOrder: 105,
+      });
+
+      const expiredSegment1 = Object.assign(new SongSegment(), {
         id: 'seg-1',
         durationSeconds: 180,
         playOrder: 1,
       });
-
-      mockChannelRepo.findOneBy.mockResolvedValue(channel);
-      mockSegmentRepo.findOne
-        .mockResolvedValueOnce(segment1) // currentSegmentId fetch
-        .mockResolvedValueOnce(null) // no next segment (end of queue)
-        .mockResolvedValueOnce(null); // refetch after bufferAhead finds nothing
-      mockChannelRepo.save.mockResolvedValue(channel);
-      mockQueueGen.bufferAhead.mockResolvedValue(undefined);
-
-      // Everything in the queue was consumed — no segment remains to serve
-      await expect(service.getPlaylistManifest(channelId)).rejects.toThrow(
-        'No segments available',
-      );
-      expect(mockSegmentRepo.delete).toHaveBeenCalledWith({ channelId });
-    });
-  });
-
-  describe('playback logs', () => {
-    it('logs WHY bufferAhead was triggered (low runway) at info', async () => {
-      const channelId = 'chan-1';
-      const channel = Object.assign(new Channel(), {
-        id: channelId,
-        visibility: 'private',
-        currentSegmentId: 'seg-1',
-        playheadOffsetSeconds: 12,
-        lastRequestedAt: new Date(Date.now() - 5000),
-      });
-      const segment = Object.assign(new SongSegment(), {
-        id: 'seg-1',
-        durationSeconds: 180,
-        playOrder: 1,
-      });
-      mockChannelRepo.findOneBy.mockResolvedValue(channel);
-      mockSegmentRepo.findOne.mockResolvedValue(segment);
-      mockSegmentRepo.count.mockResolvedValue(2); // low remaining count
-      mockChannelRepo.save.mockResolvedValue(channel);
-      mockQueueGen.bufferAhead.mockResolvedValue(undefined);
-
-      const infoSpy = jest
-        .spyOn(PinoLogger.prototype, 'info')
-        .mockImplementation(() => {});
-
-      await service.getPlaylistManifest(channelId);
-
-      expect(infoSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ channelId, reason: 'low-runway' }),
-        expect.stringContaining('bufferAhead'),
-      );
-    });
-
-    it('logs the channelId when no segments can be served', async () => {
-      const channelId = 'chan-1';
-      const channel = Object.assign(new Channel(), {
-        id: channelId,
-        visibility: 'private',
-        currentSegmentId: 'seg-1',
-        playheadOffsetSeconds: 178,
-        lastRequestedAt: new Date(Date.now() - 5000),
-      });
-      const segment1 = Object.assign(new SongSegment(), {
-        id: 'seg-1',
-        durationSeconds: 180,
-        playOrder: 1,
-      });
-      mockChannelRepo.findOneBy.mockResolvedValue(channel);
-      mockSegmentRepo.findOne
-        .mockResolvedValueOnce(segment1) // currentSegmentId fetch
-        .mockResolvedValueOnce(null) // no next segment (end of queue)
-        .mockResolvedValueOnce(null); // refetch after bufferAhead finds nothing
-      mockChannelRepo.save.mockResolvedValue(channel);
-      mockQueueGen.bufferAhead.mockResolvedValue(undefined);
-
-      const errorSpy = jest
-        .spyOn(PinoLogger.prototype, 'error')
-        .mockImplementation(() => {});
-
-      await expect(service.getPlaylistManifest(channelId)).rejects.toThrow(
-        'No segments available',
-      );
-
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ channelId }),
-        expect.stringContaining('No segments'),
-      );
-    });
-  });
-
-  describe('fastForwardChannel', () => {
-    it('should NOT advance playhead if idleTime is less than remaining segment duration', async () => {
-      const channelId = 'chan-123';
-      const channel = Object.assign(new Channel(), {
-        id: channelId,
-        currentSegmentId: 'seg-1',
-        playheadOffsetSeconds: 10,
-      });
-
-      const segment = Object.assign(new SongSegment(), {
-        id: 'seg-1',
-        durationSeconds: 180,
-      });
-
-      mockChannelRepo.findOneBy.mockResolvedValue(channel);
-      mockSegmentRepo.findOne.mockResolvedValue(segment);
-
-      await service.fastForwardChannel(channelId, 100);
-
-      expect(channel.playheadOffsetSeconds).toBe(10);
-      expect(mockChannelRepo.save).toHaveBeenCalledWith(channel);
-    });
-
-    it('should jump to a randomized wrap duration between 10s and 20s if Math.random is mocked', async () => {
-      const channelId = 'chan-123';
-      const channel = Object.assign(new Channel(), {
-        id: channelId,
-        currentSegmentId: 'seg-1',
-        playheadOffsetSeconds: 10,
-      });
-
-      const segment = Object.assign(new SongSegment(), {
-        id: 'seg-1',
-        durationSeconds: 180,
-      });
-
-      mockChannelRepo.findOneBy.mockResolvedValue(channel);
-      mockSegmentRepo.findOne.mockResolvedValue(segment);
-
-      // Mock random to 0.5. Wrap duration = floor(0.5 * 11) + 10 = 5 + 10 = 15 seconds.
-      // Expected playhead offset = 180 - 15 = 165 seconds.
-      mathRandomSpy.mockReturnValue(0.5);
-
-      await service.fastForwardChannel(channelId, 200);
-
-      expect(channel.playheadOffsetSeconds).toBe(165); // This will FAIL under current 10s logic! (Should be 170)
-      expect(mockChannelRepo.save).toHaveBeenCalledWith(channel);
-    });
-
-    it('should skip the segment entirely and transition to the next segment if duration is 20 seconds or shorter', async () => {
-      const channelId = 'chan-123';
-      const channel = Object.assign(new Channel(), {
-        id: channelId,
-        currentSegmentId: 'seg-1',
-        playheadOffsetSeconds: 1,
-      });
-
-      const segment1 = Object.assign(new SongSegment(), {
-        id: 'seg-1',
-        playOrder: 1,
-        durationSeconds: 18, // <= 20s
-      });
-
-      const segment2 = Object.assign(new SongSegment(), {
+      const expiredSegment2 = Object.assign(new SongSegment(), {
         id: 'seg-2',
-        playOrder: 2,
         durationSeconds: 180,
+        playOrder: 2,
       });
 
       mockChannelRepo.findOneBy.mockResolvedValue(channel);
-      mockSegmentRepo.findOne
-        .mockResolvedValueOnce(segment1) // currentSegmentId fetch
-        .mockResolvedValueOnce(segment2); // next segment playOrder + 1 fetch
+      mockSegmentRepo.findOne.mockResolvedValue(activeSegment);
+      mockSegmentRepo.find.mockResolvedValue([
+        expiredSegment1,
+        expiredSegment2,
+      ]);
 
-      await service.fastForwardChannel(channelId, 30); // 30s idle > 17s remaining
+      await service.getPlaylistManifest(channelId, now);
 
-      expect(channel.currentSegmentId).toBe('seg-2');
-      expect(channel.playheadOffsetSeconds).toBe(0);
-      expect(mockChannelRepo.save).toHaveBeenCalledWith(channel);
-    });
-
-    it('should prune consumed rows when fast-forward skips past a short segment', async () => {
-      const channelId = 'chan-123';
-      const channel = Object.assign(new Channel(), {
-        id: channelId,
-        currentSegmentId: 'seg-1',
-        playheadOffsetSeconds: 1,
+      expect(mockSegmentRepo.find).toHaveBeenCalledWith({
+        where: {
+          channelId,
+          playOrder: LessThan(5), // 105 - 100 = 5
+        },
       });
-
-      const segment1 = Object.assign(new SongSegment(), {
-        id: 'seg-1',
-        playOrder: 1,
-        durationSeconds: 18, // <= 20s
-      });
-
-      const segment2 = Object.assign(new SongSegment(), {
-        id: 'seg-2',
-        playOrder: 2,
-        durationSeconds: 180,
-      });
-
-      mockChannelRepo.findOneBy.mockResolvedValue(channel);
-      mockSegmentRepo.findOne
-        .mockResolvedValueOnce(segment1) // currentSegmentId fetch
-        .mockResolvedValueOnce(segment2); // next segment playOrder + 1 fetch
-
-      await service.fastForwardChannel(channelId, 30);
-
-      expect(channel.currentSegmentId).toBe('seg-2');
-      // Skipped segment (playOrder 1) is consumed
+      expect(mockChunker.deleteSegmentChunks).toHaveBeenCalledWith(
+        channelId,
+        'seg-1',
+        180,
+      );
+      expect(mockChunker.deleteSegmentChunks).toHaveBeenCalledWith(
+        channelId,
+        'seg-2',
+        180,
+      );
       expect(mockSegmentRepo.delete).toHaveBeenCalledWith({
         channelId,
-        playOrder: LessThan(2),
+        playOrder: LessThan(5),
       });
+    });
+
+    it('triggers fastForwardChannel stinger when overdue time exceeds 120s', async () => {
+      const channelId = 'chan-1';
+      const now = new Date('2026-08-12T10:10:00.000Z'); // 600s after startedAt (duration = 180s, overdue = 420s > 120s)
+      const currentSegmentStartedAt = new Date('2026-08-12T10:00:00.000Z');
+
+      const channel = Object.assign(new Channel(), {
+        id: channelId,
+        currentSegmentId: 'seg-1',
+        currentSegmentStartedAt,
+        createdAt: new Date('2026-08-12T08:00:00.000Z'),
+      });
+
+      const segment = Object.assign(new SongSegment(), {
+        id: 'seg-1',
+        durationSeconds: 180,
+        playOrder: 1,
+      });
+
+      mockChannelRepo.findOneBy.mockResolvedValue(channel);
+      mockSegmentRepo.findOne.mockResolvedValue(segment);
+      mockSegmentRepo.count.mockResolvedValue(5);
+      mathRandomSpy.mockReturnValue(0.5); // wrap duration = 15s
+
+      await service.getPlaylistManifest(channelId, now);
+
+      // startedAt updated via optimistic update to now - (180s - 15s) = now - 165s
+      expect(mockChannelRepo.update).toHaveBeenCalledWith(
+        { id: channelId, currentSegmentStartedAt },
+        {
+          currentSegmentId: 'seg-1',
+          currentSegmentStartedAt: new Date(now.getTime() - 165000),
+        },
+      );
     });
   });
 });

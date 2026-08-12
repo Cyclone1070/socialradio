@@ -42,4 +42,16 @@ export class ChunkerService {
 
     return index;
   }
+
+  async deleteSegmentChunks(
+    channelId: string,
+    segmentId: string,
+    durationSeconds: number,
+  ): Promise<void> {
+    const totalChunks = Math.ceil(durationSeconds / 10);
+    for (let idx = 0; idx < totalChunks; idx++) {
+      const key = this.getStorageKey(channelId, segmentId, idx);
+      await this.storageService.delete(key).catch(() => {});
+    }
+  }
 }

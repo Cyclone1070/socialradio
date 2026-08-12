@@ -15,7 +15,7 @@ export class CreateSchema1785419900925 implements MigrationInterface {
     }
 
     await queryRunner.query(
-      `CREATE TABLE "channel" ("id" uuid NOT NULL DEFAULT uuid_generate_v4(), "name" character varying NOT NULL, "visibility" character varying NOT NULL DEFAULT 'public', "ownerId" character varying, "currentSegmentId" character varying, "lastRequestedAt" TIMESTAMP, "playheadOffsetSeconds" double precision NOT NULL DEFAULT '0', "createdAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_590f33ee6ee7d76437acf362e39" PRIMARY KEY ("id"))`,
+      `CREATE TABLE "channel" ("id" uuid NOT NULL DEFAULT uuid_generate_v4(), "name" character varying NOT NULL, "visibility" character varying NOT NULL DEFAULT 'public', "ownerId" character varying, "currentSegmentId" character varying, "currentSegmentStartedAt" TIMESTAMP, "lastRequestedAt" TIMESTAMP, "playheadOffsetSeconds" double precision NOT NULL DEFAULT '0', "createdAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_590f33ee6ee7d76437acf362e39" PRIMARY KEY ("id"))`,
     );
     await queryRunner.query(
       `CREATE TABLE "subreddit" ("id" uuid NOT NULL DEFAULT uuid_generate_v4(), "name" character varying NOT NULL, "lastScrapedAt" TIMESTAMP WITH TIME ZONE, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "UQ_0a931051f61817575785c8cba68" UNIQUE ("name"), CONSTRAINT "PK_d6f6b72e517b607c8ab94204290" PRIMARY KEY ("id"))`,

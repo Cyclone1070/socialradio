@@ -23,6 +23,9 @@ export class Channel {
   currentSegmentId: string | null;
 
   @Column({ type: 'timestamp', nullable: true })
+  currentSegmentStartedAt: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
   lastRequestedAt: Date | null;
 
   @Column('float', { default: 0 })

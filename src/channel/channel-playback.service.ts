@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThan, LessThan } from 'typeorm';
+import { Repository, MoreThan, LessThan, IsNull } from 'typeorm';
 import { Channel } from './entities/channel.entity';
 import { Segment } from './entities/segment.entity';
 import { ChunkerService } from './chunker.service';
@@ -20,32 +20,28 @@ export class ChannelPlaybackService {
     private readonly queueGen: QueueGeneratorService,
   ) {}
 
-  async getPlaylistManifest(channelId: string): Promise<string> {
+  async getPlaylistManifest(
+    channelId: string,
+    now: Date = new Date(),
+  ): Promise<string> {
     const channel = await this.channelRepo.findOneBy({ id: channelId });
     if (!channel) {
       throw new Error('Channel not found');
     }
 
-    const now = new Date();
-
-    // 1. If this is a resume/wake-up request (idle >= 120s):
-    if (channel.lastRequestedAt) {
-      const idleTimeSeconds =
-        (now.getTime() - channel.lastRequestedAt.getTime()) / 1000;
-      if (idleTimeSeconds >= 120) {
-        await this.fastForwardChannel(channel.id, idleTimeSeconds);
-      } else {
-        // Active poll: advance playhead by the elapsed duration since last request
-        channel.playheadOffsetSeconds += idleTimeSeconds;
-      }
-    } else {
-      // First request ever: initialize lastRequestedAt and playheadOffsetSeconds
-      channel.playheadOffsetSeconds = 0;
+    // Initialize currentSegmentStartedAt if null (first request ever or unanchored)
+    if (!channel.currentSegmentStartedAt) {
+      const initialStartedAt = new Date(
+        now.getTime() - (channel.playheadOffsetSeconds || 0) * 1000,
+      );
+      await this.channelRepo.update(
+        { id: channelId, currentSegmentStartedAt: IsNull() },
+        { currentSegmentStartedAt: initialStartedAt },
+      );
+      channel.currentSegmentStartedAt = initialStartedAt;
     }
 
-    channel.lastRequestedAt = now;
-
-    // 2. Fetch current segment or fallback to first segment
+    // 1. Fetch active segment or fallback to first segment
     let segment: Segment | null = null;
     if (channel.currentSegmentId) {
       segment = await this.segmentRepo.findOne({
@@ -59,12 +55,19 @@ export class ChannelPlaybackService {
         order: { playOrder: 'ASC' },
       });
       if (segment) {
+        await this.channelRepo.update(
+          { id: channelId, currentSegmentId: IsNull() },
+          {
+            currentSegmentId: segment.id,
+            currentSegmentStartedAt: now,
+          },
+        );
         channel.currentSegmentId = segment.id;
-        channel.playheadOffsetSeconds = 0;
+        channel.currentSegmentStartedAt = now;
       }
     }
 
-    // If there is still no segment, buffer ahead and fetch again
+    // If still no segment, buffer ahead and try again
     if (!segment) {
       this.logger.info(
         { channelId, reason: 'empty-queue' },
@@ -76,38 +79,87 @@ export class ChannelPlaybackService {
         order: { playOrder: 'ASC' },
       });
       if (segment) {
+        await this.channelRepo.update(
+          { id: channelId, currentSegmentId: IsNull() },
+          {
+            currentSegmentId: segment.id,
+            currentSegmentStartedAt: now,
+          },
+        );
         channel.currentSegmentId = segment.id;
         channel.playheadOffsetSeconds = 0;
+        channel.currentSegmentStartedAt = now;
       }
     }
 
-    // 3. Advance to the next segment if we've played past the current one
+    if (!segment || !segment.durationSeconds) {
+      this.logger.error({ channelId }, 'No segments available');
+      throw new Error('No segments available');
+    }
+
+    let elapsed =
+      (now.getTime() - channel.currentSegmentStartedAt.getTime()) / 1000;
+    const overdue = elapsed - segment.durationSeconds;
+
+    // 2. Idle Detection: overdue > 120s
+    if (overdue > 120) {
+      const expectedOld = channel.currentSegmentStartedAt;
+      await this.fastForwardChannel(channelId, now);
+      // Refetch updated channel state
+      const updatedChannel = await this.channelRepo.findOneBy({
+        id: channelId,
+      });
+      if (updatedChannel) {
+        channel.currentSegmentId = updatedChannel.currentSegmentId;
+        channel.currentSegmentStartedAt =
+          updatedChannel.currentSegmentStartedAt ?? expectedOld;
+      }
+      if (channel.currentSegmentId) {
+        segment = await this.segmentRepo.findOne({
+          where: { id: channel.currentSegmentId },
+        });
+      }
+      if (segment && channel.currentSegmentStartedAt) {
+        elapsed =
+          (now.getTime() - channel.currentSegmentStartedAt.getTime()) / 1000;
+      }
+    }
+
+    // 3. Multi-Segment Advancement via while loop
     if (
       segment &&
       segment.durationSeconds &&
-      channel.playheadOffsetSeconds >= segment.durationSeconds
+      elapsed >= segment.durationSeconds
     ) {
+      const expectedOldStartedAt = channel.currentSegmentStartedAt;
+      let currentStartedAt = channel.currentSegmentStartedAt;
+
       while (
         segment &&
         segment.durationSeconds &&
-        channel.playheadOffsetSeconds >= segment.durationSeconds
+        elapsed >= segment.durationSeconds
       ) {
-        channel.playheadOffsetSeconds -= segment.durationSeconds;
+        elapsed -= segment.durationSeconds;
+        currentStartedAt = new Date(
+          currentStartedAt.getTime() + segment.durationSeconds * 1000,
+        );
+
         const next = await this.segmentRepo.findOne({
           where: { channelId, playOrder: segment.playOrder + 1 },
         });
+
         if (next) {
           channel.currentSegmentId = next.id;
           segment = next;
         } else {
-          // End of queue reached: clear current segment and trigger bufferAhead
+          // Queue exhausted
           channel.currentSegmentId = null;
           segment = null;
           break;
         }
       }
 
-      // If we ran out of segments, buffer ahead in the background and try to fetch
+      // If exhausted, trigger bufferAhead
       if (!segment) {
         this.logger.info(
           { channelId, reason: 'empty-queue' },
@@ -120,14 +172,25 @@ export class ChannelPlaybackService {
         });
         if (segment) {
           channel.currentSegmentId = segment.id;
+          currentStartedAt = now;
         }
       }
 
-      // Prune consumed segments relative to the new playhead
-      await this.pruneConsumed(channelId, segment?.playOrder ?? null);
-    }
+      // Optimistic conditional update on boundary transition
+      if (segment) {
+        await this.channelRepo.update(
+          { id: channelId, currentSegmentStartedAt: expectedOldStartedAt },
+          {
+            currentSegmentId: segment.id,
+            currentSegmentStartedAt: currentStartedAt,
+          },
+        );
+        channel.currentSegmentStartedAt = currentStartedAt;
 
-    await this.channelRepo.save(channel);
+        // Prune segments >100 positions behind current playhead
+        await this.pruneConsumed(channelId, segment.playOrder);
+      }
+    }
 
     if (!segment || !segment.durationSeconds) {
       this.logger.error({ channelId }, 'No segments available');
@@ -146,60 +209,107 @@ export class ChannelPlaybackService {
       this.queueGen.bufferAhead(channelId).catch(() => {});
     }
 
-    // 5. Build HLS sliding-window manifest pointing to pre-chunked chunk files
+    // 5. Build HLS sliding-window manifest with stateless monotonic sequence & cross-segment transition (#EXT-X-DISCONTINUITY)
+    const createdAt = channel.createdAt ?? new Date('2026-01-01T00:00:00Z');
+    const totalElapsedFromEpoch = (now.getTime() - createdAt.getTime()) / 1000;
+    const mediaSequence = Math.max(0, Math.floor(totalElapsedFromEpoch / 10));
+
     const totalChunks = Math.ceil(segment.durationSeconds / 10);
     const currentChunkIndex = Math.min(
-      Math.floor(channel.playheadOffsetSeconds / 10),
+      Math.floor(elapsed / 10),
       totalChunks - 1,
     );
 
-    const mediaSequence = currentChunkIndex + 1; // standard positive sequence index
     const manifestLines = [
       '#EXTM3U',
       '#EXT-X-VERSION:3',
       '#EXT-X-TARGETDURATION:10',
       `#EXT-X-MEDIA-SEQUENCE:${mediaSequence}`,
-      `#EXT-X-START:TIME=${(channel.playheadOffsetSeconds % 10).toFixed(1)}`,
+      `#EXT-X-START:TIME=${(elapsed % 10).toFixed(1)}`,
     ];
 
-    // Show up to 3 chunks starting from currentChunkIndex (or fewer if segment is ending)
     const chunkWindowSize = 3;
+    let chunksAdded = 0;
+
     for (let i = 0; i < chunkWindowSize; i++) {
       const idx = currentChunkIndex + i;
-      if (idx >= totalChunks) break;
+      if (idx < totalChunks) {
+        const isLastChunk = idx === totalChunks - 1;
+        const chunkDuration = isLastChunk
+          ? segment.durationSeconds - idx * 10
+          : 10;
 
-      const isLastChunk = idx === totalChunks - 1;
-      const chunkDuration = isLastChunk
-        ? segment.durationSeconds - idx * 10
-        : 10;
+        manifestLines.push(`#EXTINF:${chunkDuration.toFixed(1)},`);
+        manifestLines.push(this.chunker.getManifestUri(segment.id, idx));
+        chunksAdded++;
+      }
+    }
 
-      manifestLines.push(`#EXTINF:${chunkDuration.toFixed(1)},`);
-      manifestLines.push(this.chunker.getManifestUri(segment.id, idx));
+    // Cross-Segment Window Transition: Append next segment chunks if window space remains
+    if (chunksAdded < chunkWindowSize) {
+      const nextSegment = await this.segmentRepo.findOne({
+        where: { channelId, playOrder: segment.playOrder + 1 },
+      });
+
+      if (nextSegment && nextSegment.durationSeconds) {
+        manifestLines.push('#EXT-X-DISCONTINUITY');
+        const remainingNeeded = chunkWindowSize - chunksAdded;
+        const nextTotalChunks = Math.ceil(nextSegment.durationSeconds / 10);
+
+        for (let j = 0; j < remainingNeeded; j++) {
+          if (j >= nextTotalChunks) break;
+          const isLastChunk = j === nextTotalChunks - 1;
+          const chunkDuration = isLastChunk
+            ? nextSegment.durationSeconds - j * 10
+            : 10;
+
+          manifestLines.push(`#EXTINF:${chunkDuration.toFixed(1)},`);
+          manifestLines.push(this.chunker.getManifestUri(nextSegment.id, j));
+        }
+      }
     }
 
     return manifestLines.join('\n') + '\n';
   }
 
   /**
-   * Delete consumed segments relative to the current playhead.
-   * Rows strictly behind the current playOrder are consumed; when no
-   * current segment exists (end of queue), every row is consumed.
+   * Retain the last 100 played segments per channel.
+   * Consumed segments older than (currentPlayOrder - 100) are purged
+   * from PostgreSQL and their 10s MP3 chunks are deleted from MinIO S3.
    */
   private async pruneConsumed(
     channelId: string,
-    currentPlayOrder: number | null,
+    currentPlayOrder: number,
   ): Promise<void> {
-    if (currentPlayOrder === null) {
-      await this.segmentRepo.delete({ channelId });
-    } else {
-      await this.segmentRepo.delete({
+    const cutoffPlayOrder = currentPlayOrder - 100;
+    if (cutoffPlayOrder <= 0) return;
+
+    // 1. Fetch expired segments to delete CDN chunks from MinIO S3
+    const expiredSegments = await this.segmentRepo.find({
+      where: {
         channelId,
-        playOrder: LessThan(currentPlayOrder),
-      });
+        playOrder: LessThan(cutoffPlayOrder),
+      },
+    });
+
+    for (const seg of expiredSegments) {
+      if (seg.durationSeconds) {
+        await this.chunker.deleteSegmentChunks(
+          channelId,
+          seg.id,
+          seg.durationSeconds,
+        );
+      }
     }
+
+    // 2. Delete expired segment rows from DB
+    await this.segmentRepo.delete({
+      channelId,
+      playOrder: LessThan(cutoffPlayOrder),
+    });
   }
 
-  async fastForwardChannel(channelId: string, seconds: number): Promise<void> {
+  async fastForwardChannel(channelId: string, now: Date): Promise<void> {
     const channel = await this.channelRepo.findOneBy({ id: channelId });
     if (!channel || !channel.currentSegmentId) return;
 
@@ -208,27 +318,36 @@ export class ChannelPlaybackService {
     });
     if (!segment || !segment.durationSeconds) return;
 
-    const remainingInSegment =
-      segment.durationSeconds - channel.playheadOffsetSeconds;
-    if (seconds < remainingInSegment) {
-      // Idle time is short: resume exactly where they left off (offset unchanged)
+    const expectedOldStartedAt = channel.currentSegmentStartedAt ?? IsNull();
+
+    if (segment.durationSeconds > 20) {
+      const wrapDuration = Math.floor(Math.random() * 11) + 10; // 10 to 20s
+      const newStartedAt = new Date(
+        now.getTime() - (segment.durationSeconds - wrapDuration) * 1000,
+      );
+
+      await this.channelRepo.update(
+        { id: channelId, currentSegmentStartedAt: expectedOldStartedAt },
+        {
+          currentSegmentId: segment.id,
+          currentSegmentStartedAt: newStartedAt,
+        },
+      );
     } else {
-      // Idle time is long: skip to a randomized wrap-up duration between 10s and 20s
-      if (segment.durationSeconds > 20) {
-        const wrapDuration = Math.floor(Math.random() * 11) + 10; // 10 to 20 seconds inclusive
-        channel.playheadOffsetSeconds = segment.durationSeconds - wrapDuration;
-      } else {
-        // Short segment: skip entirely and transition to the next segment
-        const next = await this.segmentRepo.findOne({
-          where: { channelId, playOrder: segment.playOrder + 1 },
-        });
-        channel.currentSegmentId = next?.id ?? null;
-        channel.playheadOffsetSeconds = 0;
-        // Skipped segment is consumed; prune relative to the new playhead
-        await this.pruneConsumed(channelId, next?.playOrder ?? null);
+      const next = await this.segmentRepo.findOne({
+        where: { channelId, playOrder: segment.playOrder + 1 },
+      });
+
+      if (next) {
+        await this.channelRepo.update(
+          { id: channelId, currentSegmentStartedAt: expectedOldStartedAt },
+          {
+            currentSegmentId: next.id,
+            currentSegmentStartedAt: now,
+          },
+        );
+        await this.pruneConsumed(channelId, next.playOrder);
       }
     }
-
-    await this.channelRepo.save(channel);
   }
 }
