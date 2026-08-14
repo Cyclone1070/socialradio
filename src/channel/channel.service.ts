@@ -7,11 +7,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Channel } from './entities/channel.entity';
 import { ChannelSubreddit } from './entities/channel-subreddit.entity';
-import { Subreddit } from '../domain/entities/subreddit.entity';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { ChannelResponseDto } from './dto/channel-response.dto';
-import { ScraperService } from '../feed/scraper.service';
-import { createServiceLogger } from '../logging/logging.module';
+import { ContentContract } from '../domain/contracts';
+import { createServiceLogger } from '../infrastructure/logging/logging.module';
 
 @Injectable()
 export class ChannelService {
@@ -22,9 +21,7 @@ export class ChannelService {
     private readonly channelRepo: Repository<Channel>,
     @InjectRepository(ChannelSubreddit)
     private readonly channelSubredditRepo: Repository<ChannelSubreddit>,
-    @InjectRepository(Subreddit)
-    private readonly subredditRepo: Repository<Subreddit>,
-    private readonly scraperService: ScraperService,
+    private readonly contentContract: ContentContract,
   ) {}
 
   async configureChannel(
@@ -57,21 +54,22 @@ export class ChannelService {
     }
 
     const normalizedName = subredditName.trim().toLowerCase();
-    let subreddit = await this.subredditRepo.findOneBy({
-      name: normalizedName,
-    });
+    let subreddit =
+      await this.contentContract.getSubredditByName(normalizedName);
+
     if (!subreddit) {
-      const isValid =
-        await this.scraperService.validateSubreddit(normalizedName);
-      if (!isValid) {
-        this.logger.warn(
-          { channelId, subreddit: normalizedName },
-          'subreddit rejected',
+      this.logger.info(
+        { channelId, subreddit: normalizedName },
+        'subscribing to un-scraped subreddit, triggering initial scrape',
+      );
+      await this.contentContract.scrapeSubreddit(normalizedName);
+      subreddit = await this.contentContract.getSubredditByName(normalizedName);
+
+      if (!subreddit) {
+        throw new NotFoundException(
+          `Subreddit "${normalizedName}" could not be scraped or found.`,
         );
-        throw new BadRequestException('Subreddit does not exist or is private');
       }
-      subreddit = this.subredditRepo.create({ name: normalizedName });
-      subreddit = await this.subredditRepo.save(subreddit);
     }
 
     const existing = await this.channelSubredditRepo.findOneBy({
@@ -79,68 +77,55 @@ export class ChannelService {
       subredditId: subreddit.id,
     });
     if (existing) {
-      return;
+      throw new BadRequestException(
+        `Channel is already subscribed to r/${normalizedName}`,
+      );
     }
 
-    const subscription = this.channelSubredditRepo.create({
+    const sub = this.channelSubredditRepo.create({
       channelId,
       subredditId: subreddit.id,
     });
-    await this.channelSubredditRepo.save(subscription);
-
-    this.logger.info(
-      { channelId, subreddit: normalizedName },
-      'subreddit subscribed',
-    );
-  }
-
-  async getChannelSubreddits(
-    channelId: string,
-  ): Promise<{ id: string; name: string }[]> {
-    const channel = await this.channelRepo.findOneBy({ id: channelId });
-    if (!channel) {
-      throw new NotFoundException('Channel not found');
-    }
-
-    const subscriptions = await this.channelSubredditRepo.find({
-      where: { channelId },
-      relations: { subreddit: true },
-    });
-
-    return subscriptions.map((s) => ({
-      id: s.subreddit.id,
-      name: s.subreddit.name,
-    }));
+    await this.channelSubredditRepo.save(sub);
   }
 
   async unsubscribeFromSubreddit(
     channelId: string,
     subredditName: string,
   ): Promise<void> {
-    const channel = await this.channelRepo.findOneBy({ id: channelId });
-    if (!channel) {
-      throw new NotFoundException('Channel not found');
-    }
-
     const normalizedName = subredditName.trim().toLowerCase();
-    const subreddit = await this.subredditRepo.findOneBy({
-      name: normalizedName,
-    });
+    const subreddit =
+      await this.contentContract.getSubredditByName(normalizedName);
     if (!subreddit) {
-      throw new NotFoundException('Subreddit not found');
+      throw new NotFoundException(`Subreddit r/${normalizedName} not found`);
     }
 
-    await this.channelSubredditRepo.delete({
+    const sub = await this.channelSubredditRepo.findOneBy({
       channelId,
       subredditId: subreddit.id,
     });
+    if (!sub) {
+      throw new NotFoundException(
+        `Channel is not subscribed to r/${normalizedName}`,
+      );
+    }
+
+    await this.channelSubredditRepo.remove(sub);
   }
 
-  async getUserChannels(userId: string): Promise<ChannelResponseDto[]> {
-    const channels = await this.channelRepo.find({
-      where: [{ ownerId: userId }, { visibility: 'public' }],
+  async getSubscribedSubreddits(channelId: string): Promise<string[]> {
+    const subs = await this.channelSubredditRepo.find({
+      where: { channelId },
     });
+    if (subs.length === 0) return [];
+    const subreddits = await this.contentContract.getSubredditsByIds(
+      subs.map((s) => s.subredditId),
+    );
+    return subreddits.map((s) => s.name);
+  }
 
+  async getUserChannels(ownerId: string): Promise<ChannelResponseDto[]> {
+    const channels = await this.channelRepo.find({ where: { ownerId } });
     return channels.map((c) => ({
       id: c.id,
       name: c.name,
@@ -148,5 +133,19 @@ export class ChannelService {
       ownerId: c.ownerId,
       createdAt: c.createdAt,
     }));
+  }
+
+  async getChannel(id: string): Promise<ChannelResponseDto> {
+    const channel = await this.channelRepo.findOneBy({ id });
+    if (!channel) {
+      throw new NotFoundException('Channel not found');
+    }
+    return {
+      id: channel.id,
+      name: channel.name,
+      visibility: channel.visibility,
+      ownerId: channel.ownerId,
+      createdAt: channel.createdAt,
+    };
   }
 }

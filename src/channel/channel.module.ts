@@ -12,16 +12,13 @@ import {
 } from './entities/segment.entity';
 import { ChannelService } from './channel.service';
 import { ChannelPlaybackService } from './channel-playback.service';
-import { QueueGeneratorService } from './queue-generator.service';
+import { ChannelQueryService } from './channel-query.service';
 import { ChunkerService } from './chunker.service';
 import { ChannelController } from './channel.controller';
-import { AdminChannelController } from './admin-channel.controller';
-import { DomainModule } from '../domain/domain.module';
-import { RadioModule } from '../radio/radio.module';
-import { MediaModule } from '../media/media.module';
+import { UserModule } from '../user/user.module';
 import { PassportModule } from '@nestjs/passport';
-import { FeedModule } from '../feed/feed.module';
-import { StorageModule } from '../storage/storage.module';
+import { StorageModule } from '../infrastructure/storage/storage.module';
+import { ChannelContract } from '../domain/contracts';
 
 @Module({
   imports: [
@@ -35,23 +32,26 @@ import { StorageModule } from '../storage/storage.module';
       AdSegment,
       JingleSegment,
     ]),
-    DomainModule,
-    RadioModule,
-    MediaModule,
+    UserModule,
     PassportModule,
-    FeedModule,
     StorageModule,
   ],
-  controllers: [ChannelController, AdminChannelController],
+  controllers: [ChannelController],
   providers: [
     ChannelService,
     ChannelPlaybackService,
-    QueueGeneratorService,
+    ChannelQueryService,
     ChunkerService,
+    {
+      provide: ChannelContract,
+      useClass: ChannelQueryService,
+    },
   ],
   exports: [
     ChannelService,
     ChannelPlaybackService,
+    ChannelQueryService,
+    ChannelContract,
     ChunkerService,
     TypeOrmModule,
   ],

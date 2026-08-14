@@ -9,7 +9,6 @@ import {
   Index,
 } from 'typeorm';
 import { Channel } from './channel.entity';
-import { Subreddit } from '../../domain/entities/subreddit.entity';
 
 @Entity()
 @Unique(['channelId', 'subredditId'])
@@ -27,10 +26,6 @@ export class ChannelSubreddit {
 
   @Column()
   subredditId: string;
-
-  @ManyToOne(() => Subreddit, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'subredditId' })
-  subreddit: Subreddit;
 
   @CreateDateColumn()
   createdAt: Date;

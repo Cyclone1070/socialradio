@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ChannelPlaybackService } from './channel-playback.service';
 import { ChunkerService } from './chunker.service';
-import { QueueGeneratorService } from './queue-generator.service';
+import { SegmentContract } from '../domain/contracts';
 import { Channel } from './entities/channel.entity';
 import { Segment, SongSegment } from './entities/segment.entity';
 import { LessThan } from 'typeorm';
@@ -31,7 +31,7 @@ describe('ChannelPlaybackService', () => {
     deleteSegmentChunks: jest.fn(),
   };
 
-  const mockQueueGen = {
+  const mockSegmentGenerator = {
     bufferAhead: jest.fn(),
   };
 
@@ -42,7 +42,7 @@ describe('ChannelPlaybackService', () => {
         { provide: getRepositoryToken(Channel), useValue: mockChannelRepo },
         { provide: getRepositoryToken(Segment), useValue: mockSegmentRepo },
         { provide: ChunkerService, useValue: mockChunker },
-        { provide: QueueGeneratorService, useValue: mockQueueGen },
+        { provide: SegmentContract, useValue: mockSegmentGenerator },
       ],
     }).compile();
 

@@ -2,7 +2,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ValidationPipe } from '@nestjs/common';
 import { ChannelController } from './channel.controller';
-import { StorageService } from '../storage/storage.service';
+import { StorageService } from '../infrastructure/storage/storage.service';
 import { ChannelService } from './channel.service';
 import { ChannelPlaybackService } from './channel-playback.service';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
@@ -17,7 +17,7 @@ describe('ChannelController', () => {
     configureChannel: jest.fn(),
     subscribeToSubreddit: jest.fn(),
     unsubscribeFromSubreddit: jest.fn(),
-    getChannelSubreddits: jest.fn(),
+    getSubscribedSubreddits: jest.fn(),
   };
 
   const mockPlaybackService = {
@@ -128,12 +128,12 @@ describe('ChannelController', () => {
 
   describe('getChannelSubreddits', () => {
     it('should return the channel subreddits from the service', async () => {
-      const subreddits = [{ id: 'sub-1', name: 'askreddit' }];
-      mockChannelService.getChannelSubreddits.mockResolvedValue(subreddits);
+      const subreddits = ['askreddit'];
+      mockChannelService.getSubscribedSubreddits.mockResolvedValue(subreddits);
 
       const result = await controller.getChannelSubreddits('chan-1');
 
-      expect(mockChannelService.getChannelSubreddits).toHaveBeenCalledWith(
+      expect(mockChannelService.getSubscribedSubreddits).toHaveBeenCalledWith(
         'chan-1',
       );
       expect(result).toEqual(subreddits);

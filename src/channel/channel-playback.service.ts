@@ -4,8 +4,8 @@ import { Repository, MoreThan, LessThan, IsNull } from 'typeorm';
 import { Channel } from './entities/channel.entity';
 import { Segment } from './entities/segment.entity';
 import { ChunkerService } from './chunker.service';
-import { QueueGeneratorService } from './queue-generator.service';
-import { createServiceLogger } from '../logging/logging.module';
+import { SegmentContract } from '../domain/contracts';
+import { createServiceLogger } from '../infrastructure/logging/logging.module';
 
 @Injectable()
 export class ChannelPlaybackService {
@@ -17,7 +17,7 @@ export class ChannelPlaybackService {
     @InjectRepository(Segment)
     private readonly segmentRepo: Repository<Segment>,
     private readonly chunker: ChunkerService,
-    private readonly queueGen: QueueGeneratorService,
+    private readonly segmentContract: SegmentContract,
   ) {}
 
   async getPlaylistManifest(
@@ -73,7 +73,7 @@ export class ChannelPlaybackService {
         { channelId, reason: 'empty-queue' },
         'bufferAhead triggered',
       );
-      await this.queueGen.bufferAhead(channelId);
+      await this.segmentContract.bufferAhead(channelId);
       segment = await this.segmentRepo.findOne({
         where: { channelId },
         order: { playOrder: 'ASC' },
@@ -165,7 +165,7 @@ export class ChannelPlaybackService {
           { channelId, reason: 'empty-queue' },
           'bufferAhead triggered',
         );
-        await this.queueGen.bufferAhead(channelId);
+        await this.segmentContract.bufferAhead(channelId);
         segment = await this.segmentRepo.findOne({
           where: { channelId },
           order: { playOrder: 'ASC' },
@@ -206,7 +206,7 @@ export class ChannelPlaybackService {
         { channelId, reason: 'low-runway' },
         'bufferAhead triggered',
       );
-      this.queueGen.bufferAhead(channelId).catch(() => {});
+      this.segmentContract.bufferAhead(channelId).catch(() => {});
     }
 
     // 5. Build HLS sliding-window manifest with stateless monotonic sequence & cross-segment transition (#EXT-X-DISCONTINUITY)

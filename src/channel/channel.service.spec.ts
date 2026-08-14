@@ -1,12 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { PinoLogger } from 'nestjs-pino';
 import { ChannelService } from './channel.service';
 import { Channel } from './entities/channel.entity';
 import { ChannelSubreddit } from './entities/channel-subreddit.entity';
-import { Subreddit } from '../domain/entities/subreddit.entity';
-import { ScraperService } from '../feed/scraper.service';
+import { ContentContract } from '../domain/contracts';
 
 describe('ChannelService', () => {
   let service: ChannelService;
@@ -21,19 +19,15 @@ describe('ChannelService', () => {
   const mockChannelSubredditRepo = {
     create: jest.fn(),
     save: jest.fn(),
-    delete: jest.fn(),
+    remove: jest.fn(),
     findOneBy: jest.fn(),
     find: jest.fn(),
   };
 
-  const mockSubredditRepo = {
-    findOneBy: jest.fn(),
-    create: jest.fn(),
-    save: jest.fn(),
-  };
-
-  const mockScraperService = {
-    validateSubreddit: jest.fn(),
+  const mockContentContract = {
+    getSubredditByName: jest.fn(),
+    getSubredditsByIds: jest.fn(),
+    scrapeSubreddit: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -45,8 +39,7 @@ describe('ChannelService', () => {
           provide: getRepositoryToken(ChannelSubreddit),
           useValue: mockChannelSubredditRepo,
         },
-        { provide: getRepositoryToken(Subreddit), useValue: mockSubredditRepo },
-        { provide: ScraperService, useValue: mockScraperService },
+        { provide: ContentContract, useValue: mockContentContract },
       ],
     }).compile();
 
@@ -111,10 +104,8 @@ describe('ChannelService', () => {
       const subreddit = { id: 'sub-1', name: normalizedName };
 
       mockChannelRepo.findOneBy.mockResolvedValue({ id: channelId });
-      mockSubredditRepo.findOneBy.mockResolvedValue(null);
-      mockScraperService.validateSubreddit.mockResolvedValue(true);
-      mockSubredditRepo.create.mockReturnValue(subreddit);
-      mockSubredditRepo.save.mockResolvedValue(subreddit);
+      mockContentContract.getSubredditByName.mockResolvedValue(subreddit);
+      mockChannelSubredditRepo.findOneBy.mockResolvedValue(null);
 
       const subscription = { channelId, subredditId: subreddit.id };
       mockChannelSubredditRepo.create.mockReturnValue(subscription);
@@ -122,10 +113,7 @@ describe('ChannelService', () => {
 
       await service.subscribeToSubreddit(channelId, subInputName);
 
-      expect(mockSubredditRepo.findOneBy).toHaveBeenCalledWith({
-        name: normalizedName,
-      });
-      expect(mockScraperService.validateSubreddit).toHaveBeenCalledWith(
+      expect(mockContentContract.getSubredditByName).toHaveBeenCalledWith(
         normalizedName,
       );
       expect(mockChannelSubredditRepo.create).toHaveBeenCalledWith({
@@ -135,177 +123,67 @@ describe('ChannelService', () => {
       expect(mockChannelSubredditRepo.save).toHaveBeenCalled();
     });
 
-    it('logs the subscription at info', async () => {
-      const channelId = 'chan-1';
-      const subName = 'pics';
-      mockChannelRepo.findOneBy.mockResolvedValue({ id: channelId });
-      mockSubredditRepo.findOneBy.mockResolvedValue(null);
-      mockScraperService.validateSubreddit.mockResolvedValue(true);
-      const subreddit = { id: 'sub-2', name: subName };
-      mockSubredditRepo.create.mockReturnValue(subreddit);
-      mockSubredditRepo.save.mockResolvedValue(subreddit);
-      const subscription = { channelId, subredditId: subreddit.id };
-      mockChannelSubredditRepo.create.mockReturnValue(subscription);
-      mockChannelSubredditRepo.save.mockResolvedValue(subscription);
-
-      const infoSpy = jest
-        .spyOn(PinoLogger.prototype, 'info')
-        .mockImplementation(() => {});
-
-      await service.subscribeToSubreddit(channelId, subName);
-
-      expect(infoSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ channelId, subreddit: subName }),
-        expect.stringContaining('subscribed'),
-      );
-    });
-
-    it('warns when a subreddit is rejected (does not exist / private)', async () => {
-      const channelId = 'chan-1';
-      mockChannelRepo.findOneBy.mockResolvedValue({ id: channelId });
-      mockSubredditRepo.findOneBy.mockResolvedValue(null);
-      mockScraperService.validateSubreddit.mockResolvedValue(false);
-
-      const warnSpy = jest
-        .spyOn(PinoLogger.prototype, 'warn')
-        .mockImplementation(() => {});
-
-      await expect(
-        service.subscribeToSubreddit(channelId, 'private_sub'),
-      ).rejects.toThrow(BadRequestException);
-
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ channelId, subreddit: 'private_sub' }),
-        expect.stringContaining('rejected'),
-      );
-    });
-
-    it('should skip API validation if Subreddit already exists in database', async () => {
-      const channelId = 'chan-1';
-      const subName = 'pics';
-      const subreddit = { id: 'sub-2', name: subName };
-
-      mockChannelRepo.findOneBy.mockResolvedValue({ id: channelId });
-      mockSubredditRepo.findOneBy.mockResolvedValue(subreddit);
-
-      const subscription = { channelId, subredditId: subreddit.id };
-      mockChannelSubredditRepo.create.mockReturnValue(subscription);
-      mockChannelSubredditRepo.save.mockResolvedValue(subscription);
-
-      await service.subscribeToSubreddit(channelId, subName);
-
-      expect(mockSubredditRepo.findOneBy).toHaveBeenCalledWith({
-        name: subName,
-      });
-      expect(mockScraperService.validateSubreddit).not.toHaveBeenCalled();
-      expect(mockChannelSubredditRepo.create).toHaveBeenCalledWith({
-        channelId,
-        subredditId: 'sub-2',
-      });
-    });
-
-    it('should be idempotent if already subscribed to the subreddit', async () => {
+    it('should throw BadRequestException if channel is already subscribed', async () => {
       const channelId = 'chan-1';
       const subName = 'askreddit';
       const subreddit = { id: 'sub-1', name: subName };
       const existingSub = { id: 'sub-chan-1', channelId, subredditId: 'sub-1' };
 
       mockChannelRepo.findOneBy.mockResolvedValue({ id: channelId });
-      mockSubredditRepo.findOneBy.mockResolvedValue(subreddit);
+      mockContentContract.getSubredditByName.mockResolvedValue(subreddit);
       mockChannelSubredditRepo.findOneBy.mockResolvedValue(existingSub);
-
-      await service.subscribeToSubreddit(channelId, subName);
-
-      expect(mockChannelSubredditRepo.create).not.toHaveBeenCalled();
-      expect(mockChannelSubredditRepo.save).not.toHaveBeenCalled();
-    });
-
-    it('should throw BadRequestException if Subreddit validation returns false', async () => {
-      const channelId = 'chan-1';
-      const subName = 'nonexistent';
-
-      mockChannelRepo.findOneBy.mockResolvedValue({ id: channelId });
-      mockSubredditRepo.findOneBy.mockResolvedValue(null);
-      mockScraperService.validateSubreddit.mockResolvedValue(false);
 
       await expect(
         service.subscribeToSubreddit(channelId, subName),
       ).rejects.toThrow(BadRequestException);
-
-      expect(mockSubredditRepo.save).not.toHaveBeenCalled();
     });
   });
 
-  describe('getChannelSubreddits', () => {
+  describe('getSubscribedSubreddits', () => {
     it('should return the subreddits a channel is subscribed to', async () => {
       const channelId = 'chan-1';
-      mockChannelRepo.findOneBy.mockResolvedValue({ id: channelId });
       mockChannelSubredditRepo.find.mockResolvedValue([
         {
           id: 'sub-chan-1',
           channelId,
           subredditId: 'sub-1',
-          subreddit: { id: 'sub-1', name: 'askreddit' },
         },
       ]);
+      mockContentContract.getSubredditsByIds.mockResolvedValue([
+        { id: 'sub-1', name: 'askreddit' },
+      ]);
 
-      const result = await service.getChannelSubreddits(channelId);
+      const result = await service.getSubscribedSubreddits(channelId);
 
       expect(mockChannelSubredditRepo.find).toHaveBeenCalledWith({
         where: { channelId },
-        relations: { subreddit: true },
       });
-      expect(result).toEqual([{ id: 'sub-1', name: 'askreddit' }]);
-    });
-
-    it('should throw NotFoundException if channel does not exist', async () => {
-      mockChannelRepo.findOneBy.mockResolvedValue(null);
-
-      await expect(
-        service.getChannelSubreddits('nonexistent-chan'),
-      ).rejects.toThrow(NotFoundException);
-
-      expect(mockChannelSubredditRepo.find).not.toHaveBeenCalled();
+      expect(result).toEqual(['askreddit']);
     });
   });
 
   describe('unsubscribeFromSubreddit', () => {
-    it('should throw NotFoundException if channel does not exist', async () => {
-      mockChannelRepo.findOneBy.mockResolvedValue(null);
-
-      await expect(
-        service.unsubscribeFromSubreddit('nonexistent-chan', 'pics'),
-      ).rejects.toThrow(NotFoundException);
-
-      expect(mockChannelRepo.findOneBy).toHaveBeenCalledWith({
-        id: 'nonexistent-chan',
-      });
-    });
-
     it('should normalize subreddit name, find it and delete subscription', async () => {
       const channelId = 'chan-1';
       const subNameInput = '  AskReddit  ';
       const normalizedName = 'askreddit';
       const subreddit = { id: 'sub-1', name: normalizedName };
+      const existingSub = { id: 'sub-chan-1', channelId, subredditId: 'sub-1' };
 
-      mockChannelRepo.findOneBy.mockResolvedValue({ id: channelId });
-      mockSubredditRepo.findOneBy.mockResolvedValue(subreddit);
-      mockChannelSubredditRepo.delete.mockResolvedValue({ affected: 1 });
+      mockContentContract.getSubredditByName.mockResolvedValue(subreddit);
+      mockChannelSubredditRepo.findOneBy.mockResolvedValue(existingSub);
+      mockChannelSubredditRepo.remove.mockResolvedValue(existingSub);
 
       await service.unsubscribeFromSubreddit(channelId, subNameInput);
 
-      expect(mockSubredditRepo.findOneBy).toHaveBeenCalledWith({
-        name: normalizedName,
-      });
-      expect(mockChannelSubredditRepo.delete).toHaveBeenCalledWith({
-        channelId,
-        subredditId: 'sub-1',
-      });
+      expect(mockContentContract.getSubredditByName).toHaveBeenCalledWith(
+        normalizedName,
+      );
+      expect(mockChannelSubredditRepo.remove).toHaveBeenCalledWith(existingSub);
     });
 
     it('should throw NotFoundException if subreddit is not registered', async () => {
-      mockChannelRepo.findOneBy.mockResolvedValue({ id: 'chan-1' });
-      mockSubredditRepo.findOneBy.mockResolvedValue(null);
+      mockContentContract.getSubredditByName.mockResolvedValue(null);
 
       await expect(
         service.unsubscribeFromSubreddit('chan-1', 'unknown'),

@@ -1,17 +1,18 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { LoggingModule } from './logging/logging.module';
-import { DomainModule } from './domain/domain.module';
+import { LoggingModule } from './infrastructure/logging/logging.module';
+
 import { UserModule } from './user/user.module';
-import { AuthModule } from './auth/auth.module';
 import { MediaModule } from './media/media.module';
-import { FeedModule } from './feed/feed.module';
-import { RadioModule } from './radio/radio.module';
+import { ContentModule } from './content/content.module';
+import { ScriptModule } from './script/script.module';
+import { VoiceModule } from './voice/voice.module';
+import { SegmentModule } from './segment/segment.module';
 import { ChannelModule } from './channel/channel.module';
-import { HealthcheckModule } from './healthcheck/healthcheck.module';
-import { CreateSchema1785419900925 } from './database/migrations/1785419900925-CreateSchema';
-import { AddScrapeStatusColumns1790000000000 } from './database/migrations/1790000000000-AddScrapeStatusColumns';
+import { HealthcheckModule } from './infrastructure/healthcheck/healthcheck.module';
+import { CreateSchema1785419900925 } from './infrastructure/database/migrations/1785419900925-CreateSchema';
+import { AddScrapeStatusColumns1790000000000 } from './infrastructure/database/migrations/1790000000000-AddScrapeStatusColumns';
 
 @Module({
   imports: [
@@ -40,12 +41,13 @@ import { AddScrapeStatusColumns1790000000000 } from './database/migrations/17900
       },
       inject: [ConfigService],
     }),
-    DomainModule,
+
     UserModule,
-    AuthModule,
     MediaModule,
-    FeedModule,
-    RadioModule,
+    ContentModule,
+    ScriptModule,
+    VoiceModule,
+    SegmentModule,
     ChannelModule,
     HealthcheckModule,
   ],

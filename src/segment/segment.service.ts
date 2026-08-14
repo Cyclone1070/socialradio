@@ -1,0 +1,279 @@
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import {
+  Segment,
+  SongSegment,
+  TalkSegment,
+  AdSegment,
+  JingleSegment,
+} from './entities/segment.entity';
+import { MediaService } from '../media/media.service';
+import { clusterPosts } from './utils/topic-clustering.util';
+import { Topic } from './interfaces/topic.interface';
+import { createServiceLogger } from '../infrastructure/logging/logging.module';
+import {
+  SegmentContract,
+  ContentContract,
+  ChannelContract,
+  ScriptContract,
+  VoiceContract,
+} from '../domain/contracts';
+import { PostData } from '../domain/types/post.types';
+import { ScriptData } from '../domain/types/script.types';
+import { TalkData } from '../domain/types/audio.types';
+import { randomUUID } from 'crypto';
+
+const SCRAPE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7-day scrape window
+
+@Injectable()
+export class SegmentService implements SegmentContract {
+  private readonly logger = createServiceLogger(SegmentService.name);
+
+  constructor(
+    @InjectRepository(Segment)
+    private readonly segmentRepo: Repository<Segment>,
+    private readonly mediaService: MediaService,
+    private readonly contentContract: ContentContract,
+    private readonly channelContract: ChannelContract,
+    private readonly scriptContract: ScriptContract,
+    private readonly voiceContract: VoiceContract,
+  ) {}
+
+  async bufferAhead(channelId: string): Promise<void> {
+    const lastItem = await this.segmentRepo.findOne({
+      where: { channelId },
+      order: { playOrder: 'DESC' },
+    });
+    let nextPlayOrder = lastItem ? lastItem.playOrder + 1 : 1;
+
+    const talkCount = this.getRandomCount();
+    for (let i = 0; i < talkCount; i++) {
+      const next = await this.appendTalk(channelId, nextPlayOrder);
+      nextPlayOrder =
+        next ?? (await this.appendFiller(channelId, nextPlayOrder));
+    }
+
+    const songCount = this.getRandomCount();
+    for (let i = 0; i < songCount; i++) {
+      nextPlayOrder = await this.appendSong(channelId, nextPlayOrder);
+    }
+
+    const adCount = this.getRandomCount();
+    for (let i = 0; i < adCount; i++) {
+      nextPlayOrder = await this.appendAd(channelId, nextPlayOrder);
+    }
+
+    await this.appendJingle(channelId, nextPlayOrder++);
+  }
+
+  public getRandomCount(): number {
+    return Math.random() < 0.5 ? 1 : 2;
+  }
+
+  private async appendTalk(
+    channelId: string,
+    playOrder: number,
+  ): Promise<number | null> {
+    const topicSegment = await this.findPendingTopicSegment(channelId);
+    if (topicSegment) {
+      const talkItem = Object.assign(new TalkSegment(), {
+        channelId,
+        playOrder,
+        status: 'generating',
+        topicId: topicSegment.id,
+      });
+      const savedTalkItem = await this.segmentRepo.save(talkItem);
+
+      for (const p of topicSegment.posts) {
+        await this.channelContract.markPostCompletedForChannel(channelId, p.id);
+      }
+
+      this.generateTalkVoiceTrack(topicSegment.posts)
+        .then(async (voiceTrack: TalkData) => {
+          savedTalkItem.audioUrl = voiceTrack.filePath;
+          savedTalkItem.durationSeconds = voiceTrack.durationSeconds;
+          savedTalkItem.status = 'ready';
+          await this.segmentRepo.save(savedTalkItem);
+
+          await this.channelContract.sliceAndUploadChunk(
+            channelId,
+            savedTalkItem.id,
+            voiceTrack.filePath,
+          );
+        })
+        .catch(async (err) => {
+          savedTalkItem.status = 'failed';
+          await this.segmentRepo.save(savedTalkItem);
+          this.logger.error(
+            {
+              channelId,
+              segmentId: savedTalkItem.id,
+              err: err instanceof Error ? err : new Error(String(err)),
+            },
+            'voice generation failed',
+          );
+        });
+      return playOrder + 1;
+    }
+    return null;
+  }
+
+  private async generateTalkVoiceTrack(posts: PostData[]): Promise<TalkData> {
+    const comments = await this.contentContract.getCommentsByPostIds(
+      posts.map((p) => p.id),
+    );
+    const rawScript = await this.scriptContract.generateScript(posts, comments);
+
+    const filePath = `topic-audios/talk-${randomUUID()}.mp3`;
+    const scriptObj: ScriptData =
+      typeof rawScript === 'string'
+        ? {
+            postId: posts[0].id,
+            turns: [{ speaker: 'Host', text: rawScript }],
+          }
+        : rawScript;
+
+    const talkRef = await this.voiceContract.synthesizeScript(
+      scriptObj,
+      filePath,
+    );
+    return talkRef;
+  }
+
+  private async appendFiller(
+    channelId: string,
+    playOrder: number,
+  ): Promise<number> {
+    return this.appendAd(channelId, playOrder);
+  }
+
+  private async appendSong(
+    channelId: string,
+    playOrder: number,
+  ): Promise<number> {
+    const song = await this.mediaService.getRandomMusic();
+    const songItem = Object.assign(new SongSegment(), {
+      channelId,
+      playOrder,
+      audioUrl: song.filePath,
+      durationSeconds: song.durationSeconds,
+      title: song.title,
+      artist: song.artist,
+    });
+    const savedSong = await this.segmentRepo.save(songItem);
+    await this.channelContract.sliceAndUploadChunk(
+      channelId,
+      savedSong.id,
+      song.filePath,
+    );
+    return playOrder + 1;
+  }
+
+  private async appendAd(
+    channelId: string,
+    playOrder: number,
+  ): Promise<number> {
+    const ad = await this.mediaService.getRandomAd();
+    const adItem = Object.assign(new AdSegment(), {
+      channelId,
+      playOrder,
+      audioUrl: ad.filePath,
+      durationSeconds: ad.durationSeconds,
+    });
+    const savedAd = await this.segmentRepo.save(adItem);
+    await this.channelContract.sliceAndUploadChunk(
+      channelId,
+      savedAd.id,
+      ad.filePath,
+    );
+    return playOrder + 1;
+  }
+
+  private async appendJingle(
+    channelId: string,
+    playOrder: number,
+  ): Promise<number> {
+    const jingle = await this.mediaService.getRandomJingle();
+    const jingleItem = Object.assign(new JingleSegment(), {
+      channelId,
+      playOrder,
+      audioUrl: jingle.filePath,
+      durationSeconds: jingle.durationSeconds,
+    });
+    const savedJingle = await this.segmentRepo.save(jingleItem);
+    await this.channelContract.sliceAndUploadChunk(
+      channelId,
+      savedJingle.id,
+      jingle.filePath,
+    );
+    return playOrder + 1;
+  }
+
+  public async findPendingTopicSegment(
+    channelId: string,
+  ): Promise<Topic | null> {
+    const subIds =
+      await this.channelContract.getSubredditIdsForChannel(channelId);
+    if (subIds.length === 0) return null;
+
+    const completedPostIds =
+      await this.channelContract.getCompletedPostIdsForChannel(channelId);
+
+    const subs = await this.contentContract.getSubredditsByIds(subIds);
+    const allPosts = await this.contentContract.getPostsBySubredditIds(subIds);
+
+    const subsToScrape: string[] = [];
+    const ttlMs = SCRAPE_WINDOW_MS;
+
+    for (const sub of subs) {
+      const isStale =
+        !sub.lastScrapedAt || Date.now() - sub.lastScrapedAt.getTime() > ttlMs;
+
+      const postsInSub = allPosts.filter((p) => p.subredditId === sub.id);
+      const unplayedInSub = postsInSub.filter(
+        (p) => !completedPostIds.includes(p.id),
+      );
+      const isExhausted = unplayedInSub.length === 0;
+
+      const decision = isStale ? 'stale' : isExhausted ? 'exhausted' : 'fresh';
+      this.logger.debug(
+        {
+          channelId,
+          sub: sub.name,
+          decision,
+          staleAgeMs: sub.lastScrapedAt
+            ? Date.now() - sub.lastScrapedAt.getTime()
+            : null,
+          unplayed: unplayedInSub.length,
+        },
+        'scrape decision',
+      );
+
+      if (isStale || isExhausted) {
+        subsToScrape.push(sub.name);
+      }
+    }
+
+    if (subsToScrape.length > 0) {
+      this.logger.info(
+        { channelId, subsToScrape },
+        'background scrape chain started',
+      );
+      const runSequentialScrapes = async (): Promise<void> => {
+        for (const name of subsToScrape) {
+          await this.contentContract.scrapeSubreddit(name).catch(() => {});
+        }
+      };
+      void runSequentialScrapes();
+    }
+
+    const unplayedPosts = allPosts.filter(
+      (p) => !completedPostIds.includes(p.id),
+    );
+    if (unplayedPosts.length === 0) return null;
+
+    const segments = clusterPosts(unplayedPosts);
+    return segments[0] || null;
+  }
+}

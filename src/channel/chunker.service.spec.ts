@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ChunkerService } from './chunker.service';
-import { StorageService } from '../storage/storage.service';
+import { StorageService } from '../infrastructure/storage/storage.service';
 
 describe('ChunkerService', () => {
   let service: ChunkerService;

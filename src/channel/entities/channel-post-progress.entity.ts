@@ -9,7 +9,6 @@ import {
   Index,
 } from 'typeorm';
 import { Channel } from './channel.entity';
-import { Post } from '../../feed/entities/post.entity';
 
 @Entity()
 @Unique(['channelId', 'postId'])
@@ -27,10 +26,6 @@ export class ChannelPostProgress {
 
   @Column()
   postId: string;
-
-  @ManyToOne(() => Post, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'postId' })
-  post: Post;
 
   @CreateDateColumn()
   createdAt: Date;

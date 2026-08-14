@@ -16,7 +16,7 @@ import { ChannelPlaybackService } from './channel-playback.service';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { SubscribeSubredditDto } from './dto/subscribe-subreddit.dto';
 import { ChannelResponseDto } from './dto/channel-response.dto';
-import { StorageService } from '../storage/storage.service';
+import { StorageService } from '../infrastructure/storage/storage.service';
 
 @Controller('channels')
 export class ChannelController {
@@ -31,7 +31,7 @@ export class ChannelController {
   async getUserChannels(
     @Req() req: express.Request & { user: { id: string } },
   ): Promise<ChannelResponseDto[]> {
-    return this.channelService.getUserChannels(req.user.id);
+    return await this.channelService.getUserChannels(req.user.id);
   }
 
   @Post()
@@ -40,7 +40,7 @@ export class ChannelController {
     @Body() dto: ConfigureChannelDto,
     @Req() req: express.Request & { user: { id: string } },
   ): Promise<ChannelResponseDto> {
-    return this.channelService.configureChannel(dto, req.user.id);
+    return await this.channelService.configureChannel(dto, req.user.id);
   }
 
   @Post(':id/subreddits')
@@ -54,10 +54,8 @@ export class ChannelController {
 
   @Get(':id/subreddits')
   @UseGuards(AuthGuard('jwt'))
-  async getChannelSubreddits(
-    @Param('id') id: string,
-  ): Promise<{ id: string; name: string }[]> {
-    return this.channelService.getChannelSubreddits(id);
+  async getChannelSubreddits(@Param('id') id: string): Promise<string[]> {
+    return await this.channelService.getSubscribedSubreddits(id);
   }
 
   @Delete(':id/subreddits/:subName')

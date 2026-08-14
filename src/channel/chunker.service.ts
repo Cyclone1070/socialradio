@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { StorageService } from '../storage/storage.service';
+import { StorageService } from '../infrastructure/storage/storage.service';
 
 @Injectable()
 export class ChunkerService {
