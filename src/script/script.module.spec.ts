@@ -1,12 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { ScriptModule } from './script.module';
 import { ScriptContract } from '../domain/contracts';
 import { ScriptService } from './script.service';
-import { DeepSeekLlmService } from './deepseek-llm.service';
-import { LlmService } from './llm-service';
+import { LlmService } from './llm.service';
 import { TopicScript } from './entities/topic-script.entity';
 
 describe('ScriptModule Integration', () => {
@@ -15,16 +13,8 @@ describe('ScriptModule Integration', () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        LlmService,
         ScriptService,
-        DeepSeekLlmService,
-        {
-          provide: LlmService,
-          useExisting: DeepSeekLlmService,
-        },
-        {
-          provide: HttpService,
-          useValue: { post: jest.fn() },
-        },
         {
           provide: ConfigService,
           useValue: { get: jest.fn() },

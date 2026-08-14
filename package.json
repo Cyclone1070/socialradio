@@ -24,6 +24,7 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand"
   },
   "dependencies": {
+    "@ai-sdk/deepseek": "^3.0.28",
     "@aws-sdk/client-s3": "^3.1095.0",
     "@nestjs/axios": "^4.0.1",
     "@nestjs/common": "^11.0.1",
@@ -34,6 +35,7 @@
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/schedule": "^6.1.3",
     "@nestjs/typeorm": "^11.0.3",
+    "ai": "^7.0.65",
     "axios": "^1.18.1",
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
@@ -97,6 +99,9 @@
     "testEnvironment": "node",
     "setupFiles": [
       "../jest.logging-setup.js"
+    ],
+    "transformIgnorePatterns": [
+      "/node_modules/(?!(ai|@ai-sdk|@workflow)/)"
     ]
   }
 }

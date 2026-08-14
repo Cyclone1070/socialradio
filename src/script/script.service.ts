@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { LlmService } from './llm-service';
+import { LlmService } from './llm.service';
 import { ScriptContract } from '../domain/contracts';
 import { PostData, CommentData } from '../domain/types/post.types';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
