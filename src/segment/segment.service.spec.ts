@@ -403,6 +403,57 @@ describe('SegmentService', () => {
       expect((mockSavedItems[0] as TalkSegment).topicId).toBe('topic-post-1');
     });
 
+    it('should NOT mark post completed for channel when script/voice generation fails', async () => {
+      const channelId = 'chan-1';
+      const freshDate = new Date(Date.now() - 5 * 60 * 60 * 1000);
+      setupChannelSubreddits([
+        { id: 'sub-1', name: 'AskReddit', lastScrapedAt: freshDate },
+      ]);
+      mockChannelContract.getCompletedPostIdsForChannel.mockResolvedValue([]);
+      mockContentContract.getPostsBySubredditIds.mockResolvedValue([
+        {
+          id: 'post-1',
+          subredditId: 'sub-1',
+          redditId: 'r1',
+          title: 'Post Title 1',
+          body: 'Post Body 1',
+          score: 10,
+        },
+      ]);
+      jest.spyOn(service, 'getRandomCount').mockReturnValue(1);
+
+      // Script generation rejects with error after 5 retries
+      mockScriptContract.generateScript.mockRejectedValueOnce(
+        new Error('Failed to generate valid Stage 2 dialogue after 5 attempts'),
+      );
+
+      const mockSavedItems: Segment[] = [];
+      mockSegmentRepo.save.mockImplementation((item) => {
+        mockSavedItems.push(item as Segment);
+        return Promise.resolve({
+          id: 'uuid-' + mockSavedItems.length,
+          ...(item as Record<string, unknown>),
+        } as unknown as Segment);
+      });
+
+      await service.bufferAhead(channelId);
+
+      // Give background async .catch() handler time to execute
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // markPostCompletedForChannel MUST NOT have been called for post-1
+      expect(
+        mockChannelContract.markPostCompletedForChannel,
+      ).not.toHaveBeenCalledWith(channelId, 'post-1');
+
+      // Talk segment status MUST be set to failed upon error
+      const failedTalkSegment = mockSavedItems.find(
+        (s) => (s as TalkSegment).status === 'failed',
+      ) as TalkSegment | undefined;
+      expect(failedTalkSegment).toBeDefined();
+      expect(failedTalkSegment?.status).toBe('failed');
+    });
+
     it('should append a full cycle even when the queue already holds 5+ segments (no size gate)', async () => {
       const channelId = 'chan-1';
       // Old total-row gate returned early at 5 rows — permanently stalling

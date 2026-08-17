@@ -85,12 +85,14 @@ export class SegmentService implements SegmentContract {
       });
       const savedTalkItem = await this.segmentRepo.save(talkItem);
 
-      for (const p of topicSegment.posts) {
-        await this.channelContract.markPostCompletedForChannel(channelId, p.id);
-      }
-
       this.generateTalkVoiceTrack(topicSegment.posts)
         .then(async (voiceTrack: TalkData) => {
+          for (const p of topicSegment.posts) {
+            await this.channelContract.markPostCompletedForChannel(
+              channelId,
+              p.id,
+            );
+          }
           savedTalkItem.audioUrl = voiceTrack.filePath;
           savedTalkItem.durationSeconds = voiceTrack.durationSeconds;
           savedTalkItem.status = 'ready';

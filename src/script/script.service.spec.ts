@@ -4,12 +4,41 @@ import { ScriptService } from './script.service';
 import { LlmService } from './llm.service';
 import { PostData, CommentData } from '../domain';
 
-describe('ScriptService', () => {
+describe('ScriptService (2-Stage Script Generation)', () => {
   let service: ScriptService;
 
   const mockLlmService = {
     generateText: jest.fn(),
   };
+
+  const validOutlineMarkdown = `# CALL-IN SEGMENT OUTLINE
+## STEP 1: HOST INTRO & HOOK
+- Lead-in: Next up,
+- Hook Angle: A wild story about rent
+- Caller & Location: Alex from Wollongong
+- Line Number: Line 2
+
+## STEP 2: CALLER NARRATIVE BEATS
+- Alex explains the 70% rent split demand
+
+## STEP 3: ROOM STANCES & GAP ANGLES
+- Mike's Stance: 50/50 lease is binding
+- Sarah's Stance: Pay 55/45 max
+- Jenny's Gap Angle: Roommate lost job recently
+
+## STEP 4: VERDICT & OUTRO
+- Final Verdict: Pay 55/45
+- Line Drop Phrase: Line 2 clear.`;
+
+  const validDialogueText = `Dave: Next up, we've got Alex from Wollongong on Line 2.
+Caller: Hey Dave! My roommate is demanding 70% rent.
+Sarah: [laughs] 70%?! Is his room a broom closet?
+Mike: If the lease says 50/50, he can't change it.
+Jenny: Did he lose his job recently?
+Caller: Actually yeah, two weeks ago!
+Dave: Alex, stick to 55/45. Line 2 clear.
+[Line Cut Sound]
+Dave: Up next, another crazy story.`;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -27,8 +56,55 @@ describe('ScriptService', () => {
     expect(service).toBeDefined();
   });
 
+  describe('validateOutline', () => {
+    it('should return true for valid outline containing all 4 STEP headers', () => {
+      expect(service.validateOutline(validOutlineMarkdown)).toBe(true);
+    });
+
+    it('should return false for incomplete outline missing STEP 4', () => {
+      const invalid = validOutlineMarkdown.replace('## STEP 4', '## SECTION 4');
+      expect(service.validateOutline(invalid)).toBe(false);
+    });
+  });
+
+  describe('parseScriptText', () => {
+    it('should parse valid dialogue lines and multi-line continuations into ScriptData', () => {
+      const multiLineText = `Dave: First line of host.
+Second line of host.
+Caller: Caller response line.
+Sarah: Sarah line.
+Mike: Mike line.
+Jenny: Jenny line.`;
+
+      const parsed = service.parseScriptText('post-1', multiLineText);
+
+      expect(parsed.postId).toBe('post-1');
+      expect(parsed.turns.length).toBe(5);
+      expect(parsed.turns[0]).toEqual({
+        speaker: 'Dave',
+        text: 'First line of host. Second line of host.',
+      });
+      expect(parsed.turns[1]).toEqual({
+        speaker: 'Caller',
+        text: 'Caller response line.',
+      });
+    });
+
+    it('should throw error when encountering an unknown speaker', () => {
+      const invalidSpeaker = `Dave: Hello.
+UnknownSpeaker: Unexpected.
+Caller: Hi.
+Sarah: Hey.
+Mike: Yo.`;
+
+      expect(() => service.parseScriptText('post-1', invalidSpeaker)).toThrow(
+        'Invalid speaker encountered in script: "UnknownSpeaker"',
+      );
+    });
+  });
+
   describe('generateScript', () => {
-    it('should format posts and comments, call LlmService.generateText, and return script text', async () => {
+    it('should execute 2-stage generation (Outline -> Dialogue) and return ScriptData', async () => {
       const posts: PostData[] = [
         {
           id: 'post-1',
@@ -39,7 +115,6 @@ describe('ScriptService', () => {
           score: 10,
         },
       ];
-
       const comments: CommentData[] = [
         {
           id: 'c1',
@@ -52,22 +127,20 @@ describe('ScriptService', () => {
         },
       ];
 
-      mockLlmService.generateText.mockResolvedValue(
-        'Mocked radio script text.',
-      );
+      // Call 1 -> Stage 1 Outline, Call 2 -> Stage 2 Dialogue
+      mockLlmService.generateText
+        .mockResolvedValueOnce(validOutlineMarkdown)
+        .mockResolvedValueOnce(validDialogueText);
 
       const result = await service.generateScript(posts, comments);
 
-      expect(mockLlmService.generateText).toHaveBeenCalledWith(
-        expect.stringContaining(
-          'You are a professional script writer for a call-in',
-        ),
-        expect.stringContaining('Post Title 1'),
-      );
-      expect(result).toBe('Mocked radio script text.');
+      expect(mockLlmService.generateText).toHaveBeenCalledTimes(2);
+      expect(result.postId).toBe('post-1');
+      expect(result.turns.length).toBe(8);
+      expect(result.turns[0].speaker).toBe('Dave');
     });
 
-    it('logs ONE LLM call line with sizes + latency at info', async () => {
+    it('should retry Stage 1 when Stage 1 outline validation fails', async () => {
       const posts: PostData[] = [
         {
           id: 'post-1',
@@ -78,160 +151,75 @@ describe('ScriptService', () => {
           score: 10,
         },
       ];
-      const comments: CommentData[] = [
+
+      // Call 1 -> Invalid Outline, Call 2 -> Valid Outline, Call 3 -> Valid Dialogue
+      mockLlmService.generateText
+        .mockResolvedValueOnce('Invalid outline without steps')
+        .mockResolvedValueOnce(validOutlineMarkdown)
+        .mockResolvedValueOnce(validDialogueText);
+
+      const result = await service.generateScript(posts, []);
+
+      expect(mockLlmService.generateText).toHaveBeenCalledTimes(3);
+      expect(result.turns.length).toBe(8);
+    });
+
+    it('should retry Stage 2 when Stage 2 dialogue parsing fails', async () => {
+      const posts: PostData[] = [
         {
-          id: 'c1',
-          postId: 'post-1',
-          redditId: 'comment-1',
-          body: 'Comment Body 1',
-          parentRedditId: null,
-          isOp: false,
+          id: 'post-1',
+          subredditId: 'sub-1',
+          redditId: 'r1',
+          title: 'Post Title 1',
+          body: 'Post Body 1',
           score: 10,
         },
       ];
 
-      mockLlmService.generateText.mockResolvedValue(
-        'Mocked radio script text.',
-      );
+      // Call 1 -> Valid Outline, Call 2 -> Malformed Dialogue, Call 3 -> Valid Dialogue
+      mockLlmService.generateText
+        .mockResolvedValueOnce(validOutlineMarkdown)
+        .mockResolvedValueOnce('Malformed dialogue without speaker prefix')
+        .mockResolvedValueOnce(validDialogueText);
+
+      const result = await service.generateScript(posts, []);
+
+      expect(mockLlmService.generateText).toHaveBeenCalledTimes(3);
+      expect(result.turns.length).toBe(8);
+    });
+
+    it('logs 2-Stage generation metrics at info level', async () => {
+      const posts: PostData[] = [
+        {
+          id: 'post-1',
+          subredditId: 'sub-1',
+          redditId: 'r1',
+          title: 'Post Title 1',
+          body: 'Post Body 1',
+          score: 10,
+        },
+      ];
+
+      mockLlmService.generateText
+        .mockResolvedValueOnce(validOutlineMarkdown)
+        .mockResolvedValueOnce(validDialogueText);
 
       const infoSpy = jest
         .spyOn(PinoLogger.prototype, 'info')
         .mockImplementation(() => {});
 
-      await service.generateScript(posts, comments);
+      await service.generateScript(posts, []);
 
       expect(infoSpy).toHaveBeenCalledWith(
         expect.objectContaining({
-          posts: 1,
-          comments: 1,
-          inputWords: expect.any(Number) as number,
-          outputWords: expect.any(Number) as number,
+          postId: 'post-1',
+          turns: 8,
+          stage1Attempts: 1,
+          stage2Attempts: 1,
           ms: expect.any(Number) as number,
         }),
-        expect.stringContaining('LLM'),
+        expect.stringContaining('2-Stage LLM script generation'),
       );
-    });
-
-    it('should select complete comment chains until the 2500-word input budget is met, then exclude further chains', async () => {
-      const posts: PostData[] = [
-        {
-          id: 'post-1',
-          subredditId: 'sub-1',
-          redditId: 'r1',
-          title: 'A B C D E',
-          body: 'F G H I J',
-          score: 10,
-        },
-      ];
-
-      const c1Body = 'alpha '.repeat(600).trim();
-      const r1Body = 'beta '.repeat(600).trim();
-      const c2Body = 'gamma '.repeat(600).trim();
-      const c3Body = 'delta '.repeat(600).trim();
-
-      const comments: CommentData[] = [
-        {
-          id: 'c1',
-          postId: 'post-1',
-          redditId: 'comment-1',
-          parentRedditId: null,
-          body: c1Body,
-          score: 100,
-          isOp: false,
-        },
-        {
-          id: 'r1',
-          postId: 'post-1',
-          redditId: 'reply-1',
-          parentRedditId: 'comment-1',
-          body: r1Body,
-          score: 90,
-          isOp: false,
-        },
-        {
-          id: 'c2',
-          postId: 'post-1',
-          redditId: 'comment-2',
-          parentRedditId: null,
-          body: c2Body,
-          score: 80,
-          isOp: false,
-        },
-        {
-          id: 'c3',
-          postId: 'post-1',
-          redditId: 'comment-3',
-          parentRedditId: null,
-          body: c3Body,
-          score: 60,
-          isOp: false,
-        },
-      ];
-
-      let calledUserPrompt = '';
-      mockLlmService.generateText.mockImplementation(
-        (_sys: string, user: string) => {
-          calledUserPrompt = user;
-          return Promise.resolve('Script content');
-        },
-      );
-
-      await service.generateScript(posts, comments);
-
-      expect(calledUserPrompt).toContain(c1Body);
-      expect(calledUserPrompt).toContain(r1Body);
-      expect(calledUserPrompt).toContain(c2Body);
-      expect(calledUserPrompt).toContain(c3Body);
-    });
-
-    it('should enforce a 3500-word max ceiling guard and exclude a chain if adding it exceeds 3500 total words', async () => {
-      const posts: PostData[] = [
-        {
-          id: 'post-1',
-          subredditId: 'sub-1',
-          redditId: 'r1',
-          title: 'A B C D E',
-          body: 'F G H I J',
-          score: 10,
-        },
-      ];
-
-      const c1Body = 'alpha '.repeat(2400).trim();
-      const c2Body = 'beta '.repeat(1200).trim();
-
-      const comments: CommentData[] = [
-        {
-          id: 'c1',
-          postId: 'post-1',
-          redditId: 'comment-1',
-          parentRedditId: null,
-          body: c1Body,
-          score: 100,
-          isOp: false,
-        },
-        {
-          id: 'c2',
-          postId: 'post-1',
-          redditId: 'comment-2',
-          parentRedditId: null,
-          body: c2Body,
-          score: 80,
-          isOp: false,
-        },
-      ];
-
-      let calledUserPrompt = '';
-      mockLlmService.generateText.mockImplementation(
-        (_sys: string, user: string) => {
-          calledUserPrompt = user;
-          return Promise.resolve('Script content');
-        },
-      );
-
-      await service.generateScript(posts, comments);
-
-      expect(calledUserPrompt).toContain(c1Body);
-      expect(calledUserPrompt).not.toContain(c2Body);
     });
   });
 });
