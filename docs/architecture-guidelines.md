@@ -7,6 +7,7 @@ This document provides decision rules for file placement and code organization w
 ## Core Rules
 
 1. **Feature Slices (`src/<feature>/`)**
+   - Modules are organized strictly by **Domain**, not by technical or functional concern (e.g., `user/` domain instead of `auth/` function, `content/` domain instead of `scraper/` function).
    - Each domain feature is an isolated, independent slice.
    - Slices MUST NOT import concrete files (entities, services, helpers) directly from other feature slices.
    - Cross-slice references use scalar string IDs (`<name>Id: string`) instead of ORM entity relationships.
