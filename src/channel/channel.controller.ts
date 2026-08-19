@@ -13,6 +13,7 @@ import * as express from 'express';
 import { ChannelService } from './channel.service';
 import { PlaybackService, NextTrackData } from './playback.service';
 import { QueueService } from './queue.service';
+import { InternalAuthGuard } from './internal-auth.guard';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { SubscribeSubredditDto } from './dto/subscribe-subreddit.dto';
 import { ChannelResponseDto } from './dto/channel-response.dto';
@@ -36,6 +37,7 @@ export class ChannelController {
   }
 
   @Get('active')
+  @UseGuards(InternalAuthGuard)
   async getActiveChannels(): Promise<ChannelResponseDto[]> {
     return await this.channelService.getAllChannels();
   }
@@ -74,6 +76,7 @@ export class ChannelController {
   }
 
   @Get(':id/next-track')
+  @UseGuards(InternalAuthGuard)
   async getNextTrack(@Param('id') id: string): Promise<NextTrackData> {
     return await this.playbackService.getNextTrack(id);
   }

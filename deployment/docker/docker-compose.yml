@@ -48,6 +48,7 @@ services:
       STORAGE_ACCESS_KEY: minioadmin
       STORAGE_SECRET_KEY: minioadmin
       STORAGE_PUBLIC_URL: http://localhost:9000/socialradio-media
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET:-secret}
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/healthcheck"]
       interval: 2s
@@ -117,6 +118,7 @@ services:
       ICECAST_PORT: 8000
       ICECAST_PASSWORD: hackme
       BACKEND_URL: http://app:3000
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET:-secret}
     volumes:
       - audio_storage:/app/storage
     depends_on:

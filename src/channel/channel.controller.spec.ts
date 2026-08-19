@@ -4,6 +4,7 @@ import { ChannelController } from './channel.controller';
 import { ChannelService } from './channel.service';
 import { PlaybackService } from './playback.service';
 import { QueueService } from './queue.service';
+import { InternalAuthGuard } from './internal-auth.guard';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { SubscribeSubredditDto } from './dto/subscribe-subreddit.dto';
 import { Request } from 'express';
@@ -36,7 +37,10 @@ describe('ChannelController', () => {
         { provide: PlaybackService, useValue: mockPlaybackService },
         { provide: QueueService, useValue: mockQueueService },
       ],
-    }).compile();
+    })
+      .overrideGuard(InternalAuthGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
 
     controller = module.get<ChannelController>(ChannelController);
     jest.clearAllMocks();

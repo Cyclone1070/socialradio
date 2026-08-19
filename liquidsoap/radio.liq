@@ -5,15 +5,16 @@
 set("log.level", 3)
 
 # Server settings
-icecast_host = environment.get(default="icecast", "ICECAST_HOST")
-icecast_port = int_of_string(environment.get(default="8000", "ICECAST_PORT"))
-icecast_pass = environment.get(default="hackme", "ICECAST_PASSWORD")
-backend_url  = environment.get(default="http://backend:3000", "BACKEND_URL")
+icecast_host    = environment.get(default="icecast", "ICECAST_HOST")
+icecast_port    = int_of_string(environment.get(default="8000", "ICECAST_PORT"))
+icecast_pass    = environment.get(default="hackme", "ICECAST_PASSWORD")
+backend_url     = environment.get(default="http://backend:3000", "BACKEND_URL")
+internal_secret = environment.get(default="secret", "INTERNAL_SERVICE_SECRET")
 
 # Dynamic Track Request Function
 def get_next_track(channel_id) =
   uri = "#{backend_url}/channels/#{channel_id}/next-track"
-  response = http.get(uri)
+  response = http.get(headers=[("X-Internal-Token", internal_secret)], uri)
   json_data = json.parse(response)
   file_path = json_data["filePath"]
   start_offset = json_data["startOffsetSeconds"]

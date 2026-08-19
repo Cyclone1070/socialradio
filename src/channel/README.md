@@ -7,11 +7,11 @@ User-facing stations: each channel subscribes to subreddits, maintains a never-e
 | Method | Path | Auth | Behaviour |
 |---|---|---|---|
 | `GET` | `/channels` | JWT | Lists channels you own, plus all **public** channels. |
-| `GET` | `/channels/active` | none | Lists all active channels for streaming engine discovery. |
+| `GET` | `/channels/active` | Internal Secret | Lists all active channels for streaming engine discovery (`X-Internal-Token`). |
 | `POST` | `/channels` | JWT | Creates a channel. Body: `{ name, visibility? }` — visibility defaults to `private`. Empty name → 400. |
 | `POST` | `/channels/:id/subreddits` | JWT | Subscribes the channel to a subreddit. Body: `{ subredditName }`. Non-existent channel → 404. **Idempotent**. |
 | `DELETE` | `/channels/:id/subreddits/:subName` | JWT | Removes the subscription. Missing channel or subreddit → 404. |
-| `GET` | `/channels/:id/next-track` | none | Returns next playable audio track for Liquidsoap stream source. |
+| `GET` | `/channels/:id/next-track` | Internal Secret | Returns next playable audio track for Liquidsoap stream source (`X-Internal-Token`). |
 | `GET` | `/channels/admin/:id/topics` | Admin | The next pending topic for a channel (what would air next). |
 
 ## Behaviour — the queue
