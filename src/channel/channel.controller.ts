@@ -6,24 +6,25 @@ import {
   Body,
   Param,
   Req,
-  Res,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import * as express from 'express';
 import { ChannelService } from './channel.service';
-import { ChannelPlaybackService } from './channel-playback.service';
+import { PlaybackService, NextTrackData } from './playback.service';
+import { QueueService } from './queue.service';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { SubscribeSubredditDto } from './dto/subscribe-subreddit.dto';
 import { ChannelResponseDto } from './dto/channel-response.dto';
-import { StorageService } from '../infrastructure/storage/storage.service';
+import { RolesGuard } from '../user/roles.guard';
+import { Roles } from '../user/roles.decorator';
 
 @Controller('channels')
 export class ChannelController {
   constructor(
     private readonly channelService: ChannelService,
-    private readonly playbackService: ChannelPlaybackService,
-    private readonly storageService: StorageService,
+    private readonly playbackService: PlaybackService,
+    private readonly queueService: QueueService,
   ) {}
 
   @Get()
@@ -32,6 +33,11 @@ export class ChannelController {
     @Req() req: express.Request & { user: { id: string } },
   ): Promise<ChannelResponseDto[]> {
     return await this.channelService.getUserChannels(req.user.id);
+  }
+
+  @Get('active')
+  async getActiveChannels(): Promise<ChannelResponseDto[]> {
+    return await this.channelService.getAllChannels();
   }
 
   @Post()
@@ -67,38 +73,15 @@ export class ChannelController {
     await this.channelService.unsubscribeFromSubreddit(id, subName);
   }
 
-  @Get(':id/playlist.m3u8')
-  async getPlaylistManifest(
-    @Param('id') id: string,
-    @Res() res: express.Response,
-  ): Promise<void> {
-    try {
-      const manifest = await this.playbackService.getPlaylistManifest(id);
-      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-      res.send(manifest);
-    } catch (err: unknown) {
-      res
-        .status(404)
-        .send(err instanceof Error ? err.message : 'Manifest not ready');
-    }
+  @Get(':id/next-track')
+  async getNextTrack(@Param('id') id: string): Promise<NextTrackData> {
+    return await this.playbackService.getNextTrack(id);
   }
 
-  @Get(':id/chunks/:filename')
-  async getAudioChunk(
-    @Param('id') id: string,
-    @Param('filename') filename: string,
-    @Res() res: express.Response,
-  ): Promise<void> {
-    const chunkPath = `channels/${id}/chunks/${filename}`;
-    const exists = await this.storageService.exists(chunkPath);
-    if (!exists) {
-      res.status(404).send('Chunk not found');
-      return;
-    }
-    res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    const audioBuffer = await this.storageService.read(chunkPath);
-    res.send(audioBuffer);
+  @Get('admin/:id/topics')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('admin')
+  async getTopics(@Param('id') id: string): Promise<unknown> {
+    return await this.queueService.findPendingTopicSegment(id);
   }
 }

@@ -63,6 +63,7 @@ services:
         condition: service_healthy
     volumes:
       - hf_cache:/home/node/.cache
+      - audio_storage:/app/storage
     # JSON lines on stdout; docker json-file driver bounds the disk copy.
     logging:
       driver: json-file
@@ -97,7 +98,36 @@ services:
       - MAX_CONCURRENT_SESSIONS=10
     restart: always
 
+  icecast:
+    image: infiniteproject/icecast:latest
+    ports:
+      - "8000:8000"
+    environment:
+      ICECAST_SOURCE_PASSWORD: hackme
+      ICECAST_ADMIN_PASSWORD: hackme
+      ICECAST_PASSWORD: hackme
+    restart: always
+
+  liquidsoap:
+    build:
+      context: ../../liquidsoap
+      dockerfile: Dockerfile
+    environment:
+      ICECAST_HOST: icecast
+      ICECAST_PORT: 8000
+      ICECAST_PASSWORD: hackme
+      BACKEND_URL: http://app:3000
+    volumes:
+      - audio_storage:/app/storage
+    depends_on:
+      app:
+        condition: service_healthy
+      icecast:
+        condition: service_started
+    restart: always
+
 volumes:
   postgres_data:
   minio_data:
   hf_cache:
+  audio_storage:

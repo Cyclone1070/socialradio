@@ -99,8 +99,12 @@ describe('True Peer Decoupling Architecture Guardrails', () => {
           for (const peer of peerSlices) {
             // Controllers are allowed to import Auth Guards / Roles from user slice
             if (peer === 'user' && file.endsWith('.controller.ts')) continue;
-            // Segment service is allowed to import MediaService from media slice
-            if (peer === 'media' && file.endsWith('segment.service.ts'))
+            // Channel services (queue, playback) are allowed to import MediaService from media slice
+            if (
+              peer === 'media' &&
+              (file.endsWith('queue.service.ts') ||
+                file.endsWith('playback.service.ts'))
+            )
               continue;
 
             const crossSliceImport = new RegExp(
@@ -139,10 +143,8 @@ describe('True Peer Decoupling Architecture Guardrails', () => {
     it('Contracts and data interfaces in src/domain/ must be cross-slice (consumed across feature slices)', () => {
       const domainExports = [
         'ContentContract',
-        'ChannelContract',
         'ScriptContract',
         'VoiceContract',
-        'SegmentContract',
         'PostData',
         'CommentData',
         'ScriptData',
@@ -163,6 +165,147 @@ describe('True Peer Decoupling Architecture Guardrails', () => {
         }
         // Must be used across 2 or more feature slices
         expect(consumingSlices.size).toBeGreaterThanOrEqual(2);
+      }
+    });
+  });
+
+  describe('Rule 5: Zero Bidirectional Slice Coupling (Acyclic Dependency Graph)', () => {
+    it('Feature slices must NOT have bidirectional circular dependency cycles with each other', () => {
+      const dependencies = new Map<string, Set<string>>();
+
+      // 1. Map contract providers
+      const contractProviders = new Map<string, string>(); // ContractName -> SliceName
+      for (const slice of featureSlices) {
+        dependencies.set(slice, new Set<string>());
+        const sliceDir = path.join(rootSrcDir, slice);
+        const files = getAllProductionTsFiles(sliceDir);
+
+        for (const file of files) {
+          const content = fs.readFileSync(file, 'utf8');
+          // Match provide: XContract, useClass/useExisting: ...
+          const provideMatch = /provide:\s*([A-Za-z0-9_]*Contract)/g;
+          let m: RegExpExecArray | null;
+          while ((m = provideMatch.exec(content)) !== null) {
+            contractProviders.set(m[1], slice);
+          }
+        }
+      }
+
+      // 2. Map direct slice imports and contract consumption
+      for (const slice of featureSlices) {
+        const sliceDir = path.join(rootSrcDir, slice);
+        const files = getAllProductionTsFiles(sliceDir);
+
+        for (const file of files) {
+          const content = fs.readFileSync(file, 'utf8');
+          // Direct imports
+          for (const otherSlice of featureSlices) {
+            if (otherSlice === slice) continue;
+            const sliceImportRegex = new RegExp(
+              `from\\s+['"](\\.\\./)+${otherSlice}(/.*)?['"]`,
+            );
+            if (sliceImportRegex.test(content)) {
+              dependencies.get(slice)!.add(otherSlice);
+            }
+          }
+          // Contract consumption
+          for (const [contract, providerSlice] of contractProviders.entries()) {
+            if (providerSlice === slice) continue;
+            if (content.includes(contract)) {
+              dependencies.get(slice)!.add(providerSlice);
+            }
+          }
+        }
+      }
+
+      // Detect 2-slice bidirectional cycles (A -> B and B -> A)
+      for (const [sliceA, depsA] of dependencies.entries()) {
+        for (const sliceB of depsA) {
+          const depsB = dependencies.get(sliceB);
+          if (depsB && depsB.has(sliceA)) {
+            const errorMsg = `🚨 Architecture Violation: Bidirectional dependency cycle detected between slices [${sliceA}] and [${sliceB}]. This indicates an artificial functional split of a single domain. Consolidate into a single domain slice or enforce strict unidirectional contracts.`;
+            expect(errorMsg).toBe('');
+          }
+        }
+      }
+    });
+  });
+
+  describe('Rule 6: Single Entity Table Ownership (No Duplicate Entities Across Slices)', () => {
+    it('Every database entity must be owned exclusively by a single domain slice', () => {
+      const tableToSlices = new Map<string, Set<string>>();
+
+      for (const slice of featureSlices) {
+        const sliceDir = path.join(rootSrcDir, slice);
+        const files = getAllProductionTsFiles(sliceDir).filter((f) =>
+          f.endsWith('.entity.ts'),
+        );
+
+        for (const file of files) {
+          const content = fs.readFileSync(file, 'utf8');
+          // Match @Entity() or class name
+          const hasEntity = /@Entity\((?:['"]([^'"]+)['"])?\)/.test(content);
+          if (hasEntity) {
+            const classMatch = /export\s+(?:abstract\s+)?class\s+(\w+)/.exec(
+              content,
+            );
+            if (classMatch) {
+              const explicitTableMatch = /@Entity\(['"]([^'"]+)['"]\)/.exec(
+                content,
+              );
+              const tableName = (
+                explicitTableMatch ? explicitTableMatch[1] : classMatch[1]
+              ).toLowerCase();
+              if (!tableToSlices.has(tableName)) {
+                tableToSlices.set(tableName, new Set<string>());
+              }
+              tableToSlices.get(tableName)!.add(slice);
+            }
+          }
+        }
+      }
+
+      for (const [table, slices] of tableToSlices.entries()) {
+        if (slices.size > 1) {
+          const errorMsg = `🚨 Architecture Violation: Duplicate entity mapping detected for table "${table}" in slices [${Array.from(slices).join(', ')}]. Every entity must be owned exclusively by a single domain slice.`;
+          expect(errorMsg).toBe('');
+        }
+      }
+    });
+  });
+
+  describe('Rule 7: Route Domain Ownership (No Cross-Domain Controller Routes)', () => {
+    it('Controllers must only declare routes for their owning domain slice', () => {
+      for (const slice of featureSlices) {
+        const sliceDir = path.join(rootSrcDir, slice);
+        const files = getAllProductionTsFiles(sliceDir).filter((f) =>
+          f.endsWith('.controller.ts'),
+        );
+
+        for (const file of files) {
+          const content = fs.readFileSync(file, 'utf8');
+          const controllerMatch = /@Controller\(['"]([^'"]+)['"]\)/g;
+          let match: RegExpExecArray | null;
+          while ((match = controllerMatch.exec(content)) !== null) {
+            const route = match[1];
+            // Check if route specifies admin/<otherSlice> or <otherSlice>
+            for (const otherSlice of featureSlices) {
+              if (otherSlice === slice) continue;
+              const belongsToOther =
+                route === otherSlice ||
+                route === `${otherSlice}s` ||
+                route.startsWith(`${otherSlice}/`) ||
+                route.startsWith(`${otherSlice}s/`) ||
+                route.startsWith(`admin/${otherSlice}`) ||
+                route.startsWith(`admin/${otherSlice}s`);
+
+              if (belongsToOther) {
+                const errorMsg = `🚨 Architecture Violation: Controller in slice "${slice}" declares route "/${route}" which belongs to domain "${otherSlice}". Controllers must only declare routes for their owning domain.`;
+                expect(errorMsg).toBe('');
+              }
+            }
+          }
+        }
       }
     });
   });

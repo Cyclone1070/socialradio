@@ -135,6 +135,17 @@ export class ChannelService {
     }));
   }
 
+  async getAllChannels(): Promise<ChannelResponseDto[]> {
+    const channels = await this.channelRepo.find();
+    return channels.map((c) => ({
+      id: c.id,
+      name: c.name,
+      visibility: c.visibility,
+      ownerId: c.ownerId,
+      createdAt: c.createdAt,
+    }));
+  }
+
   async getChannel(id: string): Promise<ChannelResponseDto> {
     const channel = await this.channelRepo.findOneBy({ id });
     if (!channel) {

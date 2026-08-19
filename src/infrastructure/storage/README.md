@@ -19,7 +19,9 @@ Implementation: `S3StorageService` (MinIO, S3-compatible).
 ## Behaviour
 
 - **Key scheme is the contract** — paths are meaningful:
-  - `channels/{channelId}/chunks/{segmentId}_{index}.mp3` — HLS chunks (10s slices), served by the channel slice with immutable cache headers
-  - `assets/cache/tts-post-{postId}.mp3` — generated voice tracks
-- Everything is written through this interface: generated TTS, chunked audio, and (for reads) chunk serving.
+  - `topic-audios/talk-{uuid}.mp3` — generated voice talk segments
+  - `media/music/*.mp3` — music tracks
+  - `media/ads/*.mp3` — ad tracks
+  - `media/jingles/*.mp3` — station jingles
+- Everything is written through this interface: generated TTS and media storage.
 - Backing store is swappable by changing one binding — slices depend on the interface, never the implementation.

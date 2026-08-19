@@ -1,19 +1,19 @@
-/* eslint-disable @typescript-eslint/unbound-method */
 import { Test, TestingModule } from '@nestjs/testing';
 import { ValidationPipe } from '@nestjs/common';
 import { ChannelController } from './channel.controller';
-import { StorageService } from '../infrastructure/storage/storage.service';
 import { ChannelService } from './channel.service';
-import { ChannelPlaybackService } from './channel-playback.service';
+import { PlaybackService } from './playback.service';
+import { QueueService } from './queue.service';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { SubscribeSubredditDto } from './dto/subscribe-subreddit.dto';
-import { Request, Response } from 'express';
+import { Request } from 'express';
 
 describe('ChannelController', () => {
   let controller: ChannelController;
 
   const mockChannelService = {
     getUserChannels: jest.fn(),
+    getAllChannels: jest.fn(),
     configureChannel: jest.fn(),
     subscribeToSubreddit: jest.fn(),
     unsubscribeFromSubreddit: jest.fn(),
@@ -21,13 +21,11 @@ describe('ChannelController', () => {
   };
 
   const mockPlaybackService = {
-    getPlaylistManifest: jest.fn(),
+    getNextTrack: jest.fn(),
   };
 
-  const mockStorageService = {
-    exists: jest.fn(),
-    read: jest.fn(),
-    createReadStream: jest.fn(),
+  const mockQueueService = {
+    findPendingTopicSegment: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -35,14 +33,8 @@ describe('ChannelController', () => {
       controllers: [ChannelController],
       providers: [
         { provide: ChannelService, useValue: mockChannelService },
-        {
-          provide: ChannelPlaybackService,
-          useValue: mockPlaybackService,
-        },
-        {
-          provide: StorageService,
-          useValue: mockStorageService,
-        },
+        { provide: PlaybackService, useValue: mockPlaybackService },
+        { provide: QueueService, useValue: mockQueueService },
       ],
     }).compile();
 
@@ -67,6 +59,20 @@ describe('ChannelController', () => {
       const result = await controller.getUserChannels(req);
 
       expect(mockChannelService.getUserChannels).toHaveBeenCalledWith('user-1');
+      expect(result).toEqual(channels);
+    });
+  });
+
+  describe('getActiveChannels', () => {
+    it('should return all channels for streaming discovery', async () => {
+      const channels = [
+        { id: '1', name: 'Channel 1', visibility: 'public', ownerId: null },
+      ];
+      mockChannelService.getAllChannels.mockResolvedValue(channels);
+
+      const result = await controller.getActiveChannels();
+
+      expect(mockChannelService.getAllChannels).toHaveBeenCalled();
       expect(result).toEqual(channels);
     });
   });
@@ -140,50 +146,35 @@ describe('ChannelController', () => {
     });
   });
 
-  describe('getPlaylistManifest', () => {
-    it('should return playlist manifest', async () => {
-      const mockRes = {
-        setHeader: jest.fn(),
-        send: jest.fn(),
-      } as unknown as Response;
-      mockPlaybackService.getPlaylistManifest.mockResolvedValue('#EXTM3U');
+  describe('getNextTrack', () => {
+    it('should return next track metadata from playback service', async () => {
+      const track = {
+        segmentId: 'seg-1',
+        type: 'song',
+        filePath: 'song.mp3',
+        durationSeconds: 180,
+        startOffsetSeconds: 0,
+      };
+      mockPlaybackService.getNextTrack.mockResolvedValue(track);
 
-      await controller.getPlaylistManifest('chan-1', mockRes);
+      const result = await controller.getNextTrack('chan-1');
 
-      expect(mockPlaybackService.getPlaylistManifest).toHaveBeenCalledWith(
-        'chan-1',
-      );
-      expect(mockRes.setHeader).toHaveBeenCalledWith(
-        'Content-Type',
-        'application/vnd.apple.mpegurl',
-      );
-      expect(mockRes.send).toHaveBeenCalledWith('#EXTM3U');
+      expect(mockPlaybackService.getNextTrack).toHaveBeenCalledWith('chan-1');
+      expect(result).toEqual(track);
     });
   });
 
-  describe('getAudioChunk', () => {
-    it('should stream audio chunk if it exists', async () => {
-      const mockRes = {
-        setHeader: jest.fn(),
-        status: jest.fn().mockReturnThis(),
-        send: jest.fn(),
-      } as unknown as Response;
-      mockStorageService.exists.mockResolvedValue(true);
-      mockStorageService.read.mockResolvedValue(Buffer.from('audio'));
+  describe('getTopics', () => {
+    it('should return pending topics for admin inspection', async () => {
+      const topic = { id: 'top-1', posts: [] };
+      mockQueueService.findPendingTopicSegment.mockResolvedValue(topic);
 
-      await controller.getAudioChunk('chan-1', 'chunk_1.mp3', mockRes);
+      const result = await controller.getTopics('chan-1');
 
-      expect(mockStorageService.exists).toHaveBeenCalledWith(
-        'channels/chan-1/chunks/chunk_1.mp3',
+      expect(mockQueueService.findPendingTopicSegment).toHaveBeenCalledWith(
+        'chan-1',
       );
-      expect(mockStorageService.read).toHaveBeenCalledWith(
-        'channels/chan-1/chunks/chunk_1.mp3',
-      );
-      expect(mockRes.setHeader).toHaveBeenCalledWith(
-        'Content-Type',
-        'audio/mpeg',
-      );
-      expect(mockRes.send).toHaveBeenCalledWith(Buffer.from('audio'));
+      expect(result).toEqual(topic);
     });
   });
 

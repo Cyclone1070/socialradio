@@ -8,7 +8,6 @@ import { MediaModule } from './media/media.module';
 import { ContentModule } from './content/content.module';
 import { ScriptModule } from './script/script.module';
 import { VoiceModule } from './voice/voice.module';
-import { SegmentModule } from './segment/segment.module';
 import { ChannelModule } from './channel/channel.module';
 import { HealthcheckModule } from './infrastructure/healthcheck/healthcheck.module';
 import { CreateSchema1785419900925 } from './infrastructure/database/migrations/1785419900925-CreateSchema';
@@ -47,7 +46,6 @@ import { AddScrapeStatusColumns1790000000000 } from './infrastructure/database/m
     ContentModule,
     ScriptModule,
     VoiceModule,
-    SegmentModule,
     ChannelModule,
     HealthcheckModule,
   ],

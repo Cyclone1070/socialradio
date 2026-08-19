@@ -8,14 +8,14 @@ import {
   AdSegment,
   JingleSegment,
 } from './entities/segment.entity';
+import { ChannelSubreddit } from './entities/channel-subreddit.entity';
+import { ChannelPostProgress } from './entities/channel-post-progress.entity';
 import { MediaService } from '../media/media.service';
 import { clusterPosts } from './utils/topic-clustering.util';
 import { Topic } from './interfaces/topic.interface';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
 import {
-  SegmentContract,
   ContentContract,
-  ChannelContract,
   ScriptContract,
   VoiceContract,
 } from '../domain/contracts';
@@ -27,15 +27,18 @@ import { randomUUID } from 'crypto';
 const SCRAPE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7-day scrape window
 
 @Injectable()
-export class SegmentService implements SegmentContract {
-  private readonly logger = createServiceLogger(SegmentService.name);
+export class QueueService {
+  private readonly logger = createServiceLogger(QueueService.name);
 
   constructor(
     @InjectRepository(Segment)
     private readonly segmentRepo: Repository<Segment>,
+    @InjectRepository(ChannelSubreddit)
+    private readonly channelSubredditRepo: Repository<ChannelSubreddit>,
+    @InjectRepository(ChannelPostProgress)
+    private readonly progressRepo: Repository<ChannelPostProgress>,
     private readonly mediaService: MediaService,
     private readonly contentContract: ContentContract,
-    private readonly channelContract: ChannelContract,
     private readonly scriptContract: ScriptContract,
     private readonly voiceContract: VoiceContract,
   ) {}
@@ -88,21 +91,12 @@ export class SegmentService implements SegmentContract {
       this.generateTalkVoiceTrack(topicSegment.posts)
         .then(async (voiceTrack: TalkData) => {
           for (const p of topicSegment.posts) {
-            await this.channelContract.markPostCompletedForChannel(
-              channelId,
-              p.id,
-            );
+            await this.markPostCompletedForChannel(channelId, p.id);
           }
           savedTalkItem.audioUrl = voiceTrack.filePath;
           savedTalkItem.durationSeconds = voiceTrack.durationSeconds;
           savedTalkItem.status = 'ready';
           await this.segmentRepo.save(savedTalkItem);
-
-          await this.channelContract.sliceAndUploadChunk(
-            channelId,
-            savedTalkItem.id,
-            voiceTrack.filePath,
-          );
         })
         .catch(async (err) => {
           savedTalkItem.status = 'failed';
@@ -163,12 +157,7 @@ export class SegmentService implements SegmentContract {
       title: song.title,
       artist: song.artist,
     });
-    const savedSong = await this.segmentRepo.save(songItem);
-    await this.channelContract.sliceAndUploadChunk(
-      channelId,
-      savedSong.id,
-      song.filePath,
-    );
+    await this.segmentRepo.save(songItem);
     return playOrder + 1;
   }
 
@@ -183,12 +172,7 @@ export class SegmentService implements SegmentContract {
       audioUrl: ad.filePath,
       durationSeconds: ad.durationSeconds,
     });
-    const savedAd = await this.segmentRepo.save(adItem);
-    await this.channelContract.sliceAndUploadChunk(
-      channelId,
-      savedAd.id,
-      ad.filePath,
-    );
+    await this.segmentRepo.save(adItem);
     return playOrder + 1;
   }
 
@@ -203,32 +187,31 @@ export class SegmentService implements SegmentContract {
       audioUrl: jingle.filePath,
       durationSeconds: jingle.durationSeconds,
     });
-    const savedJingle = await this.segmentRepo.save(jingleItem);
-    await this.channelContract.sliceAndUploadChunk(
-      channelId,
-      savedJingle.id,
-      jingle.filePath,
-    );
+    await this.segmentRepo.save(jingleItem);
     return playOrder + 1;
   }
 
   public async findPendingTopicSegment(
     channelId: string,
   ): Promise<Topic | null> {
-    const subIds =
-      await this.channelContract.getSubredditIdsForChannel(channelId);
+    const subs = await this.channelSubredditRepo.find({
+      where: { channelId },
+    });
+    const subIds = subs.map((s) => s.subredditId);
     if (subIds.length === 0) return null;
 
-    const completedPostIds =
-      await this.channelContract.getCompletedPostIdsForChannel(channelId);
+    const progress = await this.progressRepo.find({
+      where: { channelId },
+    });
+    const completedPostIds = progress.map((p) => p.postId);
 
-    const subs = await this.contentContract.getSubredditsByIds(subIds);
+    const subreddits = await this.contentContract.getSubredditsByIds(subIds);
     const allPosts = await this.contentContract.getPostsBySubredditIds(subIds);
 
     const subsToScrape: string[] = [];
     const ttlMs = SCRAPE_WINDOW_MS;
 
-    for (const sub of subs) {
+    for (const sub of subreddits) {
       const isStale =
         !sub.lastScrapedAt || Date.now() - sub.lastScrapedAt.getTime() > ttlMs;
 
@@ -277,5 +260,16 @@ export class SegmentService implements SegmentContract {
 
     const segments = clusterPosts(unplayedPosts);
     return segments[0] || null;
+  }
+
+  private async markPostCompletedForChannel(
+    channelId: string,
+    postId: string,
+  ): Promise<void> {
+    const progress = this.progressRepo.create({
+      channelId,
+      postId,
+    });
+    await this.progressRepo.save(progress);
   }
 }
