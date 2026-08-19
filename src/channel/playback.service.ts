@@ -18,7 +18,6 @@ export interface NextTrackData {
   type: 'talk' | 'song' | 'ad' | 'jingle';
   filePath: string;
   durationSeconds: number;
-  startOffsetSeconds: number;
   title?: string;
   artist?: string;
 }
@@ -36,51 +35,13 @@ export class PlaybackService {
     private readonly mediaService: MediaService,
   ) {}
 
-  async getNextTrack(
-    channelId: string,
-    now: Date = new Date(),
-  ): Promise<NextTrackData> {
+  async getNextTrack(channelId: string): Promise<NextTrackData> {
     const channel = await this.channelRepo.findOneBy({ id: channelId });
     if (!channel) {
       throw new Error('Channel not found');
     }
 
-    // 1. Idle Detection & Tail-Resume
-    if (channel.currentSegmentStartedAt && channel.currentSegmentId) {
-      const elapsed =
-        (now.getTime() - channel.currentSegmentStartedAt.getTime()) / 1000;
-      const activeSeg = await this.segmentRepo.findOne({
-        where: { id: channel.currentSegmentId },
-      });
-
-      if (activeSeg && activeSeg.durationSeconds) {
-        const overdue = elapsed - activeSeg.durationSeconds;
-        if (overdue > 120 && activeSeg.durationSeconds > 20) {
-          const wrapDuration = Math.floor(Math.random() * 11) + 10; // 10 to 20s
-          const startOffsetSeconds = Math.max(
-            0,
-            activeSeg.durationSeconds - wrapDuration,
-          );
-          channel.currentSegmentStartedAt = new Date(
-            now.getTime() - startOffsetSeconds * 1000,
-          );
-          channel.lastRequestedAt = now;
-          await this.channelRepo.save(channel);
-
-          return {
-            segmentId: activeSeg.id,
-            type: this.getSegmentType(activeSeg),
-            filePath: activeSeg.audioUrl || '',
-            durationSeconds: activeSeg.durationSeconds,
-            startOffsetSeconds,
-            title: (activeSeg as SongSegment).title,
-            artist: (activeSeg as SongSegment).artist,
-          };
-        }
-      }
-    }
-
-    // 2. Find Next Segment in Queue
+    // 1. Find Next Segment in Queue
     let segment: Segment | null = null;
     if (channel.currentSegmentId) {
       const current = await this.segmentRepo.findOne({
@@ -101,7 +62,7 @@ export class PlaybackService {
       });
     }
 
-    // 3. Queue Exhausted / Empty Fallback
+    // 2. Queue Exhausted / Empty Fallback
     if (!segment) {
       this.logger.info(
         { channelId, reason: 'empty-queue' },
@@ -121,13 +82,12 @@ export class PlaybackService {
         type: 'jingle',
         filePath: jingle.filePath,
         durationSeconds: jingle.durationSeconds,
-        startOffsetSeconds: 0,
         title: 'Station ID',
         artist: 'Social Radio',
       };
     }
 
-    // 4. Status Check for Talk Segment
+    // 3. Status Check for Talk Segment
     if (segment instanceof TalkSegment) {
       if (segment.status === 'generating') {
         const jingle = await this.mediaService.getRandomJingle();
@@ -136,7 +96,6 @@ export class PlaybackService {
           type: 'jingle',
           filePath: jingle.filePath,
           durationSeconds: jingle.durationSeconds,
-          startOffsetSeconds: 0,
           title: 'Station ID',
           artist: 'Social Radio',
         };
@@ -150,13 +109,11 @@ export class PlaybackService {
       }
     }
 
-    // 5. Update Channel Playhead State
+    // 4. Update Channel Playhead State
     channel.currentSegmentId = segment.id;
-    channel.currentSegmentStartedAt = now;
-    channel.lastRequestedAt = now;
     await this.channelRepo.save(channel);
 
-    // 6. Trigger Low Runway Replenishment
+    // 5. Trigger Low Runway Replenishment
     const remainingCount = await this.segmentRepo.count({
       where: { channelId, playOrder: MoreThan(segment.playOrder) },
     });
@@ -168,7 +125,7 @@ export class PlaybackService {
       this.queueService.bufferAhead(channelId).catch(() => {});
     }
 
-    // 7. Prune Consumed Segments
+    // 6. Prune Consumed Segments
     await this.pruneConsumed(channelId, segment.playOrder);
 
     return {
@@ -176,7 +133,6 @@ export class PlaybackService {
       type: this.getSegmentType(segment),
       filePath: segment.audioUrl || '',
       durationSeconds: segment.durationSeconds || 0,
-      startOffsetSeconds: 0,
       title: (segment as SongSegment).title,
       artist: (segment as SongSegment).artist,
     };

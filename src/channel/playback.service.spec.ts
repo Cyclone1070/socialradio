@@ -63,7 +63,6 @@ describe('PlaybackService', () => {
   describe('getNextTrack', () => {
     it('returns next segment and updates channel playhead', async () => {
       const channelId = 'chan-1';
-      const now = new Date('2026-08-17T12:00:00.000Z');
 
       const channel = Object.assign(new Channel(), {
         id: channelId,
@@ -84,55 +83,15 @@ describe('PlaybackService', () => {
       mockSegmentRepo.findOne.mockResolvedValue(segment);
       mockSegmentRepo.count.mockResolvedValue(5);
 
-      const track = await service.getNextTrack(channelId, now);
+      const track = await service.getNextTrack(channelId);
 
       expect(track.segmentId).toBe('seg-1');
       expect(track.type).toBe('song');
       expect(track.filePath).toBe('media/song.mp3');
       expect(track.durationSeconds).toBe(180);
-      expect(track.startOffsetSeconds).toBe(0);
       expect(mockChannelRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({
           currentSegmentId: 'seg-1',
-          currentSegmentStartedAt: now,
-        }),
-      );
-    });
-
-    it('triggers tail-resume startOffsetSeconds when idle overdue exceeds 120s', async () => {
-      const channelId = 'chan-1';
-      const now = new Date('2026-08-17T12:10:00.000Z'); // 600s later (overdue 420s > 120s)
-      const currentSegmentStartedAt = new Date('2026-08-17T12:00:00.000Z');
-
-      const channel = Object.assign(new Channel(), {
-        id: channelId,
-        currentSegmentId: 'seg-1',
-        currentSegmentStartedAt,
-      });
-
-      const activeSeg = Object.assign(new SongSegment(), {
-        id: 'seg-1',
-        channelId,
-        playOrder: 1,
-        audioUrl: 'media/song.mp3',
-        durationSeconds: 180,
-        title: 'Song Title',
-        artist: 'Artist Name',
-      });
-
-      mockChannelRepo.findOneBy.mockResolvedValue(channel);
-      mockSegmentRepo.findOne.mockResolvedValue(activeSeg);
-      mockSegmentRepo.count.mockResolvedValue(5);
-      mathRandomSpy.mockReturnValue(0.5); // wrapDuration = 15s -> startOffset = 180 - 15 = 165s
-
-      const track = await service.getNextTrack(channelId, now);
-
-      expect(track.segmentId).toBe('seg-1');
-      expect(track.startOffsetSeconds).toBe(165);
-      expect(mockChannelRepo.save).toHaveBeenCalledWith(
-        expect.objectContaining({
-          currentSegmentId: 'seg-1',
-          currentSegmentStartedAt: new Date(now.getTime() - 165000),
         }),
       );
     });

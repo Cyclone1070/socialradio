@@ -15,10 +15,10 @@ export class CreateSchema1785419900925 implements MigrationInterface {
     }
 
     await queryRunner.query(
-      `CREATE TABLE "channel" ("id" uuid NOT NULL DEFAULT uuid_generate_v4(), "name" character varying NOT NULL, "visibility" character varying NOT NULL DEFAULT 'public', "ownerId" character varying, "currentSegmentId" character varying, "currentSegmentStartedAt" TIMESTAMP, "lastRequestedAt" TIMESTAMP, "playheadOffsetSeconds" double precision NOT NULL DEFAULT '0', "createdAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_590f33ee6ee7d76437acf362e39" PRIMARY KEY ("id"))`,
+      `CREATE TABLE "channel" ("id" uuid NOT NULL DEFAULT uuid_generate_v4(), "name" character varying NOT NULL, "visibility" character varying NOT NULL DEFAULT 'public', "ownerId" character varying, "currentSegmentId" character varying, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_590f33ee6ee7d76437acf362e39" PRIMARY KEY ("id"))`,
     );
     await queryRunner.query(
-      `CREATE TABLE "subreddit" ("id" uuid NOT NULL DEFAULT uuid_generate_v4(), "name" character varying NOT NULL, "lastScrapedAt" TIMESTAMP WITH TIME ZONE, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "UQ_0a931051f61817575785c8cba68" UNIQUE ("name"), CONSTRAINT "PK_d6f6b72e517b607c8ab94204290" PRIMARY KEY ("id"))`,
+      `CREATE TABLE "subreddit" ("id" uuid NOT NULL DEFAULT uuid_generate_v4(), "name" character varying NOT NULL, "lastScrapedAt" TIMESTAMP WITH TIME ZONE, "scrapeStartedAt" TIMESTAMP WITH TIME ZONE, "scrapeCooldownUntil" TIMESTAMP WITH TIME ZONE, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "UQ_0a931051f61817575785c8cba68" UNIQUE ("name"), CONSTRAINT "PK_d6f6b72e517b607c8ab94204290" PRIMARY KEY ("id"))`,
     );
     await queryRunner.query(
       `CREATE TABLE "comment" ("id" uuid NOT NULL DEFAULT uuid_generate_v4(), "postId" uuid NOT NULL, "redditId" character varying NOT NULL, "body" text NOT NULL, "score" integer NOT NULL, "parentRedditId" character varying, "isOp" boolean NOT NULL DEFAULT false, "redditCreatedAt" TIMESTAMP WITH TIME ZONE NOT NULL, CONSTRAINT "UQ_8a2cacf1ed01c6ad67feff589c6" UNIQUE ("redditId"), CONSTRAINT "PK_0b0e4bbc8415ec426f87f3a88e2" PRIMARY KEY ("id"))`,

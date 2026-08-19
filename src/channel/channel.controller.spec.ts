@@ -157,7 +157,6 @@ describe('ChannelController', () => {
         type: 'song',
         filePath: 'song.mp3',
         durationSeconds: 180,
-        startOffsetSeconds: 0,
       };
       mockPlaybackService.getNextTrack.mockResolvedValue(track);
 

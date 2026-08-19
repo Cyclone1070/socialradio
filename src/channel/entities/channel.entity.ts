@@ -22,15 +22,6 @@ export class Channel {
   @Column({ type: 'varchar', nullable: true })
   currentSegmentId: string | null;
 
-  @Column({ type: 'timestamp', nullable: true })
-  currentSegmentStartedAt: Date | null;
-
-  @Column({ type: 'timestamp', nullable: true })
-  lastRequestedAt: Date | null;
-
-  @Column('float', { default: 0 })
-  playheadOffsetSeconds: number;
-
   @CreateDateColumn()
   createdAt: Date;
 }

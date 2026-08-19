@@ -119,6 +119,7 @@ services:
       ICECAST_PASSWORD: hackme
       BACKEND_URL: http://app:3000
       INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET:-secret}
+      DORMANCY_THRESHOLD_SECONDS: 600
     volumes:
       - audio_storage:/app/storage
     depends_on:

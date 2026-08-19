@@ -39,8 +39,8 @@ Picking the next topic for a channel runs in two phases:
 
 ## Behaviour — playback & streaming
 
-Liquidsoap calls `GET /channels/:id/next-track` when the current track finishes:
+Liquidsoap calls `GET /channels/:id/next-track` when its stream queue needs replenishing:
 
-- **Tail-Resume Radio Illusion**: If a channel was idle > 120s, `getNextTrack` calculates `startOffsetSeconds` (e.g. `duration - 15s`) so the listener tunes into the tail of the segment mid-broadcast.
+- **Listener-Aware Dormancy**: Liquidsoap monitors Icecast listener counts. When a channel has 0 listeners for more than 10 minutes, Liquidsoap suspends `next-track` polling (saving LLM and TTS compute). When a listener connects, it resumes stream polling from where the playhead was left off.
 - **Replenishment**: If fewer than 4 segments remain after the current one, `bufferAhead` is triggered in the background.
 - **Pruning**: Consumed segments older than 100 positions behind the playhead are pruned from the database.

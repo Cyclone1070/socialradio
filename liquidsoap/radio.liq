@@ -1,5 +1,5 @@
 # Social Radio — Multi-Channel Liquidsoap Stream Source
-# Continuously fetches next tracks from NestJS backend and streams 128kbps MP3 to Icecast
+# Dynamic playlist stream with 10-minute listener-aware dormancy conservation
 
 # Log level
 set("log.level", 3)
@@ -10,25 +10,67 @@ icecast_port    = int_of_string(environment.get(default="8000", "ICECAST_PORT"))
 icecast_pass    = environment.get(default="hackme", "ICECAST_PASSWORD")
 backend_url     = environment.get(default="http://backend:3000", "BACKEND_URL")
 internal_secret = environment.get(default="secret", "INTERNAL_SERVICE_SECRET")
+dormancy_sec    = float_of_string(environment.get(default="600.0", "DORMANCY_THRESHOLD_SECONDS"))
 
-# Dynamic Track Request Function
+# Dynamic Track Request Function (Backend Queue)
 def get_next_track(channel_id) =
   uri = "#{backend_url}/channels/#{channel_id}/next-track"
   response = http.get(headers=[("X-Internal-Token", internal_secret)], uri)
   json_data = json.parse(response)
   file_path = json_data["filePath"]
-  start_offset = json_data["startOffsetSeconds"]
-  
-  # Return track request with start offset and ICY metadata if available
   request.create(file_path)
 end
 
-# Channel Stream Factory
+# Channel Stream Factory with 10-Minute Dormancy
 def create_channel_stream(channel_id) =
+  # State tracking
+  is_dormant = ref(false)
+  zero_listeners_since = ref(-1.0)
+
+  # Check listener count periodically from Icecast
+  def check_listeners() =
+    stats_uri = "http://#{icecast_host}:#{icecast_port}/admin/stats"
+    auth_header = "Basic " ^ string.base64("admin:#{icecast_pass}")
+    try
+      stats_resp = http.get(headers=[("Authorization", auth_header)], stats_uri)
+      mount_str = "/channels/#{channel_id}.mp3"
+      if string.contains(substring="<listeners>0</listeners>", stats_resp) or not string.contains(substring=mount_str, stats_resp) then
+        if !zero_listeners_since < 0.0 then
+          zero_listeners_since := time()
+        elsif time() - !zero_listeners_since >= dormancy_sec then
+          if not !is_dormant then
+            print("Channel #{channel_id} entered dormancy (0 listeners > #{dormancy_sec}s). Pausing generation.")
+            is_dormant := true
+          end
+        end
+      else
+        zero_listeners_since := -1.0
+        if !is_dormant then
+          print("Channel #{channel_id} active: listener connected. Resuming stream.")
+          is_dormant := false
+        end
+      end
+    catch _ do
+      ()
+    end
+  end
+
+  # Run listener check every 30 seconds
+  thread.run(every=30.0, check_listeners)
+
+  # Dynamic track supplier: pauses backend requests when dormant
+  def dynamic_track_supplier() =
+    if !is_dormant then
+      null()
+    else
+      get_next_track(channel_id)
+    end
+  end
+
   # Dynamic track playlist source
-  source = request.dynamic({ get_next_track(channel_id) })
+  source = request.dynamic(dynamic_track_supplier)
   
-  # Fallback safety (silence/jingle loop if source stalls)
+  # Fallback safety (silence standby if dormant or queue resolving)
   source = mksafe(source)
 
   # Output continuous 128 kbps MP3 stream to Icecast mount point
