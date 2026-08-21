@@ -1,6 +1,6 @@
 import { PostData } from '../../domain';
 
-export interface Topic {
+export interface TalkCluster {
   id: string;
   name: string;
   posts: PostData[];

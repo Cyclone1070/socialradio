@@ -7,7 +7,12 @@ import {
   HeadObjectCommand,
   DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
-import { WriteParams } from '../../domain/types/write-params';
+export interface WriteParams {
+  key: string;
+  content: string | Buffer;
+  contentType?: string;
+  cacheControl?: string;
+}
 
 @Injectable()
 export class StorageService {

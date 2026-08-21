@@ -7,6 +7,7 @@ Identity and access control for the whole app. One login endpoint, minimal state
 | Method | Path | Auth | Behaviour |
 |---|---|---|---|
 | `POST` | `/auth/login` | none | Body: `{ email, password }`. Returns `{ accessToken }`. |
+| `GET` | `/users/me` | JWT | Returns `{ id, email, createdAt }` for current authenticated user. |
 
 ## Behaviour — login contract
 

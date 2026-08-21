@@ -1,9 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
+import { getRepositoryToken } from '@mikro-orm/nestjs';
 import { MediaService } from './media.service';
-import { MusicTrack } from './entities/music-track.entity';
-import { AdTrack } from './entities/ad-track.entity';
-import { Jingle } from './entities/jingle.entity';
+import {
+  MusicTrackSchema,
+  AdTrackSchema,
+  JingleSchema,
+} from '../infrastructure/database/schemas/media.schema';
 import { NotFoundException } from '@nestjs/common';
 import { PinoLogger } from 'nestjs-pino';
 
@@ -11,24 +13,27 @@ describe('MediaService', () => {
   let service: MediaService;
 
   const mockMusicRepo = {
-    find: jest.fn(),
+    findAll: jest.fn(),
   };
 
   const mockAdRepo = {
-    find: jest.fn(),
+    findAll: jest.fn(),
   };
 
   const mockJingleRepo = {
-    find: jest.fn(),
+    findAll: jest.fn(),
   };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MediaService,
-        { provide: getRepositoryToken(MusicTrack), useValue: mockMusicRepo },
-        { provide: getRepositoryToken(AdTrack), useValue: mockAdRepo },
-        { provide: getRepositoryToken(Jingle), useValue: mockJingleRepo },
+        {
+          provide: getRepositoryToken(MusicTrackSchema),
+          useValue: mockMusicRepo,
+        },
+        { provide: getRepositoryToken(AdTrackSchema), useValue: mockAdRepo },
+        { provide: getRepositoryToken(JingleSchema), useValue: mockJingleRepo },
       ],
     }).compile();
 
@@ -58,23 +63,23 @@ describe('MediaService', () => {
           durationSeconds: 240,
         },
       ];
-      mockMusicRepo.find.mockResolvedValue(tracks);
+      mockMusicRepo.findAll.mockResolvedValue(tracks);
 
       const result = await service.getRandomMusic();
 
-      expect(mockMusicRepo.find).toHaveBeenCalled();
+      expect(mockMusicRepo.findAll).toHaveBeenCalled();
       expect(tracks.map((t) => t.filePath)).toContain(result.filePath);
       expect([180, 240]).toContain(result.durationSeconds);
     });
 
     it('should throw NotFoundException if no music tracks exist', async () => {
-      mockMusicRepo.find.mockResolvedValue([]);
+      mockMusicRepo.findAll.mockResolvedValue([]);
 
       await expect(service.getRandomMusic()).rejects.toThrow(NotFoundException);
     });
 
     it('warns with the catalog type when a pool is empty', async () => {
-      mockMusicRepo.find.mockResolvedValue([]);
+      mockMusicRepo.findAll.mockResolvedValue([]);
       const warnSpy = jest
         .spyOn(PinoLogger.prototype, 'warn')
         .mockImplementation(() => {});
@@ -98,11 +103,11 @@ describe('MediaService', () => {
           durationSeconds: 30,
         },
       ];
-      mockAdRepo.find.mockResolvedValue(ads);
+      mockAdRepo.findAll.mockResolvedValue(ads);
 
       const result = await service.getRandomAd();
 
-      expect(mockAdRepo.find).toHaveBeenCalled();
+      expect(mockAdRepo.findAll).toHaveBeenCalled();
       expect(result).toEqual({
         filePath: 'ad1.mp3',
         durationSeconds: 30,
@@ -111,7 +116,7 @@ describe('MediaService', () => {
     });
 
     it('should throw NotFoundException if no ads exist', async () => {
-      mockAdRepo.find.mockResolvedValue([]);
+      mockAdRepo.findAll.mockResolvedValue([]);
 
       await expect(service.getRandomAd()).rejects.toThrow(NotFoundException);
     });
@@ -127,11 +132,11 @@ describe('MediaService', () => {
           durationSeconds: 5,
         },
       ];
-      mockJingleRepo.find.mockResolvedValue(jingles);
+      mockJingleRepo.findAll.mockResolvedValue(jingles);
 
       const result = await service.getRandomJingle();
 
-      expect(mockJingleRepo.find).toHaveBeenCalled();
+      expect(mockJingleRepo.findAll).toHaveBeenCalled();
       expect(result).toEqual({
         filePath: 'jingle1.mp3',
         durationSeconds: 5,
@@ -140,7 +145,7 @@ describe('MediaService', () => {
     });
 
     it('should throw NotFoundException if no jingles exist', async () => {
-      mockJingleRepo.find.mockResolvedValue([]);
+      mockJingleRepo.findAll.mockResolvedValue([]);
 
       await expect(service.getRandomJingle()).rejects.toThrow(
         NotFoundException,

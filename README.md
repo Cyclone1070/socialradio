@@ -1,40 +1,41 @@
 # SocialRadio Backend
 
-AI-powered radio station backend. It scrapes Reddit for real conversations, clusters posts into topics, generates call-in talk-radio scripts with an LLM, synthesises speech with TTS, and streams the result as HLS audio per channel.
+AI-powered radio station backend. It scrapes Reddit for real conversations, clusters posts into topics, generates call-in talk-radio scripts with an LLM, synthesises speech with TTS, and streams the result as audio segments per channel.
 
 **Pipeline at a glance:**
 
 ```
-Reddit → scrape (feed) → cluster (channel) → script + TTS (radio) → queue + chunk (channel) → HLS stream
+Reddit → scrape (content) → cluster (channel) → script (script) → TTS (voice) → queue + stream (channel)
 ```
 
-## Feature slices
+## Feature Slices & Infrastructure
 
 Each slice has a `README.md` describing its **behaviour** — rules, flows, and intent. Technical details live in the code.
 
-| Slice | Purpose | Behaviour doc |
+| Slice / Module | Purpose | Behaviour doc |
 |---|---|---|
-| `src/feed` | Reddit content acquisition — scraping, filtering, caching | [README](src/feed/README.md) |
-| `src/channel` | User channels, station queue, HLS playback | [README](src/channel/README.md) |
-| `src/radio` | Script generation + TTS voice tracks | [README](src/radio/README.md) |
-| `src/media` | Music / ad / jingle library for the queue | [README](src/media/README.md) |
-| `src/storage` | Object storage abstraction (S3/MinIO) | [README](src/storage/README.md) |
-| `src/auth` | Login, JWT, RBAC guards | [README](src/auth/README.md) |
-| `src/user` | User profile | [README](src/user/README.md) |
-| `src/database` | Schema management & migrations | [README](src/database/README.md) |
-| `src/domain` | Shared types & entities | [README](src/domain/README.md) |
-| `src/healthcheck` | Liveness probe | [README](src/healthcheck/README.md) |
-| `src/logging` | Centralized JSON logging module & Pino contract | [README](src/logging/README.md) |
-| `deployment/tests` | Blackbox E2E suite (41 cases) | [README](deployment/tests/README.md) |
+| `src/content` | Reddit content acquisition — scraping, filtering, caching | [README](src/content/README.md) |
+| `src/channel` | User channels, station queue, playback & segment streaming | [README](src/channel/README.md) |
+| `src/script` | Call-in talk-radio script generation with multi-host dialogue via LLM | — |
+| `src/voice` | Text-to-speech voice synthesis via Google Cloud TTS | — |
+| `src/media` | Music / ad / jingle library for station queue fillers | [README](src/media/README.md) |
+| `src/user` | User authentication, identity, profile management | [README](src/user/README.md) |
+| `src/domain` | Shared cross-slice contracts and data types | [README](src/domain/README.md) |
+| `src/infrastructure/database` | MikroORM schema definitions & migrations | [README](src/infrastructure/database/README.md) |
+| `src/infrastructure/storage` | Object storage abstraction (S3/MinIO) | [README](src/infrastructure/storage/README.md) |
+| `src/infrastructure/auth` | Cross-cutting JWT & RBAC guards and decorators | — |
+| `src/infrastructure/logging` | Centralized JSON logging module & Pino contract | [README](src/infrastructure/logging/README.md) |
+| `src/infrastructure/healthcheck` | Liveness probe endpoint | [README](src/infrastructure/healthcheck/README.md) |
+| `deployment/tests` | Blackbox Docker E2E suite (41 cases) | [README](deployment/tests/README.md) |
 
 ## Running
 
 ```sh
-cp .env.example .env    # fill in ADMIN_EMAIL / ADMIN_PASSWORD / JWT_SECRET
+cp .env.example .env    # fill in ADMIN_EMAIL / ADMIN_PASSWORD / JWT_SECRET / GEMINI_API_KEY
 docker compose -f deployment/docker/docker-compose.yml up --build
 ```
 
-E2E suite (spins up the full stack — Postgres, MinIO, browserless, the reddit-fetcher container, and the app — plus a test fixture):
+E2E suite (spins up the full stack — Postgres, MinIO, browserless, the migration runner, reddit-fetcher, and the app — plus test fixtures):
 
 ```sh
 ./deployment/tests/run-docker-test.sh

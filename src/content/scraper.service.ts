@@ -1,10 +1,18 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, LessThan } from 'typeorm';
+import { InjectRepository } from '@mikro-orm/nestjs';
+import {
+  EntityRepository,
+  EntityManager,
+  FilterQuery,
+} from '@mikro-orm/postgresql';
 import { randomUUID } from 'crypto';
 import { Subreddit } from './entities/subreddit.entity';
 import { Post } from './entities/post.entity';
 import { Comment } from './entities/comment.entity';
+import {
+  SubredditSchema,
+  PostSchema,
+} from '../infrastructure/database/schemas/content.schema';
 import { RedditScraperService } from './reddit-scraper.service';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
 
@@ -27,12 +35,11 @@ export const SCRAPE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 @Injectable()
 export class ScraperService {
   constructor(
-    @InjectRepository(Subreddit)
-    private readonly subredditRepo: Repository<Subreddit>,
-    @InjectRepository(Post)
-    private readonly postRepo: Repository<Post>,
-    @InjectRepository(Comment)
-    private readonly commentRepo: Repository<Comment>,
+    @InjectRepository(SubredditSchema)
+    private readonly subredditRepo: EntityRepository<Subreddit>,
+    @InjectRepository(PostSchema)
+    private readonly postRepo: EntityRepository<Post>,
+    private readonly em: EntityManager,
     private readonly redditScraperService: RedditScraperService,
   ) {}
 
@@ -48,33 +55,27 @@ export class ScraperService {
 
     // Claim the subreddit to dedupe concurrent scrapes (multi-instance safe).
     // Stale claims older than 30min are considered abandoned (TTL reclaim).
-    let subreddit = await this.subredditRepo.findOneBy({ name: subredditName });
+    let subreddit = await this.subredditRepo.findOne({ name: subredditName });
     const blocked = this.isScrapeBlocked(subreddit, force);
     if (blocked) {
-      // A blocked scrape is silently Nothing: the queue generator's chain
-      // must be able to tell why nothing happened.
       this.logger.warn(
         { sub: subredditName, reason: blocked },
         'scrape skipped',
       );
-      return { scrapedPostsCount: 0 }; // in-flight or cooling down
+      return { scrapedPostsCount: 0 };
     }
     this.logger.info({ scrapeId, sub: subredditName }, 'scrape starting');
     if (!subreddit) {
-      subreddit = this.subredditRepo.create({ name: subredditName });
-      subreddit = await this.subredditRepo.save(subreddit);
+      subreddit = new Subreddit();
+      subreddit.name = subredditName;
+      await this.em.persist(subreddit).flush();
     }
     subreddit.scrapeStartedAt = new Date();
-    await this.subredditRepo.save(subreddit);
+    await this.em.flush();
 
-    // True once the row has been deleted (isInvalid): never save again —
-    // TypeORM save() on the deleted entity would re-INSERT the row.
     let deleted = false;
 
     try {
-      // The walk: page by page, evaluating every stop condition as we go.
-      // The moment 20 posts are saved the loop halts — remaining posts on
-      // the page are never visited, no further pages are fetched.
       let savedCount = 0;
       let pageCount = 0;
       let cursor: string | null = null;
@@ -82,9 +83,6 @@ export class ScraperService {
       let stopReason = '';
 
       while (true) {
-        // A failed page fetch (!ok from the fetcher: 403/429/network after
-        // its in-page retries) stops the walk quietly — partials are kept
-        // and the subreddit row survives. Only isInvalid deletes.
         let page;
         try {
           page = await this.redditScraperService.fetchTopPosts(subredditName, {
@@ -115,7 +113,7 @@ export class ScraperService {
             { scrapeId, sub: subredditName, stopReason },
             'subreddit invalid — deleting row',
           );
-          await this.subredditRepo.delete({ id: subreddit.id });
+          await this.subredditRepo.nativeDelete({ id: subreddit.id });
           return { scrapedPostsCount: 0 };
         }
         this.logger.debug(
@@ -136,7 +134,7 @@ export class ScraperService {
             break;
           }
 
-          const exists = await this.postRepo.findOneBy({
+          const exists = await this.postRepo.findOne({
             redditId: rawPost.id,
           });
           if (exists) {
@@ -172,41 +170,36 @@ export class ScraperService {
             continue;
           }
 
-          const post = this.postRepo.create({
-            subredditId: subreddit.id,
-            redditId: rawPost.id,
-            title: rawPost.title,
-            body: rawPost.selftext || '',
-            score: rawPost.score,
-            redditCreatedAt: new Date(rawPost.created_utc * 1000),
-          });
+          const post = new Post();
+          post.subreddit = subreddit;
+          post.redditId = rawPost.id;
+          post.title = rawPost.title;
+          post.body = rawPost.selftext || '';
+          post.score = rawPost.score;
+          post.redditCreatedAt = new Date(rawPost.created_utc * 1000);
+          this.em.persist(post);
 
-          // Save post first so comments can reference its ID via database relation
-          const savedPost = await this.postRepo.save(post);
-
-          const comments = rawComments.map((rawComment) => {
+          for (const rawComment of rawComments) {
             const isOp = rawComment.author === rawPost.author;
             const parentRedditId = rawComment.parent_id.startsWith('t1_')
               ? rawComment.parent_id.replace('t1_', '')
               : null;
 
-            return this.commentRepo.create({
-              postId: savedPost.id,
-              redditId: rawComment.id,
-              body: rawComment.body,
-              score: rawComment.score,
-              parentRedditId,
-              isOp,
-              redditCreatedAt: new Date(rawComment.created_utc * 1000),
-            });
-          });
-          await this.commentRepo.save(comments);
+            const comment = new Comment();
+            comment.post = post;
+            comment.redditId = rawComment.id;
+            comment.body = rawComment.body;
+            comment.score = rawComment.score;
+            comment.parentRedditId = parentRedditId;
+            comment.isOp = isOp;
+            comment.redditCreatedAt = new Date(rawComment.created_utc * 1000);
+            this.em.persist(comment);
+          }
+          await this.em.flush();
 
           savedCount++;
         }
 
-        // Belt + braces: Reddit's cursor never loops, but a pathological
-        // page repeating the previous page's first post id ends the walk.
         const firstPostId = rawPosts[0]?.id ?? null;
         if (firstPostId !== null && firstPostId === prevFirstPostId) {
           stopReason = 'cursor-loop-guard';
@@ -214,8 +207,6 @@ export class ScraperService {
         }
         prevFirstPostId = firstPostId;
 
-        // Stop when the job is done (20 saved) or the pool is exhausted
-        // (no cursor back from the fetcher).
         if (savedCount >= 20 || !after) {
           stopReason =
             stopReason || (savedCount >= 20 ? 'saved-20' : 'pool-exhausted');
@@ -224,9 +215,6 @@ export class ScraperService {
         cursor = after;
       }
 
-      // Purge this sub's posts older than the 7-day window AFTER saving new
-      // ones, so new content is persisted before any cleanup runs (no
-      // availability gap).
       await this.cleanupOldData(subreddit.id);
 
       subreddit.lastScrapedAt = new Date();
@@ -235,7 +223,7 @@ export class ScraperService {
           Date.now() + SCRAPE_COOLDOWN_MS,
         );
       }
-      await this.subredditRepo.save(subreddit);
+      await this.em.flush();
 
       this.logger.info(
         {
@@ -251,20 +239,13 @@ export class ScraperService {
 
       return { scrapedPostsCount: savedCount };
     } finally {
-      // Release the claim so future scrapes can run — but never save a
-      // deleted entity back (it would resurrect the row).
       if (!deleted) {
         subreddit.scrapeStartedAt = null;
-        await this.subredditRepo.save(subreddit);
+        await this.em.flush();
       }
     }
   }
 
-  /**
-   * Why a scrape should be skipped: an in-flight claim (TTL-bounded) or a
-   * cooldown after a 0-new-post scrape. `force` bypasses both. Returns null
-   * when the scrape may proceed.
-   */
   private isScrapeBlocked(
     subreddit: Subreddit | null,
     force: boolean,
@@ -287,16 +268,16 @@ export class ScraperService {
 
   async cleanupOldData(subredditId?: string): Promise<void> {
     const cutoff = new Date(Date.now() - SCRAPE_WINDOW_MS);
-    // Deleting posts cascadedly deletes their comments
-    const result = await this.postRepo.delete({
-      ...(subredditId ? { subredditId } : {}),
-      scrapedAt: LessThan(cutoff),
-    });
+    const where: FilterQuery<Post> = { scrapedAt: { $lt: cutoff } };
+    if (subredditId) {
+      where.subreddit = subredditId;
+    }
+    const count = await this.postRepo.nativeDelete(where);
     this.logger.info(
       {
         scope: subredditId ?? 'all',
         cutoffAgeDays: SCRAPE_WINDOW_MS / (24 * 60 * 60 * 1000),
-        deletedCount: (result ?? { affected: 0 }).affected ?? 0,
+        deletedCount: count,
       },
       'purged old posts',
     );

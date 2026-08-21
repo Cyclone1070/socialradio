@@ -15,6 +15,19 @@ services:
       timeout: 5s
       retries: 5
 
+  migration:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/Dockerfile
+      target: runner
+    command: ["npm", "run", "migration:up"]
+    env_file: ../../.env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/socialradio
+    depends_on:
+      db:
+        condition: service_healthy
+
   minio:
     image: minio/minio:latest
     ports:
@@ -58,6 +71,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migration:
+        condition: service_completed_successfully
       fetcher:
         condition: service_started
       minio:
@@ -119,7 +134,7 @@ services:
       ICECAST_PASSWORD: hackme
       BACKEND_URL: http://app:3000
       INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET:-secret}
-      DORMANCY_THRESHOLD_SECONDS: 600
+      IDLE_THRESHOLD_SECONDS: 600
     volumes:
       - audio_storage:/app/storage
     depends_on:

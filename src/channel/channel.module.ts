@@ -1,19 +1,18 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { Channel } from './entities/channel.entity';
-import { ChannelSubreddit } from './entities/channel-subreddit.entity';
-import { ChannelPostProgress } from './entities/channel-post-progress.entity';
+import { MikroOrmModule } from '@mikro-orm/nestjs';
 import {
-  Segment,
-  SongSegment,
-  TalkSegment,
-  AdSegment,
-  JingleSegment,
-} from './entities/segment.entity';
+  ChannelSchema,
+  SegmentSchema,
+  MusicSegmentSchema,
+  TalkSegmentSchema,
+  AdSegmentSchema,
+  JingleSegmentSchema,
+} from '../infrastructure/database/schemas/channel.schema';
 import { ChannelService } from './channel.service';
 import { PlaybackService } from './playback.service';
 import { QueueService } from './queue.service';
 import { ChannelController } from './channel.controller';
+import { AdminChannelController } from './admin-channel.controller';
 import { UserModule } from '../user/user.module';
 import { PassportModule } from '@nestjs/passport';
 import { MediaModule } from '../media/media.module';
@@ -23,15 +22,13 @@ import { VoiceModule } from '../voice/voice.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([
-      Channel,
-      ChannelSubreddit,
-      ChannelPostProgress,
-      Segment,
-      SongSegment,
-      TalkSegment,
-      AdSegment,
-      JingleSegment,
+    MikroOrmModule.forFeature([
+      ChannelSchema,
+      SegmentSchema,
+      MusicSegmentSchema,
+      TalkSegmentSchema,
+      AdSegmentSchema,
+      JingleSegmentSchema,
     ]),
     UserModule,
     PassportModule,
@@ -40,8 +37,8 @@ import { VoiceModule } from '../voice/voice.module';
     ScriptModule,
     VoiceModule,
   ],
-  controllers: [ChannelController],
+  controllers: [ChannelController, AdminChannelController],
   providers: [ChannelService, PlaybackService, QueueService],
-  exports: [ChannelService, PlaybackService, QueueService, TypeOrmModule],
+  exports: [ChannelService, PlaybackService, QueueService, MikroOrmModule],
 })
 export class ChannelModule {}

@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
+import { MikroOrmModule } from '@mikro-orm/nestjs';
 import { LoggingModule } from './infrastructure/logging/logging.module';
 
 import { UserModule } from './user/user.module';
@@ -10,7 +10,8 @@ import { ScriptModule } from './script/script.module';
 import { VoiceModule } from './voice/voice.module';
 import { ChannelModule } from './channel/channel.module';
 import { HealthcheckModule } from './infrastructure/healthcheck/healthcheck.module';
-import { CreateSchema1785419900925 } from './infrastructure/database/migrations/1785419900925-CreateSchema';
+import { PostgreSqlDriver } from '@mikro-orm/postgresql';
+import mikroOrmConfig from './infrastructure/database/mikro-orm.config';
 
 @Module({
   imports: [
@@ -18,20 +19,14 @@ import { CreateSchema1785419900925 } from './infrastructure/database/migrations/
       isGlobal: true,
     }),
     LoggingModule.forRoot(),
-    TypeOrmModule.forRootAsync({
+    MikroOrmModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => {
         const databaseUrl = config.get<string>('DATABASE_URL');
-        if (!databaseUrl) {
-          throw new Error('DATABASE_URL is not configured');
-        }
         return {
-          type: 'postgres',
-          url: databaseUrl,
-          autoLoadEntities: true,
-          synchronize: false,
-          migrationsRun: true,
-          migrations: [CreateSchema1785419900925],
+          ...mikroOrmConfig,
+          driver: PostgreSqlDriver,
+          clientUrl: databaseUrl || mikroOrmConfig.clientUrl,
         };
       },
       inject: [ConfigService],

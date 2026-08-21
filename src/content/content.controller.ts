@@ -1,12 +1,14 @@
 import { Controller, Get, Post, Delete, Body, UseGuards } from '@nestjs/common';
 import { ScraperService, ScrapeSubredditResult } from './scraper.service';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectRepository } from '@mikro-orm/nestjs';
+import { EntityRepository } from '@mikro-orm/postgresql';
 import { Subreddit } from './entities/subreddit.entity';
 import { Post as PostEntity } from './entities/post.entity';
-import { JwtAuthGuard } from '../user/jwt-auth.guard';
-import { RolesGuard } from '../user/roles.guard';
-import { Roles } from '../user/roles.decorator';
+import {
+  SubredditSchema,
+  PostSchema,
+} from '../infrastructure/database/schemas/content.schema';
+import { JwtAuthGuard, RolesGuard, Roles } from '../infrastructure/auth';
 
 @Controller('admin/feeds')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -14,10 +16,10 @@ import { Roles } from '../user/roles.decorator';
 export class ContentController {
   constructor(
     private readonly scraperService: ScraperService,
-    @InjectRepository(Subreddit)
-    private readonly subredditRepo: Repository<Subreddit>,
-    @InjectRepository(PostEntity)
-    private readonly postRepo: Repository<PostEntity>,
+    @InjectRepository(SubredditSchema)
+    private readonly subredditRepo: EntityRepository<Subreddit>,
+    @InjectRepository(PostSchema)
+    private readonly postRepo: EntityRepository<PostEntity>,
   ) {}
 
   @Post('scrape')
@@ -42,10 +44,12 @@ export class ContentController {
       postCount: number;
     }>
   > {
-    const subreddits = await this.subredditRepo.find();
+    const subreddits = await this.subredditRepo.findAll();
     const result = [];
     for (const sub of subreddits) {
-      const count = await this.postRepo.countBy({ subredditId: sub.id });
+      const count = await this.postRepo.count({
+        subreddit: sub.id,
+      });
       result.push({
         id: sub.id,
         name: sub.name,

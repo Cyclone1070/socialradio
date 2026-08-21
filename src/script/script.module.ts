@@ -1,13 +1,11 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { TopicScript } from './entities/topic-script.entity';
 import { ScriptService } from './script.service';
 import { LlmService } from './llm.service';
 import { ScriptContract } from '../domain/contracts';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([TopicScript]), ConfigModule],
+  imports: [ConfigModule],
   providers: [
     LlmService,
     ScriptService,
@@ -16,6 +14,6 @@ import { ScriptContract } from '../domain/contracts';
       useClass: ScriptService,
     },
   ],
-  exports: [ScriptService, ScriptContract, TypeOrmModule],
+  exports: [ScriptService, ScriptContract],
 })
 export class ScriptModule {}

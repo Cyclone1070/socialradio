@@ -1,9 +1,14 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { InjectRepository } from '@mikro-orm/nestjs';
+import { EntityRepository } from '@mikro-orm/postgresql';
 import { Subreddit } from './entities/subreddit.entity';
 import { Post } from './entities/post.entity';
 import { Comment } from './entities/comment.entity';
+import {
+  SubredditSchema,
+  PostSchema,
+  CommentSchema,
+} from '../infrastructure/database/schemas/content.schema';
 import { ScraperService } from './scraper.service';
 import { ContentContract } from '../domain/contracts';
 import { PostData, CommentData } from '../domain/types/post.types';
@@ -12,21 +17,24 @@ import { SubredditData } from '../domain/types/subreddit.types';
 @Injectable()
 export class ContentService implements ContentContract {
   constructor(
-    @InjectRepository(Subreddit)
-    private readonly subredditRepo: Repository<Subreddit>,
-    @InjectRepository(Post)
-    private readonly postRepo: Repository<Post>,
-    @InjectRepository(Comment)
-    private readonly commentRepo: Repository<Comment>,
+    @InjectRepository(SubredditSchema)
+    private readonly subredditRepo: EntityRepository<Subreddit>,
+    @InjectRepository(PostSchema)
+    private readonly postRepo: EntityRepository<Post>,
+    @InjectRepository(CommentSchema)
+    private readonly commentRepo: EntityRepository<Comment>,
     private readonly scraperService: ScraperService,
   ) {}
 
   async getPostData(postId: string): Promise<PostData | null> {
-    const post = await this.postRepo.findOne({ where: { id: postId } });
+    const post = await this.postRepo.findOne(
+      { id: postId },
+      { populate: ['subreddit'] },
+    );
     if (!post) return null;
     return {
       id: post.id,
-      subredditId: post.subredditId,
+      subredditId: post.subreddit?.id || post.subredditId,
       redditId: post.redditId,
       title: post.title,
       body: post.body,
@@ -36,12 +44,13 @@ export class ContentService implements ContentContract {
 
   async getPostsBySubredditIds(subredditIds: string[]): Promise<PostData[]> {
     if (subredditIds.length === 0) return [];
-    const posts = await this.postRepo.find({
-      where: { subredditId: In(subredditIds) },
-    });
+    const posts = await this.postRepo.find(
+      { subreddit: { id: { $in: subredditIds } } },
+      { populate: ['subreddit'] },
+    );
     return posts.map((post) => ({
       id: post.id,
-      subredditId: post.subredditId,
+      subredditId: post.subreddit?.id || post.subredditId,
       redditId: post.redditId,
       title: post.title,
       body: post.body,
@@ -51,12 +60,13 @@ export class ContentService implements ContentContract {
 
   async getCommentsByPostIds(postIds: string[]): Promise<CommentData[]> {
     if (postIds.length === 0) return [];
-    const comments = await this.commentRepo.find({
-      where: { postId: In(postIds) },
-    });
+    const comments = await this.commentRepo.find(
+      { post: { id: { $in: postIds } } },
+      { populate: ['post'] },
+    );
     return comments.map((c) => ({
       id: c.id,
-      postId: c.postId,
+      postId: c.post?.id || c.postId,
       redditId: c.redditId,
       body: c.body,
       score: c.score,
@@ -67,9 +77,7 @@ export class ContentService implements ContentContract {
 
   async getSubredditsByIds(ids: string[]): Promise<SubredditData[]> {
     if (ids.length === 0) return [];
-    const subs = await this.subredditRepo.find({
-      where: { id: In(ids) },
-    });
+    const subs = await this.subredditRepo.find({ id: { $in: ids } });
     return subs.map((s) => ({
       id: s.id,
       name: s.name,
@@ -79,7 +87,7 @@ export class ContentService implements ContentContract {
   }
 
   async getSubredditByName(name: string): Promise<SubredditData | null> {
-    const sub = await this.subredditRepo.findOne({ where: { name } });
+    const sub = await this.subredditRepo.findOne({ name });
     if (!sub) return null;
     return {
       id: sub.id,

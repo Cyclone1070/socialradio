@@ -12,7 +12,7 @@ User-facing stations: each channel subscribes to subreddits, maintains a never-e
 | `POST` | `/channels/:id/subreddits` | JWT | Subscribes the channel to a subreddit. Body: `{ subredditName }`. Non-existent channel → 404. **Idempotent**. |
 | `DELETE` | `/channels/:id/subreddits/:subName` | JWT | Removes the subscription. Missing channel or subreddit → 404. |
 | `GET` | `/channels/:id/next-track` | Internal Secret | Returns next playable audio track for Liquidsoap stream source (`X-Internal-Token`). |
-| `GET` | `/channels/admin/:id/topics` | Admin | The next pending topic for a channel (what would air next). |
+| `GET` | `/admin/channels/:id/topics` | Admin | The next pending topic for a channel (what would air next). |
 
 ## Behaviour — the queue
 
@@ -21,7 +21,7 @@ User-facing stations: each channel subscribes to subreddits, maintains a never-e
 **Cycle pattern** — every buffer refill appends one block of:
 
 ```
-[1-2 Talk segments] → [1-2 Songs] → [1-2 Ads] → [1 Jingle]
+[1-2 Talk segments] → [1-2 Music tracks] → [1-2 Ads] → [1 Jingle]
 ```
 
 (1 or 2 of each talk/song/ad is a 50/50 uniform random choice.)

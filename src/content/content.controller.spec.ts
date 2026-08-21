@@ -1,11 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { getRepositoryToken } from '@mikro-orm/nestjs';
 import { ContentController } from './content.controller';
 import { ScraperService } from './scraper.service';
-import { getRepositoryToken } from '@nestjs/typeorm';
-import { Subreddit } from './entities/subreddit.entity';
-import { Post } from './entities/post.entity';
-import { JwtAuthGuard } from '../user/jwt-auth.guard';
-import { RolesGuard } from '../user/roles.guard';
+import {
+  SubredditSchema,
+  PostSchema,
+} from '../infrastructure/database/schemas/content.schema';
+import { JwtAuthGuard, RolesGuard } from '../infrastructure/auth';
 
 describe('ContentController', () => {
   let controller: ContentController;
@@ -16,11 +17,11 @@ describe('ContentController', () => {
   };
 
   const mockSubredditRepo = {
-    find: jest.fn(),
+    findAll: jest.fn(),
   };
 
   const mockPostRepo = {
-    countBy: jest.fn(),
+    count: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -32,8 +33,11 @@ describe('ContentController', () => {
       controllers: [ContentController],
       providers: [
         { provide: ScraperService, useValue: mockScraperService },
-        { provide: getRepositoryToken(Subreddit), useValue: mockSubredditRepo },
-        { provide: getRepositoryToken(Post), useValue: mockPostRepo },
+        {
+          provide: getRepositoryToken(SubredditSchema),
+          useValue: mockSubredditRepo,
+        },
+        { provide: getRepositoryToken(PostSchema), useValue: mockPostRepo },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -83,19 +87,17 @@ describe('ContentController', () => {
         { id: 'sub-1', name: 'news', lastScrapedAt: new Date() },
         { id: 'sub-2', name: 'pics', lastScrapedAt: null },
       ];
-      mockSubredditRepo.find.mockResolvedValue(subs);
-      mockPostRepo.countBy
-        .mockResolvedValueOnce(10) // for sub-1
-        .mockResolvedValueOnce(0); // for sub-2
+      mockSubredditRepo.findAll.mockResolvedValue(subs);
+      mockPostRepo.count.mockResolvedValueOnce(10).mockResolvedValueOnce(0);
 
       const result = await controller.getSubreddits();
 
-      expect(mockSubredditRepo.find).toHaveBeenCalled();
-      expect(mockPostRepo.countBy).toHaveBeenNthCalledWith(1, {
-        subredditId: 'sub-1',
+      expect(mockSubredditRepo.findAll).toHaveBeenCalled();
+      expect(mockPostRepo.count).toHaveBeenNthCalledWith(1, {
+        subreddit: 'sub-1',
       });
-      expect(mockPostRepo.countBy).toHaveBeenNthCalledWith(2, {
-        subredditId: 'sub-2',
+      expect(mockPostRepo.count).toHaveBeenNthCalledWith(2, {
+        subreddit: 'sub-2',
       });
       expect(result).toHaveLength(2);
       expect(result[0]).toEqual({

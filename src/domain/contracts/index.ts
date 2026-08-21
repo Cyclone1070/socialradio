@@ -1,6 +1,6 @@
 import { PostData, CommentData } from '../types/post.types';
 import { ScriptData } from '../types/script.types';
-import { TalkData } from '../types/audio.types';
+import { TalkData, MusicData, AdData, JingleData } from '../types/audio.types';
 import { SubredditData } from '../types/subreddit.types';
 
 export abstract class ScriptContract {
@@ -24,4 +24,10 @@ export abstract class ContentContract {
   abstract getSubredditsByIds(ids: string[]): Promise<SubredditData[]>;
   abstract getSubredditByName(name: string): Promise<SubredditData | null>;
   abstract scrapeSubreddit(subredditName: string): Promise<void>;
+}
+
+export abstract class MediaContract {
+  abstract getRandomMusic(): Promise<MusicData>;
+  abstract getRandomAd(): Promise<AdData>;
+  abstract getRandomJingle(): Promise<JingleData>;
 }

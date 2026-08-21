@@ -1,27 +1,21 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  CreateDateColumn,
-} from 'typeorm';
+import { Collection } from '@mikro-orm/core';
 
-@Entity()
-export class Channel {
-  @PrimaryGeneratedColumn('uuid')
+export interface SubredditRef {
   id: string;
-
-  @Column()
   name: string;
+}
 
-  @Column({ default: 'public' })
-  visibility: 'public' | 'private';
+export interface PostRef {
+  id: string;
+}
 
-  @Column({ type: 'varchar', nullable: true })
-  ownerId: string | null;
-
-  @Column({ type: 'varchar', nullable: true })
-  currentSegmentId: string | null;
-
-  @CreateDateColumn()
-  createdAt: Date;
+export class Channel {
+  id!: string;
+  name!: string;
+  visibility: 'public' | 'private' = 'public';
+  ownerId: string | null = null;
+  currentSegmentId: string | null = null;
+  subreddits = new Collection<SubredditRef>(this);
+  completedPosts = new Collection<PostRef>(this);
+  createdAt: Date = new Date();
 }

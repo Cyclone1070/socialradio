@@ -1,13 +1,24 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { MusicTrack } from './entities/music-track.entity';
-import { AdTrack } from './entities/ad-track.entity';
-import { Jingle } from './entities/jingle.entity';
+import { MikroOrmModule } from '@mikro-orm/nestjs';
+import {
+  MusicTrackSchema,
+  AdTrackSchema,
+  JingleSchema,
+} from '../infrastructure/database/schemas/media.schema';
 import { MediaService } from './media.service';
+import { MediaContract } from '../domain';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([MusicTrack, AdTrack, Jingle])],
-  providers: [MediaService],
-  exports: [MediaService, TypeOrmModule],
+  imports: [
+    MikroOrmModule.forFeature([MusicTrackSchema, AdTrackSchema, JingleSchema]),
+  ],
+  providers: [
+    MediaService,
+    {
+      provide: MediaContract,
+      useClass: MediaService,
+    },
+  ],
+  exports: [MediaService, MediaContract, MikroOrmModule],
 })
 export class MediaModule {}

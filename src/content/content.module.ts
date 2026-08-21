@@ -1,9 +1,11 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
+import { MikroOrmModule } from '@mikro-orm/nestjs';
 import { PassportModule } from '@nestjs/passport';
-import { Subreddit } from './entities/subreddit.entity';
-import { Post } from './entities/post.entity';
-import { Comment } from './entities/comment.entity';
+import {
+  SubredditSchema,
+  PostSchema,
+  CommentSchema,
+} from '../infrastructure/database/schemas/content.schema';
 import { RedditScraperService } from './reddit-scraper.service';
 import { ScraperService } from './scraper.service';
 import { ContentService } from './content.service';
@@ -13,7 +15,7 @@ import { ContentContract } from '../domain/contracts';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Subreddit, Post, Comment]),
+    MikroOrmModule.forFeature([SubredditSchema, PostSchema, CommentSchema]),
     UserModule,
     PassportModule,
   ],
@@ -32,7 +34,7 @@ import { ContentContract } from '../domain/contracts';
     RedditScraperService,
     ContentService,
     ContentContract,
-    TypeOrmModule,
+    MikroOrmModule,
   ],
 })
 export class ContentModule {}

@@ -12,20 +12,17 @@ import { AuthGuard } from '@nestjs/passport';
 import * as express from 'express';
 import { ChannelService } from './channel.service';
 import { PlaybackService, NextTrackData } from './playback.service';
-import { QueueService } from './queue.service';
 import { InternalAuthGuard } from './internal-auth.guard';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { SubscribeSubredditDto } from './dto/subscribe-subreddit.dto';
 import { ChannelResponseDto } from './dto/channel-response.dto';
-import { RolesGuard } from '../user/roles.guard';
-import { Roles } from '../user/roles.decorator';
+import { SubredditRef } from './entities/channel.entity';
 
 @Controller('channels')
 export class ChannelController {
   constructor(
     private readonly channelService: ChannelService,
     private readonly playbackService: PlaybackService,
-    private readonly queueService: QueueService,
   ) {}
 
   @Get()
@@ -62,7 +59,7 @@ export class ChannelController {
 
   @Get(':id/subreddits')
   @UseGuards(AuthGuard('jwt'))
-  async getChannelSubreddits(@Param('id') id: string): Promise<string[]> {
+  async getChannelSubreddits(@Param('id') id: string): Promise<SubredditRef[]> {
     return await this.channelService.getSubscribedSubreddits(id);
   }
 
@@ -79,12 +76,5 @@ export class ChannelController {
   @UseGuards(InternalAuthGuard)
   async getNextTrack(@Param('id') id: string): Promise<NextTrackData> {
     return await this.playbackService.getNextTrack(id);
-  }
-
-  @Get('admin/:id/topics')
-  @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('admin')
-  async getTopics(@Param('id') id: string): Promise<unknown> {
-    return await this.queueService.findPendingTopicSegment(id);
   }
 }

@@ -95,9 +95,9 @@ like `dead-sub-fixture.sql` with `-v` psql variables). No other SQL paths exist.
 | `POST /channels` | ✅ #19 | — | — |
 | `POST /channels/:id/subreddits` | ✅ #20 | — | — |
 | `DELETE /channels/:id/subreddits/:subName` | ✅ #21 | — | — |
-| `POST /admin/feeds/scrape` | ✅ #29 | ✅ #30 | ✅ #31 |
-| `GET /admin/feeds/subreddits` | ✅ #32 | — | ✅ #33 |
-| `DELETE /admin/feeds/cache` | ✅ #34 | — | ✅ #35 |
+| `POST /admin/feeds/scrape` | ✅ #33 | ✅ #34 | ✅ #35 |
+| `GET /admin/feeds/subreddits` | ✅ #36 | — | ✅ #37 |
+| `DELETE /admin/feeds/cache` | ✅ #38 | — | ✅ #39 |
 | `GET /admin/channels/:id/topics` | ✅ #40 | — | ✅ #41 |
 | `GET /channels/:id/subreddits` (read-back) | — | — | — |
 | `GET /channels/:id/playlist.m3u8` | ❌ excluded | — | — |

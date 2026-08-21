@@ -1,9 +1,10 @@
-# Domain — Shared Types & Entities
+# Domain — Shared Contracts & Data Types
 
-Cross-slice contracts that don't belong to any single feature: storage interface, audio file references, topic interface, and shared entities (channel, subreddit, segment types).
+Cross-slice contracts and shared data models that define communication boundaries between feature slices.
 
-## Behaviour
+## Principles & Guardrails
 
-- **Interfaces over implementations**: slices depend on these types (e.g. `StorageService`), never on concrete services from other slices.
-- **Entities** here are the cross-cutting ones (channel, subreddit); feature-specific tables live in their own slice (`feed/entities`, `radio/entities`, `media/entities`).
-- Segment taxonomy lives here: **Talk / Song / Ad / Jingle** — the four things a channel queue can hold.
+- **Contracts over concrete implementations**: Slices depend strictly on abstract class contracts in `src/domain/contracts/` (`ContentContract`, `ScriptContract`, `VoiceContract`, `MediaContract`), never importing concrete services or models from peer slices.
+- **Zero ORM or NestJS Decorators**: Domain files are pure TypeScript interfaces and abstract contract definitions.
+- **Strict Anti-Dumping**: Every symbol exported from `src/domain/` must be consumed across 2+ feature slices or form the signature of a domain contract.
+- **Segment Taxonomy**: **Talk / Music / Ad / Jingle** — the four segment types a channel queue can hold.

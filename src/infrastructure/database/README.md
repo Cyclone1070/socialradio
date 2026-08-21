@@ -1,24 +1,16 @@
-# Database — Schema & Migrations
+# Database — MikroORM Schemas & Migrations
 
-Postgres schema management. **Migrations are the only way the schema changes** — `synchronize: false` everywhere.
+Postgres schema management using **MikroORM** and decoupled migration containers.
 
-## Policy
+## Policy & Architecture
 
-- **`synchronize: false`** in both runtime (`app.module.ts`) and CLI (`data-source.ts`). TypeORM's auto-sync would diff entities against the DB and run `ALTER TABLE` on every boot — one bad boot could drop columns. Migrations only.
-- **Schema changes flow through `migration:generate`**, which introspects the entities and produces matching DDL:
-
+- **Dedicated Migration Container**: Migrations do NOT run inside the application process (`main.ts`). In `docker-compose.yml`, a dedicated `migration` container runs `npm run migration:up` before the application starts up.
+- **Strict Schema-Driven Development**: Entities in feature slices are pure POCOs (`*.entity.ts`), while MikroORM schemas live in `src/infrastructure/database/schemas/`.
+- **Migration Commands**:
   ```sh
-  npm run migration:generate src/database/migrations/<timestamp>-<Name>
+  npm run migration:create    # Generate initial/incremental migration
+  npm run migration:up        # Apply pending migrations
+  npm run migration:down      # Rollback last migration
   ```
-
-  The generated file is the source of truth — hand-written DDL drifts from entities.
-
-- **Migrations create schema + seed the admin account, and nothing else.** Zero demo data, zero starter content:
-  - Admin user comes from `ADMIN_EMAIL` / `ADMIN_PASSWORD` env vars.
-  - **Fail-fast**: the migration throws if either is missing — no silent anonymous boot.
-- `uuid-ossp` is used for UUID generation (available in the Postgres image).
-
-## Behaviour
-
-- The app boots with an empty schema and applies migrations on startup — the schema must exist before anything else runs (the E2E fixture depends on this ordering).
-- Non-admin users are created externally (E2E test fixture only — no registration endpoint).
+- **Admin Seeding**: The initial migration seeds the admin user using credentials defined in `ADMIN_EMAIL` and `ADMIN_PASSWORD` environment variables.
+- **Fail-Fast**: Bootstrapping throws immediately if database connection or migration execution fails.

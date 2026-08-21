@@ -1,5 +1,5 @@
 import { PostData } from '../../domain';
-import { Topic } from '../interfaces/topic.interface';
+import { TalkCluster } from '../interfaces/talk-cluster.interface';
 
 const STOP_WORDS = new Set([
   'the',
@@ -86,8 +86,11 @@ export function jaccardSimilarity(
   return intersectionSize / unionSize;
 }
 
-export function clusterPosts(posts: PostData[], threshold = 0.35): Topic[] {
-  const segments: Topic[] = [];
+export function clusterPosts(
+  posts: PostData[],
+  threshold = 0.35,
+): TalkCluster[] {
+  const segments: TalkCluster[] = [];
   const sortedPosts = [...posts].sort((a, b) => b.score - a.score);
   const mapped = new Set<string>();
 

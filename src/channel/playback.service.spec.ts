@@ -1,27 +1,32 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
+import { getRepositoryToken } from '@mikro-orm/nestjs';
+import { EntityManager } from '@mikro-orm/postgresql';
 import { PlaybackService } from './playback.service';
 import { QueueService } from './queue.service';
-import { MediaService } from '../media/media.service';
+import { MediaContract } from '../domain';
 import { Channel } from './entities/channel.entity';
-import { Segment, SongSegment, TalkSegment } from './entities/segment.entity';
-import { LessThan } from 'typeorm';
+import { MusicSegment, TalkSegment } from './entities/segment.entity';
+import {
+  ChannelSchema,
+  SegmentSchema,
+} from '../infrastructure/database/schemas/channel.schema';
 
 describe('PlaybackService', () => {
   let service: PlaybackService;
   let mathRandomSpy: jest.SpyInstance;
 
   const mockChannelRepo = {
-    findOneBy: jest.fn(),
-    save: jest.fn(),
-    update: jest.fn(),
+    findOne: jest.fn(),
   };
 
   const mockSegmentRepo = {
     findOne: jest.fn(),
-    find: jest.fn(),
     count: jest.fn(),
-    delete: jest.fn(),
+    nativeDelete: jest.fn(),
+  };
+
+  const mockEntityManager = {
+    flush: jest.fn(),
   };
 
   const mockQueueService = {
@@ -39,10 +44,17 @@ describe('PlaybackService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PlaybackService,
-        { provide: getRepositoryToken(Channel), useValue: mockChannelRepo },
-        { provide: getRepositoryToken(Segment), useValue: mockSegmentRepo },
+        {
+          provide: getRepositoryToken(ChannelSchema),
+          useValue: mockChannelRepo,
+        },
+        {
+          provide: getRepositoryToken(SegmentSchema),
+          useValue: mockSegmentRepo,
+        },
+        { provide: EntityManager, useValue: mockEntityManager },
         { provide: QueueService, useValue: mockQueueService },
-        { provide: MediaService, useValue: mockMediaService },
+        { provide: MediaContract, useValue: mockMediaService },
       ],
     }).compile();
 
@@ -69,7 +81,7 @@ describe('PlaybackService', () => {
         currentSegmentId: null,
       });
 
-      const segment = Object.assign(new SongSegment(), {
+      const segment = Object.assign(new MusicSegment(), {
         id: 'seg-1',
         channelId,
         playOrder: 1,
@@ -79,36 +91,33 @@ describe('PlaybackService', () => {
         artist: 'Artist Name',
       });
 
-      mockChannelRepo.findOneBy.mockResolvedValue(channel);
+      mockChannelRepo.findOne.mockResolvedValue(channel);
       mockSegmentRepo.findOne.mockResolvedValue(segment);
       mockSegmentRepo.count.mockResolvedValue(5);
 
       const track = await service.getNextTrack(channelId);
 
       expect(track.segmentId).toBe('seg-1');
-      expect(track.type).toBe('song');
+      expect(track.type).toBe('music');
       expect(track.filePath).toBe('media/song.mp3');
       expect(track.durationSeconds).toBe(180);
-      expect(mockChannelRepo.save).toHaveBeenCalledWith(
-        expect.objectContaining({
-          currentSegmentId: 'seg-1',
-        }),
-      );
+      expect(channel.currentSegmentId).toBe('seg-1');
+      expect(mockEntityManager.flush).toHaveBeenCalled();
     });
 
     it('triggers bufferAhead when remaining runway is low (< 4)', async () => {
       const channelId = 'chan-1';
       const channel = Object.assign(new Channel(), { id: channelId });
-      const segment = Object.assign(new SongSegment(), {
+      const segment = Object.assign(new MusicSegment(), {
         id: 'seg-1',
         playOrder: 1,
         durationSeconds: 180,
         audioUrl: 'song.mp3',
       });
 
-      mockChannelRepo.findOneBy.mockResolvedValue(channel);
+      mockChannelRepo.findOne.mockResolvedValue(channel);
       mockSegmentRepo.findOne.mockResolvedValue(segment);
-      mockSegmentRepo.count.mockResolvedValue(2); // Runway < 4
+      mockSegmentRepo.count.mockResolvedValue(2);
 
       await service.getNextTrack(channelId);
 
@@ -124,7 +133,7 @@ describe('PlaybackService', () => {
         status: 'generating',
       });
 
-      mockChannelRepo.findOneBy.mockResolvedValue(channel);
+      mockChannelRepo.findOne.mockResolvedValue(channel);
       mockSegmentRepo.findOne.mockResolvedValue(talk);
 
       const track = await service.getNextTrack(channelId);
@@ -136,22 +145,22 @@ describe('PlaybackService', () => {
     it('prunes segments older than 100 positions behind current playhead', async () => {
       const channelId = 'chan-1';
       const channel = Object.assign(new Channel(), { id: channelId });
-      const segment = Object.assign(new SongSegment(), {
+      const segment = Object.assign(new MusicSegment(), {
         id: 'seg-105',
         playOrder: 105,
         durationSeconds: 180,
         audioUrl: 'song.mp3',
       });
 
-      mockChannelRepo.findOneBy.mockResolvedValue(channel);
+      mockChannelRepo.findOne.mockResolvedValue(channel);
       mockSegmentRepo.findOne.mockResolvedValue(segment);
       mockSegmentRepo.count.mockResolvedValue(5);
 
       await service.getNextTrack(channelId);
 
-      expect(mockSegmentRepo.delete).toHaveBeenCalledWith({
-        channelId,
-        playOrder: LessThan(5),
+      expect(mockSegmentRepo.nativeDelete).toHaveBeenCalledWith({
+        channel: channelId,
+        playOrder: { $lt: 5 },
       });
     });
   });

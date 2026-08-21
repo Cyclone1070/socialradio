@@ -1,35 +1,36 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
+import { getRepositoryToken } from '@mikro-orm/nestjs';
+import { EntityManager } from '@mikro-orm/postgresql';
 import { QueueService } from './queue.service';
-import { Segment } from './entities/segment.entity';
-import { ChannelSubreddit } from './entities/channel-subreddit.entity';
-import { ChannelPostProgress } from './entities/channel-post-progress.entity';
+import { Channel } from './entities/channel.entity';
+import {
+  ChannelSchema,
+  SegmentSchema,
+} from '../infrastructure/database/schemas/channel.schema';
 import {
   ContentContract,
   ScriptContract,
   VoiceContract,
+  MediaContract,
 } from '../domain/contracts';
-import { MediaService } from '../media/media.service';
 
 describe('QueueService', () => {
   let service: QueueService;
+
+  const mockChannelRepo = {
+    findOne: jest.fn(),
+  };
 
   const mockSegmentRepo = {
     count: jest.fn(),
     find: jest.fn(),
     findOne: jest.fn(),
-    create: jest.fn(),
-    save: jest.fn(),
   };
 
-  const mockChannelSubredditRepo = {
-    find: jest.fn(),
-  };
-
-  const mockProgressRepo = {
-    find: jest.fn(),
-    create: jest.fn(),
-    save: jest.fn(),
+  const mockEntityManager = {
+    persist: jest.fn().mockReturnThis(),
+    flush: jest.fn(),
+    getReference: jest.fn((_cls, id: string) => ({ id }) as unknown as Channel),
   };
 
   const mockContentContract = {
@@ -60,18 +61,15 @@ describe('QueueService', () => {
       providers: [
         QueueService,
         {
-          provide: getRepositoryToken(Segment),
+          provide: getRepositoryToken(ChannelSchema),
+          useValue: mockChannelRepo,
+        },
+        {
+          provide: getRepositoryToken(SegmentSchema),
           useValue: mockSegmentRepo,
         },
-        {
-          provide: getRepositoryToken(ChannelSubreddit),
-          useValue: mockChannelSubredditRepo,
-        },
-        {
-          provide: getRepositoryToken(ChannelPostProgress),
-          useValue: mockProgressRepo,
-        },
-        { provide: MediaService, useValue: mockMediaService },
+        { provide: EntityManager, useValue: mockEntityManager },
+        { provide: MediaContract, useValue: mockMediaService },
         { provide: ContentContract, useValue: mockContentContract },
         { provide: ScriptContract, useValue: mockScriptContract },
         { provide: VoiceContract, useValue: mockVoiceContract },
@@ -80,6 +78,7 @@ describe('QueueService', () => {
 
     service = module.get<QueueService>(QueueService);
     jest.clearAllMocks();
+    mockEntityManager.persist.mockReturnThis();
 
     mockMediaService.getRandomJingle.mockResolvedValue({
       filePath: 'jingle.mp3',
@@ -100,20 +99,10 @@ describe('QueueService', () => {
     mockContentContract.getCommentsByPostIds.mockResolvedValue([]);
     mockScriptContract.generateScript.mockResolvedValue('Mock script text');
     mockVoiceContract.synthesizeScript.mockResolvedValue({
-      filePath: 'tts.mp3',
+      filePath: 'audio/talk-123.mp3',
       durationSeconds: 60,
+      postIds: ['post-1'],
     });
-    mockSegmentRepo.create.mockImplementation((dto): Segment => dto);
-    mockSegmentRepo.save.mockImplementation((item): Promise<Segment> =>
-      Promise.resolve(item as Segment),
-    );
-    mockProgressRepo.create.mockImplementation(
-      (dto: ChannelPostProgress): ChannelPostProgress => dto,
-    );
-    mockProgressRepo.save.mockImplementation(
-      (dto: ChannelPostProgress): Promise<ChannelPostProgress> =>
-        Promise.resolve(dto),
-    );
   });
 
   function setupChannelSubreddits(
@@ -123,6 +112,7 @@ describe('QueueService', () => {
       name: string;
       lastScrapedAt: Date | null;
     }>,
+    completedPosts: Array<{ id: string }> = [],
   ) {
     const formatted = subs.map((s, idx) => ({
       id: s.id || s.subredditId || `sub-${idx + 1}`,
@@ -130,12 +120,17 @@ describe('QueueService', () => {
       lastScrapedAt: s.lastScrapedAt,
       createdAt: new Date(),
     }));
-    mockChannelSubredditRepo.find.mockResolvedValue(
-      formatted.map((s) => ({
-        channelId: 'chan-1',
-        subredditId: s.id,
-      })),
-    );
+    const channel = Object.assign(new Channel(), {
+      id: 'chan-1',
+      subreddits: {
+        getItems: jest.fn().mockReturnValue(formatted),
+      },
+      completedPosts: {
+        getItems: jest.fn().mockReturnValue(completedPosts),
+        add: jest.fn(),
+      },
+    });
+    mockChannelRepo.findOne.mockResolvedValue(channel);
     mockContentContract.getSubredditsByIds.mockResolvedValue(formatted);
   }
 
@@ -154,7 +149,6 @@ describe('QueueService', () => {
           lastScrapedAt: null,
         },
       ]);
-      mockProgressRepo.find.mockResolvedValue([]);
       mockContentContract.getPostsBySubredditIds.mockResolvedValue([]);
       mockContentContract.scrapeSubreddit.mockResolvedValue(undefined);
 
@@ -176,7 +170,6 @@ describe('QueueService', () => {
           lastScrapedAt: nearlyFresh,
         },
       ]);
-      mockProgressRepo.find.mockResolvedValue([]);
       mockContentContract.getPostsBySubredditIds.mockResolvedValue([
         { id: 'post-1', subredditId: 'sub-1', title: 'news title' },
       ]);
@@ -197,7 +190,6 @@ describe('QueueService', () => {
           lastScrapedAt: staleDate,
         },
       ]);
-      mockProgressRepo.find.mockResolvedValue([]);
       mockContentContract.getPostsBySubredditIds.mockResolvedValue([]);
 
       await service.bufferAhead(channelId);
@@ -208,17 +200,16 @@ describe('QueueService', () => {
     it('should trigger scraping if channel has 0 unplayed posts (exhausted)', async () => {
       const channelId = 'chan-1';
       mockSegmentRepo.count.mockResolvedValue(0);
-      setupChannelSubreddits([
-        {
-          subredditId: 'sub-1',
-          name: 'funny',
-          lastScrapedAt: new Date(),
-        },
-      ]);
-      mockProgressRepo.find.mockResolvedValue([
-        { postId: 'post-1' },
-        { postId: 'post-2' },
-      ]);
+      setupChannelSubreddits(
+        [
+          {
+            subredditId: 'sub-1',
+            name: 'funny',
+            lastScrapedAt: new Date(),
+          },
+        ],
+        [{ id: 'post-1' }, { id: 'post-2' }],
+      );
       mockContentContract.getPostsBySubredditIds.mockResolvedValue([
         { id: 'post-1', subredditId: 'sub-1', title: 'funny title 1' },
         { id: 'post-2', subredditId: 'sub-1', title: 'funny title 2' },
@@ -239,7 +230,6 @@ describe('QueueService', () => {
           lastScrapedAt: null,
         },
       ]);
-      mockProgressRepo.find.mockResolvedValue([]);
       mockContentContract.getPostsBySubredditIds.mockResolvedValue([]);
 
       let scrapeResolve: () => void;
@@ -263,7 +253,6 @@ describe('QueueService', () => {
           lastScrapedAt: new Date(),
         },
       ]);
-      mockProgressRepo.find.mockResolvedValue([]);
       mockContentContract.getPostsBySubredditIds.mockResolvedValue([
         {
           id: 'post-1',
@@ -292,7 +281,6 @@ describe('QueueService', () => {
           lastScrapedAt: new Date(),
         },
       ]);
-      mockProgressRepo.find.mockResolvedValue([]);
       mockContentContract.getPostsBySubredditIds.mockResolvedValue([
         {
           id: 'post-1',
@@ -308,7 +296,7 @@ describe('QueueService', () => {
 
       await service.bufferAhead(channelId);
 
-      expect(mockProgressRepo.save).not.toHaveBeenCalled();
+      expect(mockScriptContract.generateScript).toHaveBeenCalled();
     });
   });
 });

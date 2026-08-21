@@ -1,21 +1,25 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThan, LessThan } from 'typeorm';
+import { InjectRepository } from '@mikro-orm/nestjs';
+import { EntityRepository, EntityManager } from '@mikro-orm/postgresql';
 import { Channel } from './entities/channel.entity';
 import {
   Segment,
   TalkSegment,
-  SongSegment,
+  MusicSegment,
   AdSegment,
   JingleSegment,
 } from './entities/segment.entity';
+import {
+  ChannelSchema,
+  SegmentSchema,
+} from '../infrastructure/database/schemas/channel.schema';
 import { QueueService } from './queue.service';
-import { MediaService } from '../media/media.service';
+import { MediaContract } from '../domain';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
 
 export interface NextTrackData {
   segmentId: string;
-  type: 'talk' | 'song' | 'ad' | 'jingle';
+  type: 'talk' | 'music' | 'ad' | 'jingle';
   filePath: string;
   durationSeconds: number;
   title?: string;
@@ -27,16 +31,17 @@ export class PlaybackService {
   private readonly logger = createServiceLogger(PlaybackService.name);
 
   constructor(
-    @InjectRepository(Channel)
-    private readonly channelRepo: Repository<Channel>,
-    @InjectRepository(Segment)
-    private readonly segmentRepo: Repository<Segment>,
+    @InjectRepository(ChannelSchema)
+    private readonly channelRepo: EntityRepository<Channel>,
+    @InjectRepository(SegmentSchema)
+    private readonly segmentRepo: EntityRepository<Segment>,
+    private readonly em: EntityManager,
     private readonly queueService: QueueService,
-    private readonly mediaService: MediaService,
+    private readonly mediaService: MediaContract,
   ) {}
 
   async getNextTrack(channelId: string): Promise<NextTrackData> {
-    const channel = await this.channelRepo.findOneBy({ id: channelId });
+    const channel = await this.channelRepo.findOne({ id: channelId });
     if (!channel) {
       throw new Error('Channel not found');
     }
@@ -45,21 +50,21 @@ export class PlaybackService {
     let segment: Segment | null = null;
     if (channel.currentSegmentId) {
       const current = await this.segmentRepo.findOne({
-        where: { id: channel.currentSegmentId },
+        id: channel.currentSegmentId,
       });
       if (current) {
-        segment = await this.segmentRepo.findOne({
-          where: { channelId, playOrder: MoreThan(current.playOrder) },
-          order: { playOrder: 'ASC' },
-        });
+        segment = await this.segmentRepo.findOne(
+          { channel: channelId, playOrder: { $gt: current.playOrder } },
+          { orderBy: { playOrder: 'ASC' } },
+        );
       }
     }
 
     if (!segment) {
-      segment = await this.segmentRepo.findOne({
-        where: { channelId },
-        order: { playOrder: 'ASC' },
-      });
+      segment = await this.segmentRepo.findOne(
+        { channel: channelId },
+        { orderBy: { playOrder: 'ASC' } },
+      );
     }
 
     // 2. Queue Exhausted / Empty Fallback
@@ -69,10 +74,10 @@ export class PlaybackService {
         'bufferAhead triggered',
       );
       await this.queueService.bufferAhead(channelId);
-      segment = await this.segmentRepo.findOne({
-        where: { channelId },
-        order: { playOrder: 'ASC' },
-      });
+      segment = await this.segmentRepo.findOne(
+        { channel: channelId },
+        { orderBy: { playOrder: 'ASC' } },
+      );
     }
 
     if (!segment) {
@@ -101,21 +106,22 @@ export class PlaybackService {
         };
       }
       if (segment.status === 'failed') {
-        const next = await this.segmentRepo.findOne({
-          where: { channelId, playOrder: MoreThan(segment.playOrder) },
-          order: { playOrder: 'ASC' },
-        });
+        const next = await this.segmentRepo.findOne(
+          { channel: channelId, playOrder: { $gt: segment.playOrder } },
+          { orderBy: { playOrder: 'ASC' } },
+        );
         if (next) segment = next;
       }
     }
 
     // 4. Update Channel Playhead State
     channel.currentSegmentId = segment.id;
-    await this.channelRepo.save(channel);
+    await this.em.flush();
 
     // 5. Trigger Low Runway Replenishment
     const remainingCount = await this.segmentRepo.count({
-      where: { channelId, playOrder: MoreThan(segment.playOrder) },
+      channel: channelId,
+      playOrder: { $gt: segment.playOrder },
     });
     if (remainingCount < 4) {
       this.logger.info(
@@ -133,8 +139,8 @@ export class PlaybackService {
       type: this.getSegmentType(segment),
       filePath: segment.audioUrl || '',
       durationSeconds: segment.durationSeconds || 0,
-      title: (segment as SongSegment).title,
-      artist: (segment as SongSegment).artist,
+      title: (segment as MusicSegment).title,
+      artist: (segment as MusicSegment).artist,
     };
   }
 
@@ -145,17 +151,17 @@ export class PlaybackService {
     const cutoffPlayOrder = currentPlayOrder - 100;
     if (cutoffPlayOrder <= 0) return;
 
-    await this.segmentRepo.delete({
-      channelId,
-      playOrder: LessThan(cutoffPlayOrder),
+    await this.segmentRepo.nativeDelete({
+      channel: channelId,
+      playOrder: { $lt: cutoffPlayOrder },
     });
   }
 
-  private getSegmentType(segment: Segment): 'talk' | 'song' | 'ad' | 'jingle' {
+  private getSegmentType(segment: Segment): 'talk' | 'music' | 'ad' | 'jingle' {
     if (segment instanceof TalkSegment) return 'talk';
-    if (segment instanceof SongSegment) return 'song';
+    if (segment instanceof MusicSegment) return 'music';
     if (segment instanceof AdSegment) return 'ad';
     if (segment instanceof JingleSegment) return 'jingle';
-    return 'song';
+    return 'music';
   }
 }

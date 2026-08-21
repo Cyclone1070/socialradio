@@ -1,21 +1,24 @@
-export interface AudioData {
+export interface MusicData {
   filePath: string;
   durationSeconds: number;
-}
-
-export interface SongData extends AudioData {
   title: string;
   artist: string;
 }
 
-export interface TalkData extends AudioData {
+export interface TalkData {
+  filePath: string;
+  durationSeconds: number;
   postIds: string[];
 }
 
-export interface AdData extends AudioData {
+export interface AdData {
+  filePath: string;
+  durationSeconds: number;
   advertiser: string;
 }
 
-export interface JingleData extends AudioData {
+export interface JingleData {
+  filePath: string;
+  durationSeconds: number;
   name: string;
 }

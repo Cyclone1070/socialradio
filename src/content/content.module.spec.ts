@@ -1,11 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
+import { getRepositoryToken } from '@mikro-orm/nestjs';
+import { EntityManager } from '@mikro-orm/postgresql';
 import { ContentModule } from './content.module';
 import { ScraperService } from './scraper.service';
 import { RedditScraperService } from './reddit-scraper.service';
-import { Subreddit } from './entities/subreddit.entity';
-import { Post } from './entities/post.entity';
-import { Comment } from './entities/comment.entity';
+import {
+  SubredditSchema,
+  PostSchema,
+  CommentSchema,
+} from '../infrastructure/database/schemas/content.schema';
 
 describe('ContentModule Integration', () => {
   let scraperService: ScraperService;
@@ -19,16 +22,24 @@ describe('ContentModule Integration', () => {
           useValue: { fetchTopPosts: jest.fn() },
         },
         {
-          provide: getRepositoryToken(Subreddit),
-          useValue: { findOneBy: jest.fn() },
+          provide: getRepositoryToken(SubredditSchema),
+          useValue: { findOne: jest.fn() },
         },
         {
-          provide: getRepositoryToken(Post),
-          useValue: { findOneBy: jest.fn() },
+          provide: getRepositoryToken(PostSchema),
+          useValue: { findOne: jest.fn() },
         },
         {
-          provide: getRepositoryToken(Comment),
+          provide: getRepositoryToken(CommentSchema),
           useValue: { find: jest.fn() },
+        },
+        {
+          provide: EntityManager,
+          useValue: {
+            persist: jest.fn(),
+            flush: jest.fn(),
+            persistAndFlush: jest.fn(),
+          },
         },
       ],
     }).compile();

@@ -1,7 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
+import { getRepositoryToken } from '@mikro-orm/nestjs';
+import { EntityManager } from '@mikro-orm/postgresql';
 import { JwtService } from '@nestjs/jwt';
-import { User } from './entities/user.entity';
+import { ConfigService } from '@nestjs/config';
+import { UserSchema } from '../infrastructure/database/schemas/user.schema';
 import { UserService } from './user.service';
 import { AuthService } from './auth.service';
 
@@ -15,12 +17,20 @@ describe('User & Auth Integration', () => {
         UserService,
         AuthService,
         {
-          provide: getRepositoryToken(User),
+          provide: getRepositoryToken(UserSchema),
           useValue: { findOne: jest.fn() },
+        },
+        {
+          provide: EntityManager,
+          useValue: { persistAndFlush: jest.fn() },
         },
         {
           provide: JwtService,
           useValue: { sign: jest.fn() },
+        },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn() },
         },
       ],
     }).compile();

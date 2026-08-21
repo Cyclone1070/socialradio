@@ -27,6 +27,7 @@ async function bootstrap() {
   // logging is attached by LoggingModule itself.
   app.useLogger(app.get(Logger));
   app.useGlobalPipes(new ValidationPipe());
+
   await app.listen(process.env.PORT ?? 3000);
 }
 bootstrap().catch((err) => {

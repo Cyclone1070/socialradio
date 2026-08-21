@@ -3,7 +3,6 @@ import { ValidationPipe } from '@nestjs/common';
 import { ChannelController } from './channel.controller';
 import { ChannelService } from './channel.service';
 import { PlaybackService } from './playback.service';
-import { QueueService } from './queue.service';
 import { InternalAuthGuard } from './internal-auth.guard';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { SubscribeSubredditDto } from './dto/subscribe-subreddit.dto';
@@ -25,17 +24,12 @@ describe('ChannelController', () => {
     getNextTrack: jest.fn(),
   };
 
-  const mockQueueService = {
-    findPendingTopicSegment: jest.fn(),
-  };
-
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [ChannelController],
       providers: [
         { provide: ChannelService, useValue: mockChannelService },
         { provide: PlaybackService, useValue: mockPlaybackService },
-        { provide: QueueService, useValue: mockQueueService },
       ],
     })
       .overrideGuard(InternalAuthGuard)
@@ -138,7 +132,7 @@ describe('ChannelController', () => {
 
   describe('getChannelSubreddits', () => {
     it('should return the channel subreddits from the service', async () => {
-      const subreddits = ['askreddit'];
+      const subreddits = [{ id: 'sub-1', name: 'askreddit' }];
       mockChannelService.getSubscribedSubreddits.mockResolvedValue(subreddits);
 
       const result = await controller.getChannelSubreddits('chan-1');
@@ -164,20 +158,6 @@ describe('ChannelController', () => {
 
       expect(mockPlaybackService.getNextTrack).toHaveBeenCalledWith('chan-1');
       expect(result).toEqual(track);
-    });
-  });
-
-  describe('getTopics', () => {
-    it('should return pending topics for admin inspection', async () => {
-      const topic = { id: 'top-1', posts: [] };
-      mockQueueService.findPendingTopicSegment.mockResolvedValue(topic);
-
-      const result = await controller.getTopics('chan-1');
-
-      expect(mockQueueService.findPendingTopicSegment).toHaveBeenCalledWith(
-        'chan-1',
-      );
-      expect(result).toEqual(topic);
     });
   });
 

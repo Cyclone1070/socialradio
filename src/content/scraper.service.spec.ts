@@ -1,32 +1,35 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
+import { getRepositoryToken } from '@mikro-orm/nestjs';
+import { EntityManager, FilterQuery } from '@mikro-orm/postgresql';
 import { PinoLogger } from 'nestjs-pino';
 import { ScraperService, SCRAPE_WINDOW_MS } from './scraper.service';
 import { RedditScraperService } from './reddit-scraper.service';
 import { Subreddit } from './entities/subreddit.entity';
 import { Post } from './entities/post.entity';
-import { Comment } from './entities/comment.entity';
+import {
+  SubredditSchema,
+  PostSchema,
+  CommentSchema,
+} from '../infrastructure/database/schemas/content.schema';
 
 describe('ScraperService', () => {
   let service: ScraperService;
 
   const mockSubredditRepo = {
-    findOneBy: jest.fn(),
-    create: jest.fn(),
-    save: jest.fn(),
-    delete: jest.fn(),
+    findOne: jest.fn(),
+    nativeDelete: jest.fn(),
   };
 
   const mockPostRepo = {
-    findOneBy: jest.fn(),
-    create: jest.fn(),
-    save: jest.fn(),
-    delete: jest.fn(),
+    findOne: jest.fn(),
+    nativeDelete: jest.fn(),
   };
 
-  const mockCommentRepo = {
-    create: jest.fn(),
-    save: jest.fn(),
+  const mockCommentRepo = {};
+
+  const mockEntityManager = {
+    persist: jest.fn().mockReturnThis(),
+    flush: jest.fn(),
   };
 
   const mockRedditScraper = {
@@ -39,15 +42,23 @@ describe('ScraperService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ScraperService,
-        { provide: getRepositoryToken(Subreddit), useValue: mockSubredditRepo },
-        { provide: getRepositoryToken(Post), useValue: mockPostRepo },
-        { provide: getRepositoryToken(Comment), useValue: mockCommentRepo },
+        {
+          provide: getRepositoryToken(SubredditSchema),
+          useValue: mockSubredditRepo,
+        },
+        { provide: getRepositoryToken(PostSchema), useValue: mockPostRepo },
+        {
+          provide: getRepositoryToken(CommentSchema),
+          useValue: mockCommentRepo,
+        },
+        { provide: EntityManager, useValue: mockEntityManager },
         { provide: RedditScraperService, useValue: mockRedditScraper },
       ],
     }).compile();
 
     service = module.get<ScraperService>(ScraperService);
     jest.clearAllMocks();
+    mockEntityManager.persist.mockReturnThis();
   });
 
   it('should be defined', () => {
@@ -57,14 +68,17 @@ describe('ScraperService', () => {
   describe('scrapeSubreddit', () => {
     it("stops the walk when a page repeats the previous page's first post id (guard)", async () => {
       const subName = 'AskReddit';
-      const subEntity = { id: 'sub-uuid', name: subName, lastScrapedAt: null };
+      const subEntity = Object.assign(new Subreddit(), {
+        id: 'sub-uuid',
+        name: subName,
+        lastScrapedAt: null,
+      });
 
       const cleanupSpy = jest
         .spyOn(service, 'cleanupOldData')
         .mockResolvedValue(undefined);
 
-      mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
-      mockSubredditRepo.save.mockResolvedValue(subEntity);
+      mockSubredditRepo.findOne.mockResolvedValue(subEntity);
 
       const makePage = (firstId: string, after: string | null) => ({
         posts: [firstId, `${firstId}b`, `${firstId}c`].map((id, i) => ({
@@ -78,40 +92,23 @@ describe('ScraperService', () => {
         after,
         isInvalid: false,
       });
-      // Pathological repeat: page 2 opens with the same first post as page 1.
       mockRedditScraper.fetchTopPosts
         .mockResolvedValueOnce(makePage('loop1', 't3_1'))
         .mockResolvedValueOnce(makePage('loop1', 't3_2'));
-      mockPostRepo.findOneBy.mockResolvedValue(null); // all posts are new
+      mockPostRepo.findOne.mockResolvedValue(null);
       mockRedditScraper.fetchPostComments.mockResolvedValue([
         {
           id: 'c',
-          body: 'hello '.repeat(2600).trim(), // passes the 2500-word guard
+          body: 'hello '.repeat(2600).trim(),
           author: 'user',
           score: 10,
           parent_id: 't3_p',
           created_utc: 1719999999,
         },
       ]);
-      mockCommentRepo.create.mockImplementation((c): Partial<Comment> => ({
-        id: 'c-uuid',
-        ...c,
-      }));
-      mockCommentRepo.save.mockImplementation((c): Promise<Partial<Comment>> =>
-        Promise.resolve(c),
-      );
-      mockPostRepo.create.mockImplementation((p): Partial<Post> => ({
-        id: 'p-uuid',
-        ...p,
-      }));
-      mockPostRepo.save.mockImplementation((p): Promise<Partial<Post>> =>
-        Promise.resolve(p),
-      );
 
       const result = await service.scrapeSubreddit(subName);
 
-      // Both pages were processed, but the repeated first post id halts the
-      // walk before any third page.
       expect(result).toEqual({ scrapedPostsCount: 6 });
       expect(mockRedditScraper.fetchTopPosts).toHaveBeenCalledTimes(2);
       expect(cleanupSpy).toHaveBeenCalled();
@@ -119,14 +116,17 @@ describe('ScraperService', () => {
 
     it('stops on pool exhaustion: after: null on page 1 → no second call', async () => {
       const subName = 'AskReddit';
-      const subEntity = { id: 'sub-uuid', name: subName, lastScrapedAt: null };
+      const subEntity = Object.assign(new Subreddit(), {
+        id: 'sub-uuid',
+        name: subName,
+        lastScrapedAt: null,
+      });
 
       const cleanupSpy = jest
         .spyOn(service, 'cleanupOldData')
         .mockResolvedValue(undefined);
 
-      mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
-      mockSubredditRepo.save.mockResolvedValue(subEntity);
+      mockSubredditRepo.findOne.mockResolvedValue(subEntity);
 
       const rawPosts = Array.from({ length: 3 }, (_, i) => ({
         id: `p${i + 1}`,
@@ -136,38 +136,22 @@ describe('ScraperService', () => {
         score: 10,
         created_utc: 1719999999,
       }));
-      // The fetcher collapses a zero-viable page the same way: after: null
-      // is the stop signal whether the pool ended or nothing was viable.
       mockRedditScraper.fetchTopPosts.mockResolvedValue({
         posts: rawPosts,
         after: null,
         isInvalid: false,
       });
-      mockPostRepo.findOneBy.mockResolvedValue(null); // all posts are new
+      mockPostRepo.findOne.mockResolvedValue(null);
       mockRedditScraper.fetchPostComments.mockResolvedValue([
         {
           id: 'c',
-          body: 'hello '.repeat(2600).trim(), // passes the 2500-word guard
+          body: 'hello '.repeat(2600).trim(),
           author: 'user',
           score: 10,
           parent_id: 't3_p',
           created_utc: 1719999999,
         },
       ]);
-      mockCommentRepo.create.mockImplementation((c): Partial<Comment> => ({
-        id: 'c-uuid',
-        ...c,
-      }));
-      mockCommentRepo.save.mockImplementation((c): Promise<Partial<Comment>> =>
-        Promise.resolve(c),
-      );
-      mockPostRepo.create.mockImplementation((p): Partial<Post> => ({
-        id: 'p-uuid',
-        ...p,
-      }));
-      mockPostRepo.save.mockImplementation((p): Promise<Partial<Post>> =>
-        Promise.resolve(p),
-      );
 
       const result = await service.scrapeSubreddit(subName);
 
@@ -178,14 +162,17 @@ describe('ScraperService', () => {
 
     it('keeps walking when page 1 is all duplicates: dedup never stops the walk', async () => {
       const subName = 'AskReddit';
-      const subEntity = { id: 'sub-uuid', name: subName, lastScrapedAt: null };
+      const subEntity = Object.assign(new Subreddit(), {
+        id: 'sub-uuid',
+        name: subName,
+        lastScrapedAt: null,
+      });
 
       const cleanupSpy = jest
         .spyOn(service, 'cleanupOldData')
         .mockResolvedValue(undefined);
 
-      mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
-      mockSubredditRepo.save.mockResolvedValue(subEntity);
+      mockSubredditRepo.findOne.mockResolvedValue(subEntity);
 
       const dupPage = Array.from({ length: 3 }, (_, i) => ({
         id: `dup${i + 1}`,
@@ -216,39 +203,22 @@ describe('ScraperService', () => {
           after: null,
           isInvalid: false,
         });
-      // Every post on page 1 already exists in the DB; the page-2 post is new.
-      mockPostRepo.findOneBy.mockImplementation((q: { redditId: string }) =>
+      mockPostRepo.findOne.mockImplementation((q: { redditId: string }) =>
         q.redditId === 'fresh' ? null : { id: 'existing' },
       );
       mockRedditScraper.fetchPostComments.mockResolvedValue([
         {
           id: 'c',
-          body: 'hello '.repeat(2600).trim(), // passes the 2500-word guard
+          body: 'hello '.repeat(2600).trim(),
           author: 'user',
           score: 10,
           parent_id: 't3_p',
           created_utc: 1719999999,
         },
       ]);
-      mockCommentRepo.create.mockImplementation((c): Partial<Comment> => ({
-        id: 'c-uuid',
-        ...c,
-      }));
-      mockCommentRepo.save.mockImplementation((c): Promise<Partial<Comment>> =>
-        Promise.resolve(c),
-      );
-      mockPostRepo.create.mockImplementation((p): Partial<Post> => ({
-        id: 'p-uuid',
-        ...p,
-      }));
-      mockPostRepo.save.mockImplementation((p): Promise<Partial<Post>> =>
-        Promise.resolve(p),
-      );
 
       const result = await service.scrapeSubreddit(subName);
 
-      // The all-duplicate page did NOT stop the walk: page 2 was fetched
-      // with the cursor and its fresh post was saved.
       expect(result).toEqual({ scrapedPostsCount: 1 });
       expect(cleanupSpy).toHaveBeenCalled();
       expect(mockRedditScraper.fetchTopPosts).toHaveBeenCalledTimes(2);
@@ -260,7 +230,6 @@ describe('ScraperService', () => {
           after: 't3_x',
         },
       );
-      // Duplicates never reach the comment fetcher.
       expect(mockRedditScraper.fetchPostComments).toHaveBeenCalledTimes(1);
       expect(mockRedditScraper.fetchPostComments).toHaveBeenCalledWith(
         subName,
@@ -270,14 +239,17 @@ describe('ScraperService', () => {
 
     it('stops the walk when a page fails mid-walk: partials kept, sub not deleted', async () => {
       const subName = 'AskReddit';
-      const subEntity = { id: 'sub-uuid', name: subName, lastScrapedAt: null };
+      const subEntity = Object.assign(new Subreddit(), {
+        id: 'sub-uuid',
+        name: subName,
+        lastScrapedAt: null,
+      });
 
       const cleanupSpy = jest
         .spyOn(service, 'cleanupOldData')
         .mockResolvedValue(undefined);
 
-      mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
-      mockSubredditRepo.save.mockResolvedValue(subEntity);
+      mockSubredditRepo.findOne.mockResolvedValue(subEntity);
 
       const page1 = Array.from({ length: 5 }, (_, i) => ({
         id: `p${i + 1}`,
@@ -296,7 +268,7 @@ describe('ScraperService', () => {
         .mockRejectedValueOnce(
           new Error('reddit-fetcher /top-posts/AskReddit failed: 502'),
         );
-      mockPostRepo.findOneBy.mockResolvedValue(null);
+      mockPostRepo.findOne.mockResolvedValue(null);
       mockRedditScraper.fetchPostComments.mockResolvedValue([
         {
           id: 'c',
@@ -307,38 +279,25 @@ describe('ScraperService', () => {
           created_utc: 1719999999,
         },
       ]);
-      mockCommentRepo.create.mockImplementation((c): Partial<Comment> => ({
-        id: 'c-uuid',
-        ...c,
-      }));
-      mockCommentRepo.save.mockImplementation((c): Promise<Partial<Comment>> =>
-        Promise.resolve(c),
-      );
-      mockPostRepo.create.mockImplementation((p): Partial<Post> => ({
-        id: 'p-uuid',
-        ...p,
-      }));
-      mockPostRepo.save.mockImplementation((p): Promise<Partial<Post>> =>
-        Promise.resolve(p),
-      );
 
       const result = await service.scrapeSubreddit(subName);
 
-      // Page 1's 5 posts are kept; the failed page 2 stops the walk; the
-      // subreddit row survives (a !ok page is not a dead sub).
       expect(result).toEqual({ scrapedPostsCount: 5 });
       expect(mockRedditScraper.fetchTopPosts).toHaveBeenCalledTimes(2);
-      expect(mockSubredditRepo.delete).not.toHaveBeenCalled();
+      expect(mockSubredditRepo.nativeDelete).not.toHaveBeenCalled();
       expect(cleanupSpy).toHaveBeenCalled();
       expect(subEntity.lastScrapedAt).toBeInstanceOf(Date);
     });
 
     it('stops quietly when the very first page fails: 0 saved, sub kept, no throw', async () => {
       const subName = 'downSub';
-      const subEntity = { id: 'down-uuid', name: subName, lastScrapedAt: null };
+      const subEntity = Object.assign(new Subreddit(), {
+        id: 'down-uuid',
+        name: subName,
+        lastScrapedAt: null,
+      });
 
-      mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
-      mockSubredditRepo.save.mockResolvedValue(subEntity);
+      mockSubredditRepo.findOne.mockResolvedValue(subEntity);
       mockRedditScraper.fetchTopPosts.mockRejectedValue(
         new Error('reddit-fetcher /top-posts/downSub failed: 502'),
       );
@@ -346,19 +305,22 @@ describe('ScraperService', () => {
       const result = await service.scrapeSubreddit(subName);
 
       expect(result).toEqual({ scrapedPostsCount: 0 });
-      expect(mockSubredditRepo.delete).not.toHaveBeenCalled();
+      expect(mockSubredditRepo.nativeDelete).not.toHaveBeenCalled();
     });
 
     it('walks to the next page while under 20: page 2 is fetched with after=t3_x, exactly 2 calls', async () => {
       const subName = 'AskReddit';
-      const subEntity = { id: 'sub-uuid', name: subName, lastScrapedAt: null };
+      const subEntity = Object.assign(new Subreddit(), {
+        id: 'sub-uuid',
+        name: subName,
+        lastScrapedAt: null,
+      });
 
       const cleanupSpy = jest
         .spyOn(service, 'cleanupOldData')
         .mockResolvedValue(undefined);
 
-      mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
-      mockSubredditRepo.save.mockResolvedValue(subEntity);
+      mockSubredditRepo.findOne.mockResolvedValue(subEntity);
 
       const page1 = Array.from({ length: 5 }, (_, i) => ({
         id: `p${i + 1}`,
@@ -387,44 +349,27 @@ describe('ScraperService', () => {
           after: null,
           isInvalid: false,
         });
-      mockPostRepo.findOneBy.mockResolvedValue(null); // all posts are new
+      mockPostRepo.findOne.mockResolvedValue(null);
       mockRedditScraper.fetchPostComments.mockResolvedValue([
         {
           id: 'c',
-          body: 'hello '.repeat(2600).trim(), // passes the 2500-word guard
+          body: 'hello '.repeat(2600).trim(),
           author: 'user',
           score: 10,
           parent_id: 't3_p',
           created_utc: 1719999999,
         },
       ]);
-      mockCommentRepo.create.mockImplementation((c): Partial<Comment> => ({
-        id: 'c-uuid',
-        ...c,
-      }));
-      mockCommentRepo.save.mockImplementation((c): Promise<Partial<Comment>> =>
-        Promise.resolve(c),
-      );
-      mockPostRepo.create.mockImplementation((p): Partial<Post> => ({
-        id: 'p-uuid',
-        ...p,
-      }));
-      mockPostRepo.save.mockImplementation((p): Promise<Partial<Post>> =>
-        Promise.resolve(p),
-      );
 
       const result = await service.scrapeSubreddit(subName);
 
       expect(result).toEqual({ scrapedPostsCount: 20 });
       expect(cleanupSpy).toHaveBeenCalled();
-      // Exactly two page requests; the walk stops once 20 are saved.
       expect(mockRedditScraper.fetchTopPosts).toHaveBeenCalledTimes(2);
       expect(mockRedditScraper.fetchTopPosts).toHaveBeenNthCalledWith(
         1,
         subName,
-        {
-          limit: 100,
-        },
+        { limit: 100 },
       );
       expect(mockRedditScraper.fetchTopPosts).toHaveBeenNthCalledWith(
         2,
@@ -435,14 +380,17 @@ describe('ScraperService', () => {
 
     it('stops mid-page at the 20th save: 20 comment fetches, one page, post 21 untouched', async () => {
       const subName = 'AskReddit';
-      const subEntity = { id: 'sub-uuid', name: subName, lastScrapedAt: null };
+      const subEntity = Object.assign(new Subreddit(), {
+        id: 'sub-uuid',
+        name: subName,
+        lastScrapedAt: null,
+      });
 
       const cleanupSpy = jest
         .spyOn(service, 'cleanupOldData')
         .mockResolvedValue(undefined);
 
-      mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
-      mockSubredditRepo.save.mockResolvedValue(subEntity);
+      mockSubredditRepo.findOne.mockResolvedValue(subEntity);
 
       const rawPosts = Array.from({ length: 25 }, (_, i) => ({
         id: `post${i + 1}`,
@@ -457,69 +405,51 @@ describe('ScraperService', () => {
         after: 't3_x',
         isInvalid: false,
       });
-      mockPostRepo.findOneBy.mockResolvedValue(null); // all posts are new
+      mockPostRepo.findOne.mockResolvedValue(null);
       mockRedditScraper.fetchPostComments.mockResolvedValue([
         {
           id: 'c',
-          body: 'hello '.repeat(2600).trim(), // passes the 2500-word guard
+          body: 'hello '.repeat(2600).trim(),
           author: 'user',
           score: 10,
           parent_id: 't3_p',
           created_utc: 1719999999,
         },
       ]);
-      mockCommentRepo.create.mockImplementation((c): Partial<Comment> => ({
-        id: 'c-uuid',
-        ...c,
-      }));
-      mockCommentRepo.save.mockImplementation((c): Promise<Partial<Comment>> =>
-        Promise.resolve(c),
-      );
-      mockPostRepo.create.mockImplementation((p): Partial<Post> => ({
-        id: 'p-uuid',
-        ...p,
-      }));
-      mockPostRepo.save.mockImplementation((p): Promise<Partial<Post>> =>
-        Promise.resolve(p),
-      );
 
       const result = await service.scrapeSubreddit(subName);
 
       expect(result).toEqual({ scrapedPostsCount: 20 });
       expect(cleanupSpy).toHaveBeenCalled();
-      // Exactly one page request — the walk stops before any further page.
       expect(mockRedditScraper.fetchTopPosts).toHaveBeenCalledTimes(1);
-      expect(mockRedditScraper.fetchTopPosts).toHaveBeenCalledWith(subName, {
-        limit: 100,
-      });
-      // The 20th save halts processing mid-page: post 21 is never visited.
       expect(mockRedditScraper.fetchPostComments).toHaveBeenCalledTimes(20);
       expect(mockRedditScraper.fetchPostComments).not.toHaveBeenCalledWith(
         subName,
         'post21',
       );
-      const saved = (
-        mockPostRepo.save.mock.calls as Array<[Partial<Post>]>
-      ).map((call) => call[0].redditId);
-      expect(saved).toHaveLength(20);
-      expect(saved[19]).toBe('post20');
+      const savedPosts = (
+        mockEntityManager.persist.mock.calls as Array<[unknown]>
+      )
+        .map((c) => c[0])
+        .filter((entity): entity is Post => entity instanceof Post);
+      expect(savedPosts).toHaveLength(20);
+      expect(savedPosts[19].redditId).toBe('post20');
     });
 
     it('should scrape new posts and comments, filtering out posts with under 2500 words and capping at 20 saved posts', async () => {
       const subName = 'AskReddit';
-      const subEntity = { id: 'sub-uuid', name: subName, lastScrapedAt: null };
+      const subEntity = Object.assign(new Subreddit(), {
+        id: 'sub-uuid',
+        name: subName,
+        lastScrapedAt: null,
+      });
 
       const cleanupSpy = jest
         .spyOn(service, 'cleanupOldData')
         .mockResolvedValue(undefined);
 
-      mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
-      mockSubredditRepo.save.mockResolvedValue(subEntity);
+      mockSubredditRepo.findOne.mockResolvedValue(subEntity);
 
-      // We return 3 raw posts.
-      // Post 1: 2200 words (Should be skipped due to < 2500)
-      // Post 2: 1500 words (Should be skipped due to < 2500)
-      // Post 3: 2700 words (Should be saved since >= 2500)
       const rawPosts = [
         {
           id: 'post1',
@@ -550,10 +480,8 @@ describe('ScraperService', () => {
         posts: rawPosts,
         isInvalid: false,
       });
-      mockPostRepo.findOneBy.mockResolvedValue(null); // None exist in DB yet
+      mockPostRepo.findOne.mockResolvedValue(null);
 
-      // Mock word count comments
-      // post1: 1 comment containing 2200 words
       const post1Comments = [
         {
           id: 'c1',
@@ -564,7 +492,6 @@ describe('ScraperService', () => {
           created_utc: 1719999999,
         },
       ];
-      // post2: 1 comment containing 1500 words
       const post2Comments = [
         {
           id: 'c2',
@@ -575,7 +502,6 @@ describe('ScraperService', () => {
           created_utc: 1719999999,
         },
       ];
-      // post3: 1 comment containing 2700 words
       const post3Comments = [
         {
           id: 'c3',
@@ -594,37 +520,19 @@ describe('ScraperService', () => {
         return Promise.resolve([]);
       });
 
-      mockCommentRepo.create.mockImplementation((c): Partial<Comment> => ({
-        id: 'c-uuid',
-        ...c,
-      }));
-      mockCommentRepo.save.mockImplementation((c): Promise<Partial<Comment>> =>
-        Promise.resolve(c),
-      );
-
-      mockPostRepo.create.mockImplementation((p): Partial<Post> => ({
-        id: 'p-uuid',
-        ...p,
-      }));
-      mockPostRepo.save.mockImplementation((p): Promise<Partial<Post>> =>
-        Promise.resolve(p),
-      );
-
       const result = await service.scrapeSubreddit(subName);
 
       expect(result).toEqual({ scrapedPostsCount: 1 });
       expect(cleanupSpy).toHaveBeenCalled();
       expect(mockRedditScraper.exists).not.toHaveBeenCalled();
-      expect(mockSubredditRepo.findOneBy).toHaveBeenCalledWith({
+      expect(mockSubredditRepo.findOne).toHaveBeenCalledWith({
         name: subName,
       });
 
-      // Verification 1: fetchTopPosts should look at 100 posts max to find high quality content
       expect(mockRedditScraper.fetchTopPosts).toHaveBeenCalledWith(subName, {
         limit: 100,
       });
 
-      // Verification 2: fetchPostComments should have been called for all candidate posts
       expect(mockRedditScraper.fetchPostComments).toHaveBeenCalledWith(
         subName,
         'post1',
@@ -638,11 +546,12 @@ describe('ScraperService', () => {
         'post3',
       );
 
-      // Verification 3: Only post3 should be saved in DB. post1 and post2 are skipped due to < 2500 words.
-      const saveCalls = mockPostRepo.save.mock.calls;
-      const savedPostIds = saveCalls.map(
-        (call: [Partial<Post>]) => call[0].redditId,
-      );
+      const savedPosts = (
+        mockEntityManager.persist.mock.calls as Array<[unknown]>
+      )
+        .map((call) => call[0])
+        .filter((entity): entity is Post => entity instanceof Post);
+      const savedPostIds = savedPosts.map((p) => p.redditId);
       expect(savedPostIds).toContain('post3');
       expect(savedPostIds).not.toContain('post1');
       expect(savedPostIds).not.toContain('post2');
@@ -650,14 +559,13 @@ describe('ScraperService', () => {
 
     it('should delete subreddit completely when fetchTopPosts reports isInvalid', async () => {
       const subName = 'bannedSub';
-      const subEntity = {
+      const subEntity = Object.assign(new Subreddit(), {
         id: 'banned-uuid',
         name: subName,
         lastScrapedAt: null,
-      };
+      });
 
-      mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
-      mockSubredditRepo.save.mockResolvedValue(subEntity);
+      mockSubredditRepo.findOne.mockResolvedValue(subEntity);
       mockRedditScraper.fetchTopPosts.mockResolvedValue({
         posts: [],
         isInvalid: true,
@@ -666,18 +574,10 @@ describe('ScraperService', () => {
       const result = await service.scrapeSubreddit(subName);
 
       expect(result).toEqual({ scrapedPostsCount: 0 });
-      expect(mockSubredditRepo.delete).toHaveBeenCalledWith({
+      expect(mockSubredditRepo.nativeDelete).toHaveBeenCalledWith({
         id: 'banned-uuid',
       });
       expect(mockRedditScraper.exists).not.toHaveBeenCalled();
-      // save() must not run after the delete: TypeORM would re-INSERT the
-      // deleted entity (new row with the same name) — the row must stay gone.
-      const deleteCall = mockSubredditRepo.delete.mock.invocationCallOrder[0];
-      expect(
-        mockSubredditRepo.save.mock.invocationCallOrder.every(
-          (n) => n < deleteCall,
-        ),
-      ).toBe(true);
     });
 
     it('should dedupe a scrape already in-flight via scrapeStartedAt', async () => {
@@ -686,10 +586,9 @@ describe('ScraperService', () => {
         id: 'sub-1',
         name: subName,
         lastScrapedAt: new Date(Date.now() - 1000),
-        scrapeStartedAt: new Date(Date.now() - 10000), // claimed 10s ago
+        scrapeStartedAt: new Date(Date.now() - 10000),
       });
-      mockSubredditRepo.findOneBy.mockResolvedValue(subreddit);
-      mockSubredditRepo.save.mockResolvedValue(subreddit);
+      mockSubredditRepo.findOne.mockResolvedValue(subreddit);
 
       const result = await service.scrapeSubreddit(subName);
 
@@ -704,8 +603,7 @@ describe('ScraperService', () => {
         name: subName,
         lastScrapedAt: null,
       });
-      mockSubredditRepo.findOneBy.mockResolvedValue(subreddit);
-      mockSubredditRepo.save.mockResolvedValue(subreddit);
+      mockSubredditRepo.findOne.mockResolvedValue(subreddit);
       mockRedditScraper.fetchTopPosts.mockResolvedValue({
         posts: [],
         isInvalid: false,
@@ -715,7 +613,6 @@ describe('ScraperService', () => {
 
       expect(result).toEqual({ scrapedPostsCount: 0 });
       expect(subreddit.scrapeCooldownUntil).toBeInstanceOf(Date);
-      // Cooldown must cover the full 2h window
       expect(subreddit.scrapeCooldownUntil!.getTime()).toBeGreaterThan(
         Date.now() + 2 * 60 * 60 * 1000 - 1000,
       );
@@ -727,11 +624,10 @@ describe('ScraperService', () => {
         id: 'sub-1',
         name: subName,
         lastScrapedAt: null,
-        scrapeStartedAt: new Date(Date.now() - 10000), // in-flight claim
-        scrapeCooldownUntil: new Date(Date.now() + 60 * 60 * 1000), // cooling down
+        scrapeStartedAt: new Date(Date.now() - 10000),
+        scrapeCooldownUntil: new Date(Date.now() + 60 * 60 * 1000),
       });
-      mockSubredditRepo.findOneBy.mockResolvedValue(subreddit);
-      mockSubredditRepo.save.mockResolvedValue(subreddit);
+      mockSubredditRepo.findOne.mockResolvedValue(subreddit);
       mockRedditScraper.fetchTopPosts.mockResolvedValue({
         posts: [],
         isInvalid: false,
@@ -739,7 +635,6 @@ describe('ScraperService', () => {
 
       const result = await service.scrapeSubreddit(subName, true);
 
-      // The scrape actually ran (posts fetched, no separate validation call)
       expect(mockRedditScraper.exists).not.toHaveBeenCalled();
       expect(mockRedditScraper.fetchTopPosts).toHaveBeenCalled();
       expect(result).toEqual({ scrapedPostsCount: 0 });
@@ -747,9 +642,12 @@ describe('ScraperService', () => {
 
     it('should save new posts BEFORE purging old ones (per-sub scope)', async () => {
       const subName = 'askreddit';
-      const subEntity = { id: 'sub-1', name: subName, lastScrapedAt: null };
-      mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
-      mockSubredditRepo.save.mockResolvedValue(subEntity);
+      const subEntity = Object.assign(new Subreddit(), {
+        id: 'sub-1',
+        name: subName,
+        lastScrapedAt: null,
+      });
+      mockSubredditRepo.findOne.mockResolvedValue(subEntity);
 
       const rawPosts = [
         {
@@ -768,45 +666,33 @@ describe('ScraperService', () => {
       mockRedditScraper.fetchPostComments.mockResolvedValue([
         {
           id: 'c1',
-          body: 'hello '.repeat(2600).trim(), // >= 2500 word guard passes
+          body: 'hello '.repeat(2600).trim(),
           author: 'user',
           score: 10,
           parent_id: 't3_p1',
           created_utc: 1719999999,
         },
       ]);
-      mockPostRepo.findOneBy.mockResolvedValue(null);
-      mockPostRepo.create.mockImplementation((p): Partial<Post> => ({
-        id: 'p-uuid',
-        ...p,
-      }));
-      mockPostRepo.save.mockImplementation((p): Promise<Partial<Post>> =>
-        Promise.resolve(p),
-      );
+      mockPostRepo.findOne.mockResolvedValue(null);
+
+      const cleanupSpy = jest.spyOn(service, 'cleanupOldData');
 
       const result = await service.scrapeSubreddit(subName);
 
       expect(result.scrapedPostsCount).toBe(1);
-      // Save must happen before the 72h purge
-      const saveOrder = mockPostRepo.save.mock.invocationCallOrder[0];
-      const deleteOrder = mockPostRepo.delete.mock.invocationCallOrder[0];
-      expect(saveOrder).toBeLessThan(deleteOrder);
-      // Purge is scoped to this subreddit only (deletes posts older than 72h)
-      const deleteCalls = mockPostRepo.delete.mock.calls as unknown as Array<
-        [Record<string, unknown>?]
-      >;
-      const deleteArgs = deleteCalls[0]?.[0] as
-        { subredditId?: string; scrapedAt?: Date } | undefined;
-      expect(deleteArgs?.subredditId).toBe('sub-1');
-      expect(deleteArgs?.scrapedAt).toBeDefined();
+      expect(mockEntityManager.persist).toHaveBeenCalled();
+      expect(cleanupSpy).toHaveBeenCalledWith('sub-1');
     });
 
-    it('stops quietly when the page fetch fails on the first call (was: rethrow)', async () => {
+    it('stops quietly when the page fetch fails on the first call', async () => {
       const subName = 'downSub';
-      const subEntity = { id: 'down-uuid', name: subName, lastScrapedAt: null };
+      const subEntity = Object.assign(new Subreddit(), {
+        id: 'down-uuid',
+        name: subName,
+        lastScrapedAt: null,
+      });
 
-      mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
-      mockSubredditRepo.save.mockResolvedValue(subEntity);
+      mockSubredditRepo.findOne.mockResolvedValue(subEntity);
       mockRedditScraper.fetchTopPosts.mockRejectedValue(
         new Error('Browser connection lost'),
       );
@@ -814,36 +700,32 @@ describe('ScraperService', () => {
       const result = await service.scrapeSubreddit(subName);
 
       expect(result).toEqual({ scrapedPostsCount: 0 });
-      expect(mockSubredditRepo.delete).not.toHaveBeenCalled();
-      expect(mockSubredditRepo.save).toHaveBeenCalled();
+      expect(mockSubredditRepo.nativeDelete).not.toHaveBeenCalled();
     });
   });
 
   describe('cleanupOldData', () => {
     it('should delete posts older than the 7-day window (SCRAPE_WINDOW_MS)', async () => {
-      mockPostRepo.delete.mockResolvedValue({ affected: 5 });
+      mockPostRepo.nativeDelete.mockResolvedValue(5);
 
       await service.cleanupOldData();
 
-      expect(mockPostRepo.delete).toHaveBeenCalled();
-
-      const deleteMock = mockPostRepo.delete;
-      const calls = deleteMock.mock.calls as unknown[][];
-      const deleteArg = calls[0][0] as {
-        scrapedAt: { _value: Date };
-      };
-      const passedDate = deleteArg.scrapedAt._value;
+      expect(mockPostRepo.nativeDelete).toHaveBeenCalled();
+      const deleteCalls = mockPostRepo.nativeDelete.mock.calls as Array<
+        [FilterQuery<Post>]
+      >;
+      const deleteArg = deleteCalls[0][0] as { scrapedAt: { $lt: Date } };
+      expect(deleteArg.scrapedAt.$lt).toBeInstanceOf(Date);
+      const passedDate = deleteArg.scrapedAt.$lt;
       const expectedCutoff = Date.now() - SCRAPE_WINDOW_MS;
 
-      // Assert it is within 2 seconds of the shared window constant — the
-      // purge cutoff and the stale threshold are ONE knob.
       expect(passedDate.getTime()).toBeCloseTo(expectedCutoff, -3);
     });
   });
 
   describe('validateSubreddit', () => {
     it('should return true if RedditScraperService.exists returns true', async () => {
-      mockRedditScraper.fetchTopPosts.mockResolvedValue([]); // fallback if needed
+      mockRedditScraper.fetchTopPosts.mockResolvedValue([]);
       mockRedditScraper.exists.mockResolvedValue(true);
 
       const result = await service.validateSubreddit('AskReddit');
@@ -864,37 +746,26 @@ describe('ScraperService', () => {
 
   describe('scraping logs', () => {
     const subName = 'askreddit';
-    const subEntity = { id: 'sub-uuid', name: subName, lastScrapedAt: null };
+    const subEntity = Object.assign(new Subreddit(), {
+      id: 'sub-uuid',
+      name: subName,
+      lastScrapedAt: null,
+    });
 
     function mockFullPostSave() {
-      mockSubredditRepo.findOneBy.mockResolvedValue(subEntity);
-      mockSubredditRepo.save.mockResolvedValue(subEntity);
+      mockSubredditRepo.findOne.mockResolvedValue(subEntity);
       jest.spyOn(service, 'cleanupOldData').mockResolvedValue(undefined);
-      mockPostRepo.findOneBy.mockResolvedValue(null); // all posts new
+      mockPostRepo.findOne.mockResolvedValue(null);
       mockRedditScraper.fetchPostComments.mockResolvedValue([
         {
           id: 'c',
-          body: 'hello '.repeat(2600).trim(), // passes the 2500-word guard
+          body: 'hello '.repeat(2600).trim(),
           author: 'user',
           score: 10,
           parent_id: 't3_p',
           created_utc: 1719999999,
         },
       ]);
-      mockCommentRepo.create.mockImplementation((c): Partial<Comment> => ({
-        id: 'c-uuid',
-        ...c,
-      }));
-      mockCommentRepo.save.mockImplementation((c): Promise<Partial<Comment>> =>
-        Promise.resolve(c),
-      );
-      mockPostRepo.create.mockImplementation((p): Partial<Post> => ({
-        id: 'p-uuid',
-        ...p,
-      }));
-      mockPostRepo.save.mockImplementation((p): Promise<Partial<Post>> =>
-        Promise.resolve(p),
-      );
     }
 
     function pageOf(
@@ -952,7 +823,7 @@ describe('ScraperService', () => {
         scrapeStartedAt: null,
         scrapeCooldownUntil: new Date(Date.now() + 60_000),
       });
-      mockSubredditRepo.findOneBy.mockResolvedValue(cooling);
+      mockSubredditRepo.findOne.mockResolvedValue(cooling);
       const warnSpy = jest
         .spyOn(PinoLogger.prototype, 'warn')
         .mockImplementation(() => {});

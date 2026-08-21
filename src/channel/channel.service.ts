@@ -1,12 +1,8 @@
-import {
-  Injectable,
-  NotFoundException,
-  BadRequestException,
-} from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Channel } from './entities/channel.entity';
-import { ChannelSubreddit } from './entities/channel-subreddit.entity';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@mikro-orm/nestjs';
+import { EntityRepository, EntityManager } from '@mikro-orm/postgresql';
+import { Channel, SubredditRef } from './entities/channel.entity';
+import { ChannelSchema } from '../infrastructure/database/schemas/channel.schema';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { ChannelResponseDto } from './dto/channel-response.dto';
 import { ContentContract } from '../domain/contracts';
@@ -17,10 +13,9 @@ export class ChannelService {
   private readonly logger = createServiceLogger(ChannelService.name);
 
   constructor(
-    @InjectRepository(Channel)
-    private readonly channelRepo: Repository<Channel>,
-    @InjectRepository(ChannelSubreddit)
-    private readonly channelSubredditRepo: Repository<ChannelSubreddit>,
+    @InjectRepository(ChannelSchema)
+    private readonly channelRepo: EntityRepository<Channel>,
+    private readonly em: EntityManager,
     private readonly contentContract: ContentContract,
   ) {}
 
@@ -28,19 +23,19 @@ export class ChannelService {
     dto: ConfigureChannelDto,
     ownerId: string,
   ): Promise<ChannelResponseDto> {
-    const channel = this.channelRepo.create({
-      name: dto.name,
-      visibility: dto.visibility || 'private',
-      ownerId,
-    });
-    const saved = await this.channelRepo.save(channel);
+    const channel = new Channel();
+    channel.name = dto.name;
+    channel.visibility = dto.visibility || 'private';
+    channel.ownerId = ownerId;
+
+    await this.em.persist(channel).flush();
 
     return {
-      id: saved.id,
-      name: saved.name,
-      visibility: saved.visibility,
-      ownerId: saved.ownerId,
-      createdAt: saved.createdAt,
+      id: channel.id,
+      name: channel.name,
+      visibility: channel.visibility,
+      ownerId: channel.ownerId,
+      createdAt: channel.createdAt,
     };
   }
 
@@ -48,7 +43,10 @@ export class ChannelService {
     channelId: string,
     subredditName: string,
   ): Promise<void> {
-    const channel = await this.channelRepo.findOneBy({ id: channelId });
+    const channel = await this.channelRepo.findOne(
+      { id: channelId },
+      { populate: ['subreddits'] },
+    );
     if (!channel) {
       throw new NotFoundException('Channel not found');
     }
@@ -72,21 +70,20 @@ export class ChannelService {
       }
     }
 
-    const existing = await this.channelSubredditRepo.findOneBy({
-      channelId,
-      subredditId: subreddit.id,
-    });
+    const subreddits = channel.subreddits.getItems();
+    const existing = subreddits.find(
+      (s: SubredditRef) => s.id === subreddit.id || s.name === normalizedName,
+    );
     if (existing) {
-      throw new BadRequestException(
-        `Channel is already subscribed to r/${normalizedName}`,
-      );
+      return;
     }
 
-    const sub = this.channelSubredditRepo.create({
-      channelId,
-      subredditId: subreddit.id,
-    });
-    await this.channelSubredditRepo.save(sub);
+    const subRef = this.em.getReference<SubredditRef>(
+      'Subreddit',
+      subreddit.id,
+    );
+    channel.subreddits.add(subRef);
+    await this.em.flush();
   }
 
   async unsubscribeFromSubreddit(
@@ -97,35 +94,43 @@ export class ChannelService {
     const subreddit =
       await this.contentContract.getSubredditByName(normalizedName);
     if (!subreddit) {
-      throw new NotFoundException(`Subreddit r/${normalizedName} not found`);
+      throw new NotFoundException('Subreddit not found');
     }
 
-    const sub = await this.channelSubredditRepo.findOneBy({
-      channelId,
-      subredditId: subreddit.id,
-    });
-    if (!sub) {
-      throw new NotFoundException(
-        `Channel is not subscribed to r/${normalizedName}`,
-      );
+    const channel = await this.channelRepo.findOne(
+      { id: channelId },
+      { populate: ['subreddits'] },
+    );
+    if (!channel) {
+      throw new NotFoundException('Channel not found');
     }
 
-    await this.channelSubredditRepo.remove(sub);
+    const subreddits = channel.subreddits.getItems();
+    const existing = subreddits.find(
+      (s: SubredditRef) => s.id === subreddit.id || s.name === normalizedName,
+    );
+    if (!existing) {
+      throw new NotFoundException('Subreddit not found');
+    }
+
+    channel.subreddits.remove(existing);
+    await this.em.flush();
   }
 
-  async getSubscribedSubreddits(channelId: string): Promise<string[]> {
-    const subs = await this.channelSubredditRepo.find({
-      where: { channelId },
-    });
-    if (subs.length === 0) return [];
-    const subreddits = await this.contentContract.getSubredditsByIds(
-      subs.map((s) => s.subredditId),
+  async getSubscribedSubreddits(channelId: string): Promise<SubredditRef[]> {
+    const channel = await this.channelRepo.findOne(
+      { id: channelId },
+      { populate: ['subreddits'] },
     );
-    return subreddits.map((s) => s.name);
+    if (!channel) return [];
+    return channel.subreddits.getItems().map((s: SubredditRef) => ({
+      id: s.id,
+      name: s.name,
+    }));
   }
 
   async getUserChannels(ownerId: string): Promise<ChannelResponseDto[]> {
-    const channels = await this.channelRepo.find({ where: { ownerId } });
+    const channels = await this.channelRepo.find({ ownerId });
     return channels.map((c) => ({
       id: c.id,
       name: c.name,
@@ -136,7 +141,7 @@ export class ChannelService {
   }
 
   async getAllChannels(): Promise<ChannelResponseDto[]> {
-    const channels = await this.channelRepo.find();
+    const channels = await this.channelRepo.findAll();
     return channels.map((c) => ({
       id: c.id,
       name: c.name,
@@ -147,7 +152,7 @@ export class ChannelService {
   }
 
   async getChannel(id: string): Promise<ChannelResponseDto> {
-    const channel = await this.channelRepo.findOneBy({ id });
+    const channel = await this.channelRepo.findOne({ id });
     if (!channel) {
       throw new NotFoundException('Channel not found');
     }

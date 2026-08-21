@@ -1,27 +1,31 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectRepository } from '@mikro-orm/nestjs';
+import { EntityRepository, EntityManager } from '@mikro-orm/postgresql';
+import { Channel, SubredditRef, PostRef } from './entities/channel.entity';
 import {
   Segment,
-  SongSegment,
+  MusicSegment,
   TalkSegment,
   AdSegment,
   JingleSegment,
 } from './entities/segment.entity';
-import { ChannelSubreddit } from './entities/channel-subreddit.entity';
-import { ChannelPostProgress } from './entities/channel-post-progress.entity';
-import { MediaService } from '../media/media.service';
+import {
+  ChannelSchema,
+  SegmentSchema,
+} from '../infrastructure/database/schemas/channel.schema';
 import { clusterPosts } from './utils/topic-clustering.util';
-import { Topic } from './interfaces/topic.interface';
+import { TalkCluster } from './interfaces/talk-cluster.interface';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
 import {
   ContentContract,
   ScriptContract,
   VoiceContract,
+  MediaContract,
 } from '../domain/contracts';
 import { PostData } from '../domain/types/post.types';
 import { ScriptData } from '../domain/types/script.types';
 import { TalkData } from '../domain/types/audio.types';
+import { SubredditData } from '../domain/types/subreddit.types';
 import { randomUUID } from 'crypto';
 
 const SCRAPE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7-day scrape window
@@ -31,23 +35,22 @@ export class QueueService {
   private readonly logger = createServiceLogger(QueueService.name);
 
   constructor(
-    @InjectRepository(Segment)
-    private readonly segmentRepo: Repository<Segment>,
-    @InjectRepository(ChannelSubreddit)
-    private readonly channelSubredditRepo: Repository<ChannelSubreddit>,
-    @InjectRepository(ChannelPostProgress)
-    private readonly progressRepo: Repository<ChannelPostProgress>,
-    private readonly mediaService: MediaService,
+    @InjectRepository(ChannelSchema)
+    private readonly channelRepo: EntityRepository<Channel>,
+    @InjectRepository(SegmentSchema)
+    private readonly segmentRepo: EntityRepository<Segment>,
+    private readonly em: EntityManager,
+    private readonly mediaService: MediaContract,
     private readonly contentContract: ContentContract,
     private readonly scriptContract: ScriptContract,
     private readonly voiceContract: VoiceContract,
   ) {}
 
   async bufferAhead(channelId: string): Promise<void> {
-    const lastItem = await this.segmentRepo.findOne({
-      where: { channelId },
-      order: { playOrder: 'DESC' },
-    });
+    const lastItem = await this.segmentRepo.findOne(
+      { channel: channelId },
+      { orderBy: { playOrder: 'DESC' } },
+    );
     let nextPlayOrder = lastItem ? lastItem.playOrder + 1 : 1;
 
     const talkCount = this.getRandomCount();
@@ -57,9 +60,9 @@ export class QueueService {
         next ?? (await this.appendFiller(channelId, nextPlayOrder));
     }
 
-    const songCount = this.getRandomCount();
-    for (let i = 0; i < songCount; i++) {
-      nextPlayOrder = await this.appendSong(channelId, nextPlayOrder);
+    const musicCount = this.getRandomCount();
+    for (let i = 0; i < musicCount; i++) {
+      nextPlayOrder = await this.appendMusic(channelId, nextPlayOrder);
     }
 
     const adCount = this.getRandomCount();
@@ -78,33 +81,34 @@ export class QueueService {
     channelId: string,
     playOrder: number,
   ): Promise<number | null> {
-    const topicSegment = await this.findPendingTopicSegment(channelId);
-    if (topicSegment) {
-      const talkItem = Object.assign(new TalkSegment(), {
+    const talkCluster = await this.findPendingTopicSegment(channelId);
+    if (talkCluster) {
+      const talkItem: TalkSegment = Object.assign(new TalkSegment(), {
+        channel: this.em.getReference(Channel, channelId),
         channelId,
         playOrder,
-        status: 'generating',
-        topicId: topicSegment.id,
+        clusterId: talkCluster.id,
       });
-      const savedTalkItem = await this.segmentRepo.save(talkItem);
+      await this.em.persist(talkItem).flush();
 
-      this.generateTalkVoiceTrack(topicSegment.posts)
-        .then(async (voiceTrack: TalkData) => {
-          for (const p of topicSegment.posts) {
+      this.generateTalkVoiceTrack(talkCluster.posts)
+        .then(async ({ voiceTrack, scriptObj }) => {
+          for (const p of talkCluster.posts) {
             await this.markPostCompletedForChannel(channelId, p.id);
           }
-          savedTalkItem.audioUrl = voiceTrack.filePath;
-          savedTalkItem.durationSeconds = voiceTrack.durationSeconds;
-          savedTalkItem.status = 'ready';
-          await this.segmentRepo.save(savedTalkItem);
+          talkItem.audioUrl = voiceTrack.filePath;
+          talkItem.durationSeconds = voiceTrack.durationSeconds;
+          talkItem.status = 'ready';
+          talkItem.script = scriptObj.turns;
+          await this.em.flush();
         })
         .catch(async (err) => {
-          savedTalkItem.status = 'failed';
-          await this.segmentRepo.save(savedTalkItem);
+          talkItem.status = 'failed';
+          await this.em.flush();
           this.logger.error(
             {
               channelId,
-              segmentId: savedTalkItem.id,
+              segmentId: talkItem.id,
               err: err instanceof Error ? err : new Error(String(err)),
             },
             'voice generation failed',
@@ -115,13 +119,15 @@ export class QueueService {
     return null;
   }
 
-  private async generateTalkVoiceTrack(posts: PostData[]): Promise<TalkData> {
+  private async generateTalkVoiceTrack(
+    posts: PostData[],
+  ): Promise<{ voiceTrack: TalkData; scriptObj: ScriptData }> {
     const comments = await this.contentContract.getCommentsByPostIds(
       posts.map((p) => p.id),
     );
     const rawScript = await this.scriptContract.generateScript(posts, comments);
 
-    const filePath = `topic-audios/talk-${randomUUID()}.mp3`;
+    const filePath = `audio/talk-${randomUUID()}.mp3`;
     const scriptObj: ScriptData =
       typeof rawScript === 'string'
         ? {
@@ -130,11 +136,11 @@ export class QueueService {
           }
         : rawScript;
 
-    const talkRef = await this.voiceContract.synthesizeScript(
+    const voiceTrack = await this.voiceContract.synthesizeScript(
       scriptObj,
       filePath,
     );
-    return talkRef;
+    return { voiceTrack, scriptObj };
   }
 
   private async appendFiller(
@@ -144,20 +150,21 @@ export class QueueService {
     return this.appendAd(channelId, playOrder);
   }
 
-  private async appendSong(
+  private async appendMusic(
     channelId: string,
     playOrder: number,
   ): Promise<number> {
-    const song = await this.mediaService.getRandomMusic();
-    const songItem = Object.assign(new SongSegment(), {
+    const music = await this.mediaService.getRandomMusic();
+    const musicItem = Object.assign(new MusicSegment(), {
+      channel: this.em.getReference(Channel, channelId),
       channelId,
       playOrder,
-      audioUrl: song.filePath,
-      durationSeconds: song.durationSeconds,
-      title: song.title,
-      artist: song.artist,
+      audioUrl: music.filePath,
+      durationSeconds: music.durationSeconds,
+      title: music.title,
+      artist: music.artist,
     });
-    await this.segmentRepo.save(songItem);
+    await this.em.persist(musicItem).flush();
     return playOrder + 1;
   }
 
@@ -167,12 +174,13 @@ export class QueueService {
   ): Promise<number> {
     const ad = await this.mediaService.getRandomAd();
     const adItem = Object.assign(new AdSegment(), {
+      channel: this.em.getReference(Channel, channelId),
       channelId,
       playOrder,
       audioUrl: ad.filePath,
       durationSeconds: ad.durationSeconds,
     });
-    await this.segmentRepo.save(adItem);
+    await this.em.persist(adItem).flush();
     return playOrder + 1;
   }
 
@@ -182,36 +190,39 @@ export class QueueService {
   ): Promise<number> {
     const jingle = await this.mediaService.getRandomJingle();
     const jingleItem = Object.assign(new JingleSegment(), {
+      channel: this.em.getReference(Channel, channelId),
       channelId,
       playOrder,
       audioUrl: jingle.filePath,
       durationSeconds: jingle.durationSeconds,
     });
-    await this.segmentRepo.save(jingleItem);
+    await this.em.persist(jingleItem).flush();
     return playOrder + 1;
   }
 
   public async findPendingTopicSegment(
     channelId: string,
-  ): Promise<Topic | null> {
-    const subs = await this.channelSubredditRepo.find({
-      where: { channelId },
-    });
-    const subIds = subs.map((s) => s.subredditId);
+  ): Promise<TalkCluster | null> {
+    const channel = await this.channelRepo.findOne(
+      { id: channelId },
+      { populate: ['subreddits', 'completedPosts'] },
+    );
+    if (!channel) return null;
+    const subreddits = channel.subreddits.getItems();
+    const subIds = subreddits.map((s: SubredditRef) => s.id);
     if (subIds.length === 0) return null;
 
-    const progress = await this.progressRepo.find({
-      where: { channelId },
-    });
-    const completedPostIds = progress.map((p) => p.postId);
+    const completedPosts = channel.completedPosts.getItems();
+    const completedPostIds = completedPosts.map((p: PostRef) => p.id);
 
-    const subreddits = await this.contentContract.getSubredditsByIds(subIds);
+    const subredditDetails: SubredditData[] =
+      await this.contentContract.getSubredditsByIds(subIds);
     const allPosts = await this.contentContract.getPostsBySubredditIds(subIds);
 
     const subsToScrape: string[] = [];
     const ttlMs = SCRAPE_WINDOW_MS;
 
-    for (const sub of subreddits) {
+    for (const sub of subredditDetails) {
       const isStale =
         !sub.lastScrapedAt || Date.now() - sub.lastScrapedAt.getTime() > ttlMs;
 
@@ -266,10 +277,13 @@ export class QueueService {
     channelId: string,
     postId: string,
   ): Promise<void> {
-    const progress = this.progressRepo.create({
-      channelId,
-      postId,
-    });
-    await this.progressRepo.save(progress);
+    const channel = await this.channelRepo.findOne(
+      { id: channelId },
+      { populate: ['completedPosts'] },
+    );
+    if (channel) {
+      channel.completedPosts.add(this.em.getReference<PostRef>('Post', postId));
+      await this.em.flush();
+    }
   }
 }

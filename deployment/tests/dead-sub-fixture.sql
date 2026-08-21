@@ -12,6 +12,6 @@
 INSERT INTO subreddit ("id", "name")
 VALUES (gen_random_uuid(), 'dead_prod_sub_e2e_77401');
 
-INSERT INTO channel_subreddit ("id", "channelId", "subredditId")
-SELECT gen_random_uuid(), :'chan_id',
+INSERT INTO channel_subreddit ("channelId", "subredditId")
+SELECT :'chan_id',
        (SELECT "id" FROM subreddit WHERE "name" = 'dead_prod_sub_e2e_77401');

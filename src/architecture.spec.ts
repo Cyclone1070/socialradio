@@ -3,6 +3,7 @@ import * as path from 'path';
 
 describe('True Peer Decoupling Architecture Guardrails', () => {
   const rootSrcDir = __dirname;
+  const domainDir = path.join(rootSrcDir, 'domain');
   const featureSlices = fs
     .readdirSync(rootSrcDir, { withFileTypes: true })
     .filter(
@@ -33,8 +34,6 @@ describe('True Peer Decoupling Architecture Guardrails', () => {
   }
 
   describe('Rule 1: Domain Isolation (src/domain)', () => {
-    const domainDir = path.join(rootSrcDir, 'domain');
-
     it('src/domain/ must not import from any feature slice or infrastructure', () => {
       const files = getAllProductionTsFiles(domainDir);
       for (const file of files) {
@@ -97,16 +96,6 @@ describe('True Peer Decoupling Architecture Guardrails', () => {
 
           const content = fs.readFileSync(file, 'utf8');
           for (const peer of peerSlices) {
-            // Controllers are allowed to import Auth Guards / Roles from user slice
-            if (peer === 'user' && file.endsWith('.controller.ts')) continue;
-            // Channel services (queue, playback) are allowed to import MediaService from media slice
-            if (
-              peer === 'media' &&
-              (file.endsWith('queue.service.ts') ||
-                file.endsWith('playback.service.ts'))
-            )
-              continue;
-
             const crossSliceImport = new RegExp(
               `from\\s+['"](\\.\\./)+${peer}(/.*)?['"]`,
             );
@@ -117,7 +106,7 @@ describe('True Peer Decoupling Architecture Guardrails', () => {
     });
   });
 
-  describe('Rule 3: Scalar ID Foreign Entities Only across Slices', () => {
+  describe('Rule 3: Pure POCOs & Scalar ID Foreign Entities across Slices', () => {
     it('Entity files across feature slices must NOT import entity classes from peer slices', () => {
       for (const slice of featureSlices) {
         const peerSlices = featureSlices.filter((s) => s !== slice);
@@ -137,19 +126,49 @@ describe('True Peer Decoupling Architecture Guardrails', () => {
         }
       }
     });
+
+    it('Entity files across feature slices must be pure POCOs with ZERO ORM decorators', () => {
+      for (const slice of featureSlices) {
+        const sliceDir = path.join(rootSrcDir, slice);
+        const files = getAllProductionTsFiles(sliceDir).filter((f) =>
+          f.endsWith('.entity.ts'),
+        );
+
+        for (const file of files) {
+          const content = fs.readFileSync(file, 'utf8');
+          expect(content).not.toMatch(/@Entity\s*\(/);
+          expect(content).not.toMatch(/@Column\s*\(/);
+          expect(content).not.toMatch(/@PrimaryGeneratedColumn\s*\(/);
+          expect(content).not.toMatch(/@ManyToOne\s*\(/);
+          expect(content).not.toMatch(/@OneToMany\s*\(/);
+          expect(content).not.toMatch(/@ManyToMany\s*\(/);
+          expect(content).not.toMatch(/from\s+['"]typeorm['"]/);
+        }
+      }
+    });
   });
 
   describe('Rule 4: Domain Anti-Dumping Guardrail', () => {
     it('Contracts and data interfaces in src/domain/ must be cross-slice (consumed across feature slices)', () => {
-      const domainExports = [
-        'ContentContract',
-        'ScriptContract',
-        'VoiceContract',
-        'PostData',
-        'CommentData',
-        'ScriptData',
-        'TalkData',
-      ];
+      const domainFiles = getAllProductionTsFiles(domainDir);
+      const domainExports = new Set<string>();
+
+      for (const file of domainFiles) {
+        const content = fs.readFileSync(file, 'utf8');
+        const exportMatch =
+          /export\s+(?:abstract\s+class|interface|type|const)\s+([A-Za-z0-9_]+)/g;
+        let m: RegExpExecArray | null;
+        while ((m = exportMatch.exec(content)) !== null) {
+          domainExports.add(m[1]);
+        }
+      }
+
+      expect(domainExports.size).toBeGreaterThan(0);
+
+      const contractsFile = path.join(domainDir, 'contracts', 'index.ts');
+      const contractsContent = fs.existsSync(contractsFile)
+        ? fs.readFileSync(contractsFile, 'utf8')
+        : '';
 
       for (const symbol of domainExports) {
         const consumingSlices = new Set<string>();
@@ -163,8 +182,14 @@ describe('True Peer Decoupling Architecture Guardrails', () => {
             }
           }
         }
-        // Must be used across 2 or more feature slices
-        expect(consumingSlices.size).toBeGreaterThanOrEqual(2);
+
+        const isPartOfContract = contractsContent.includes(symbol);
+        const isCrossSlice = consumingSlices.size >= 2;
+
+        if (!isCrossSlice && !isPartOfContract) {
+          const errorMsg = `🚨 Anti-Dumping Violation: Symbol "${symbol}" in src/domain/ is only consumed by ${consumingSlices.size} slice(s) ([${Array.from(consumingSlices).join(', ')}]) and is not part of any Domain Contract signature. Move private types into the owning feature slice.`;
+          expect(errorMsg).toBe('');
+        }
       }
     });
   });

@@ -1,64 +1,34 @@
-import {
-  Entity,
-  TableInheritance,
-  ChildEntity,
-  PrimaryGeneratedColumn,
-  Column,
-  ManyToOne,
-  JoinColumn,
-  CreateDateColumn,
-  Index,
-} from 'typeorm';
 import { Channel } from './channel.entity';
+import { ScriptTurn } from '../../domain/types/script.types';
 
-@Entity()
-@TableInheritance({ column: { type: 'varchar', name: 'type' } })
-@Index(['channelId'])
-@Index(['channelId', 'playOrder'])
 export abstract class Segment {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
-
-  @Column()
-  channelId: string;
-
-  @ManyToOne(() => Channel, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'channelId' })
-  channel: Channel;
-
-  @Column('int')
-  playOrder: number;
-
-  @Column({ type: 'varchar', nullable: true })
-  audioUrl: string | null;
-
-  @Column('float', { nullable: true })
-  durationSeconds: number | null;
-
-  @CreateDateColumn()
-  createdAt: Date;
+  id!: string;
+  channelId!: string;
+  channel?: Channel;
+  playOrder!: number;
+  audioUrl: string | null = null;
+  durationSeconds: number | null = null;
+  type!: 'music' | 'talk' | 'ad' | 'jingle';
+  createdAt: Date = new Date();
 }
 
-@ChildEntity('song')
-export class SongSegment extends Segment {
-  @Column()
-  title: string;
-
-  @Column()
-  artist: string;
+export class MusicSegment extends Segment {
+  type = 'music' as const;
+  title!: string;
+  artist!: string;
 }
 
-@ChildEntity('talk')
 export class TalkSegment extends Segment {
-  @Column()
-  topicId: string;
-
-  @Column({ default: 'generating' })
-  status: 'generating' | 'ready' | 'failed';
+  type = 'talk' as const;
+  clusterId!: string;
+  status: 'generating' | 'ready' | 'failed' = 'generating';
+  script: ScriptTurn[] | null = null;
 }
 
-@ChildEntity('ad')
-export class AdSegment extends Segment {}
+export class AdSegment extends Segment {
+  type = 'ad' as const;
+}
 
-@ChildEntity('jingle')
-export class JingleSegment extends Segment {}
+export class JingleSegment extends Segment {
+  type = 'jingle' as const;
+}

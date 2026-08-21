@@ -1,11 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 import { ScriptModule } from './script.module';
 import { ScriptContract } from '../domain/contracts';
 import { ScriptService } from './script.service';
 import { LlmService } from './llm.service';
-import { TopicScript } from './entities/topic-script.entity';
 
 describe('ScriptModule Integration', () => {
   let scriptGenerator: ScriptContract;
@@ -18,10 +16,6 @@ describe('ScriptModule Integration', () => {
         {
           provide: ConfigService,
           useValue: { get: jest.fn() },
-        },
-        {
-          provide: getRepositoryToken(TopicScript),
-          useValue: { findOneBy: jest.fn() },
         },
         {
           provide: ScriptContract,
