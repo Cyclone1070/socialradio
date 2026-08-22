@@ -1,6 +1,6 @@
 # Channel — Stations, Queue & Live Icecast Streaming
 
-User-facing stations: each channel subscribes to subreddits, maintains a never-ending queue of segments (talk, songs, ads, jingles), and streams them live via Icecast and Liquidsoap.
+User-facing stations: each channel subscribes to subreddits, maintains a never-ending queue of segments (talk, music, ads, jingles), and streams them live via Icecast and Liquidsoap.
 
 ## Public API
 
@@ -10,6 +10,7 @@ User-facing stations: each channel subscribes to subreddits, maintains a never-e
 | `GET` | `/channels/active` | Internal Secret | Lists all active channels for streaming engine discovery (`X-Internal-Token`). |
 | `POST` | `/channels` | JWT | Creates a channel. Body: `{ name, visibility? }` — visibility defaults to `private`. Empty name → 400. |
 | `POST` | `/channels/:id/subreddits` | JWT | Subscribes the channel to a subreddit. Body: `{ subredditName }`. Non-existent channel → 404. **Idempotent**. |
+| `GET` | `/channels/:id/subreddits` | JWT | Returns list of subreddits subscribed to by the channel. |
 | `DELETE` | `/channels/:id/subreddits/:subName` | JWT | Removes the subscription. Missing channel or subreddit → 404. |
 | `GET` | `/channels/:id/next-track` | Internal Secret | Returns next playable audio track for Liquidsoap stream source (`X-Internal-Token`). |
 | `GET` | `/admin/channels/:id/topics` | Admin | The next pending topic for a channel (what would air next). |
@@ -24,11 +25,11 @@ User-facing stations: each channel subscribes to subreddits, maintains a never-e
 [1-2 Talk segments] → [1-2 Music tracks] → [1-2 Ads] → [1 Jingle]
 ```
 
-(1 or 2 of each talk/song/ad is a 50/50 uniform random choice.)
+(1 or 2 of each talk/music/ad is a 50/50 uniform random choice.)
 
 - **Talk segments** come from the next pending topic (see below). If no topic exists, a short ad filler is appended instead.
 - Talk is generated **asynchronously**: the segment is queued as `generating`, voice generation runs in the background, then the segment flips to `ready` — or `failed` if generation errors.
-- Songs/ads/jingles are picked uniformly at random from the media library.
+- Music tracks/ads/jingles are picked uniformly at random from the media library.
 
 ### When the queue rescrapes Reddit
 

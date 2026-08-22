@@ -13,7 +13,7 @@ The backend must scale horizontally, but Reddit traffic must stay one paced stre
 | Method | Path | Behaviour |
 |---|---|---|
 | `GET` | `/top-posts/:subreddit?limit=100[&after=<cursor>]` | `{ posts, after, isInvalid }` — ONE Reddit listing page (mapped, `num_comments >= 40` pre-filter), `after` = the listing's next cursor. `after: null` = **stop signal** (pool exhausted and/or the page carried zero viable posts). `isInvalid: true` = private/banned/non-existent (page loaded, zero posts). Errors → `502`. |
-| `GET` | `/comments/:subreddit/:postId` | `{ comments }` — flattened comment tree (`sort=top&limit=250&showmore=false`, prefix-stripped ids). Errors → `502`. |
+| `GET` | `/comments/:subreddit/:postId` | `{ comments }` — flattened comment tree (`sort=top&limit=500&showmore=false`, prefix-stripped ids). Errors → `502`. |
 | `GET` | `/exists/:subreddit` | `{ valid }` — subscribe-time validation, 1 request. |
 
 **The fetcher is stateless**: one request = one page. The backend holds the cursor and walks page by page (it owns dedup, so the stop conditions live there). The Pacer wraps every request: **random 500–1000ms delay**, at most **5 requests in flight**, same-subreddit requests strictly sequential. Reddit's real per-request latency (~3–4s) stacks on top.

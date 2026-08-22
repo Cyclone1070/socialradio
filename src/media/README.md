@@ -1,10 +1,10 @@
 # Media — Music, Ads & Jingles
 
-The library the channel queue draws filler from: background songs, ad breaks, and the jingle that closes every queue cycle.
+The library the channel queue draws filler from: music tracks, ad breaks, and the jingle that closes every queue cycle.
 
 ## Public API
 
-No HTTP routes. Consumed internally by `QueueGeneratorService`.
+No HTTP routes. Implements `MediaContract` (`getRandomMusic`, `getRandomAd`, `getRandomJingle`) injected by `QueueService` and `PlaybackService`.
 
 ## Behaviour
 

@@ -16,8 +16,8 @@ Each slice has a `README.md` describing its **behaviour** — rules, flows, and 
 |---|---|---|
 | `src/content` | Reddit content acquisition — scraping, filtering, caching | [README](src/content/README.md) |
 | `src/channel` | User channels, station queue, playback & segment streaming | [README](src/channel/README.md) |
-| `src/script` | Call-in talk-radio script generation with multi-host dialogue via LLM | — |
-| `src/voice` | Text-to-speech voice synthesis via Google Cloud TTS | — |
+| `src/script` | Call-in talk-radio script generation with multi-host dialogue via LLM | [README](src/script/README.md) |
+| `src/voice` | Text-to-speech voice synthesis via Google Cloud TTS | [README](src/voice/README.md) |
 | `src/media` | Music / ad / jingle library for station queue fillers | [README](src/media/README.md) |
 | `src/user` | User authentication, identity, profile management | [README](src/user/README.md) |
 | `src/domain` | Shared cross-slice contracts and data types | [README](src/domain/README.md) |

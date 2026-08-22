@@ -1,6 +1,6 @@
-# Auth — Login, JWT & RBAC
+# User & Auth — Identity, Login & Access Control
 
-Identity and access control for the whole app. One login endpoint, minimal stateless tokens, two guard layers.
+Identity and access control for the whole app. Authentication endpoints, user identity profile, and access control.
 
 ## Public API
 
@@ -23,7 +23,7 @@ Identity and access control for the whole app. One login endpoint, minimal state
 
 No email, no name, no expiry surface beyond the token's own — headers stay small and no PII rides along.
 
-## Guard behaviour (the two layers)
+## Guard behaviour (located in `src/infrastructure/auth/`)
 
 - **`JwtAuthGuard`** (everything except `/healthcheck` and `/auth/login`): missing or malformed token → **401**.
 - **`RolesGuard` + `@Roles('admin')`** (admin namespace): valid token but `role !== 'admin'` → **403**.
@@ -31,5 +31,6 @@ No email, no name, no expiry surface beyond the token's own — headers stay sma
 | Namespace | Rule |
 |---|---|
 | Public | `GET /healthcheck` |
-| Authenticated | login, `/users/me`, channels, subreddits, playlist/chunks |
+| Authenticated | login, `/users/me`, `/channels`, `/channels/:id/subreddits` |
 | Admin | `/admin/feeds/*`, `/admin/channels/:id/topics` |
+| Internal | `/channels/active`, `/channels/:id/next-track` (`X-Internal-Token`) |
