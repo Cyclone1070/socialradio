@@ -35,7 +35,12 @@ User-facing stations: each channel subscribes to subreddits, maintains a never-e
 
 Picking the next topic for a channel runs in two phases:
 
-1. **Fire background scrapes (always)**: for each subscribed subreddit, check if it needs a fresh scrape: **stale** (last scrape > 7 days ago) **or exhausted** (every post in the DB for that sub has already been played). If so, fire scrapes in a **sequential background chain** (sub A completes before sub B starts, never awaited).
+1. **Lazy 20-Sub Pool Rotation**:
+   - Counts subreddits with available unplayed posts (`activeSubs`).
+   - If `activeSubs.length >= 20`, **no scrapes are triggered** (the channel already has a diverse pool of playable content).
+   - If `activeSubs.length < 20`, calculates `toScrapeCount = min(20, totalSubscribed) - activeSubs.length`.
+   - Sorts inactive (exhausted/stale) subreddits by rotation priority: never-scraped (`lastScrapedAt === null`) first, then oldest `lastScrapedAt` ascending (least recently scraped).
+   - Fires background scrapes for the top `toScrapeCount` subreddits in a **sequential background chain** (never blocking playback).
 2. **Read the topic from the current DB**: unplayed posts are clustered into topics; the best cluster becomes the next talk segment — or null, and a filler is appended.
 
 ## Behaviour — playback & streaming

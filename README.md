@@ -26,7 +26,7 @@ Each slice has a `README.md` describing its **behaviour** — rules, flows, and 
 | `src/infrastructure/auth` | Cross-cutting JWT & RBAC guards and decorators | — |
 | `src/infrastructure/logging` | Centralized JSON logging module & Pino contract | [README](src/infrastructure/logging/README.md) |
 | `src/infrastructure/healthcheck` | Liveness probe endpoint | [README](src/infrastructure/healthcheck/README.md) |
-| `deployment/tests` | Blackbox Docker E2E suite (41 cases) | [README](deployment/tests/README.md) |
+| `deployment/tests` | Blackbox Docker E2E suite (37 cases) | [README](deployment/tests/README.md) |
 
 ## Running
 

@@ -29,6 +29,7 @@ import { SubredditData } from '../domain/types/subreddit.types';
 import { randomUUID } from 'crypto';
 
 const SCRAPE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7-day scrape window
+const ACTIVE_SUB_POOL_TARGET = 20; // Maximum active subreddits with available posts per channel
 
 @Injectable()
 export class QueueService {
@@ -219,7 +220,8 @@ export class QueueService {
       await this.contentContract.getSubredditsByIds(subIds);
     const allPosts = await this.contentContract.getPostsBySubredditIds(subIds);
 
-    const subsToScrape: string[] = [];
+    const activeSubs: SubredditData[] = [];
+    const inactiveSubs: SubredditData[] = [];
     const ttlMs = SCRAPE_WINDOW_MS;
 
     for (const sub of subredditDetails) {
@@ -246,14 +248,34 @@ export class QueueService {
         'scrape decision',
       );
 
-      if (isStale || isExhausted) {
-        subsToScrape.push(sub.name);
+      if (!isExhausted) {
+        activeSubs.push(sub);
       }
+
+      if (isStale || isExhausted) {
+        inactiveSubs.push(sub);
+      }
+    }
+
+    let subsToScrape: string[] = [];
+    if (activeSubs.length < ACTIVE_SUB_POOL_TARGET) {
+      const toScrapeCount =
+        Math.min(ACTIVE_SUB_POOL_TARGET, subredditDetails.length) -
+        activeSubs.length;
+
+      inactiveSubs.sort((a, b) => {
+        if (!a.lastScrapedAt && !b.lastScrapedAt) return 0;
+        if (!a.lastScrapedAt) return -1;
+        if (!b.lastScrapedAt) return 1;
+        return a.lastScrapedAt.getTime() - b.lastScrapedAt.getTime();
+      });
+
+      subsToScrape = inactiveSubs.slice(0, toScrapeCount).map((s) => s.name);
     }
 
     if (subsToScrape.length > 0) {
       this.logger.info(
-        { channelId, subsToScrape },
+        { channelId, subsToScrape, activeCount: activeSubs.length },
         'background scrape chain started',
       );
       const runSequentialScrapes = async (): Promise<void> => {

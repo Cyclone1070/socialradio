@@ -103,6 +103,7 @@ describe('QueueService', () => {
       durationSeconds: 60,
       postIds: ['post-1'],
     });
+    jest.spyOn(service, 'getRandomCount').mockReturnValue(1);
   });
 
   function setupChannelSubreddits(
@@ -177,6 +178,103 @@ describe('QueueService', () => {
       await service.bufferAhead(channelId);
 
       expect(mockContentContract.scrapeSubreddit).not.toHaveBeenCalled();
+    });
+
+    it('should NOT trigger scraping if channel already has 20 active subreddits with unplayed posts even if some are stale', async () => {
+      const channelId = 'chan-1';
+      mockSegmentRepo.count.mockResolvedValue(0);
+
+      // 22 subreddits, all 22 have unplayed posts, but half are older than 7 days (stale)
+      const staleDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+      const freshDate = new Date();
+      const subs = Array.from({ length: 22 }, (_, i) => ({
+        subredditId: `sub-${i + 1}`,
+        name: `sub${i + 1}`,
+        lastScrapedAt: i % 2 === 0 ? staleDate : freshDate,
+      }));
+      setupChannelSubreddits(subs);
+
+      const posts = Array.from({ length: 22 }, (_, i) => ({
+        id: `post-${i + 1}`,
+        subredditId: `sub-${i + 1}`,
+        title: `title ${i + 1}`,
+      }));
+      mockContentContract.getPostsBySubredditIds.mockResolvedValue(posts);
+
+      await service.bufferAhead(channelId);
+
+      expect(mockContentContract.scrapeSubreddit).not.toHaveBeenCalled();
+    });
+
+    it('should scrape only toScrapeCount inactive subreddits prioritizing never scraped and oldest lastScrapedAt', async () => {
+      const channelId = 'chan-1';
+      mockSegmentRepo.count.mockResolvedValue(0);
+
+      // 17 active subs with posts
+      const activeSubs = Array.from({ length: 17 }, (_, i) => ({
+        subredditId: `active-${i + 1}`,
+        name: `active${i + 1}`,
+        lastScrapedAt: new Date(),
+      }));
+
+      // 5 inactive subs with different dates
+      const inactiveSubs = [
+        {
+          subredditId: 'in-recent',
+          name: 'in_recent',
+          lastScrapedAt: new Date(Date.now() - 1 * 60 * 60 * 1000), // 1 hour ago
+        },
+        {
+          subredditId: 'in-never-1',
+          name: 'in_never_1',
+          lastScrapedAt: null, // Priority 1
+        },
+        {
+          subredditId: 'in-oldest',
+          name: 'in_oldest',
+          lastScrapedAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000), // 10 days ago (Priority 3)
+        },
+        {
+          subredditId: 'in-never-2',
+          name: 'in_never_2',
+          lastScrapedAt: null, // Priority 2
+        },
+        {
+          subredditId: 'in-medium',
+          name: 'in_medium',
+          lastScrapedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), // 2 days ago
+        },
+      ];
+
+      setupChannelSubreddits([...activeSubs, ...inactiveSubs]);
+
+      // Only active subs have unplayed posts
+      const posts = activeSubs.map((s, i) => ({
+        id: `post-${i + 1}`,
+        subredditId: s.subredditId,
+        title: `post ${i + 1}`,
+      }));
+      mockContentContract.getPostsBySubredditIds.mockResolvedValue(posts);
+
+      // toScrapeCount = min(20, 22) - 17 = 3
+      await service.bufferAhead(channelId);
+
+      expect(mockContentContract.scrapeSubreddit).toHaveBeenCalledTimes(3);
+      expect(mockContentContract.scrapeSubreddit).toHaveBeenCalledWith(
+        'in_never_1',
+      );
+      expect(mockContentContract.scrapeSubreddit).toHaveBeenCalledWith(
+        'in_never_2',
+      );
+      expect(mockContentContract.scrapeSubreddit).toHaveBeenCalledWith(
+        'in_oldest',
+      );
+      expect(mockContentContract.scrapeSubreddit).not.toHaveBeenCalledWith(
+        'in_recent',
+      );
+      expect(mockContentContract.scrapeSubreddit).not.toHaveBeenCalledWith(
+        'in_medium',
+      );
     });
 
     it('should trigger scraping if lastScrapedAt is older than 7 days', async () => {

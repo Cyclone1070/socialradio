@@ -145,10 +145,24 @@ export class ScraperService {
             continue;
           }
 
-          const rawComments = await this.redditScraperService.fetchPostComments(
-            subredditName,
-            rawPost.id,
-          );
+          let rawComments;
+          try {
+            rawComments = await this.redditScraperService.fetchPostComments(
+              subredditName,
+              rawPost.id,
+            );
+          } catch (err) {
+            this.logger.warn(
+              {
+                scrapeId,
+                sub: subredditName,
+                postId: rawPost.id,
+                err: err instanceof Error ? err.message : String(err),
+              },
+              'failed to fetch post comments — skipping post',
+            );
+            continue;
+          }
 
           // Word count guard: total words across all comments must be >= 2500
           const totalWords = rawComments.reduce((sum, c) => {
@@ -181,18 +195,24 @@ export class ScraperService {
 
           for (const rawComment of rawComments) {
             const isOp = rawComment.author === rawPost.author;
-            const parentRedditId = rawComment.parent_id.startsWith('t1_')
-              ? rawComment.parent_id.replace('t1_', '')
-              : null;
+            const parentIdStr = String(rawComment.parent_id || '');
+            const parentRedditId =
+              parentIdStr &&
+              parentIdStr !== rawPost.id &&
+              !parentIdStr.startsWith('t3_')
+                ? parentIdStr.replace(/^t1_/, '')
+                : null;
 
             const comment = new Comment();
             comment.post = post;
             comment.redditId = rawComment.id;
-            comment.body = rawComment.body;
-            comment.score = rawComment.score;
+            comment.body = rawComment.body || '';
+            comment.score = rawComment.score || 0;
             comment.parentRedditId = parentRedditId;
             comment.isOp = isOp;
-            comment.redditCreatedAt = new Date(rawComment.created_utc * 1000);
+            comment.redditCreatedAt = new Date(
+              (rawComment.created_utc || 0) * 1000,
+            );
             this.em.persist(comment);
           }
           await this.em.flush();

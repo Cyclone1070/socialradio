@@ -1,17 +1,24 @@
--- Ephemeral E2E fixture: a subreddit + its channel subscription, inserted
--- behind the public API (the subscribe gate rejects dead subs — it uses the
--- same shreddit-post validity signal the fetcher checks at scrape time).
--- Emulates the prod scenario "sub was valid at subscribe time, died later".
+-- Ephemeral E2E fixture: 19 active subreddits with 1 unplayed post each,
+-- attached to :chan_id.
+-- Combined with r/AskReddit (which has 0 posts before scrape),
+-- the channel reaches 19 active subreddits.
 --
--- usage (from docker-test.sh, single SQL pattern):
+-- Usage:
 --   psql_run -v chan_id="$CHAN_ID" -f /scripts/dead-sub-fixture.sql
---
--- The scrape chain then deletes the row (isInvalid), which cascades to this
--- junction row — the E2E asserts the subscription disappears.
 
-INSERT INTO subreddit ("id", "name")
-VALUES (gen_random_uuid(), 'dead_prod_sub_e2e_77401');
+-- 1. Insert 19 active subreddits
+INSERT INTO subreddit ("id", "name", "last_scraped_at")
+SELECT gen_random_uuid(), 'pool_sub_e2e_' || i, now()
+FROM generate_series(1, 19) AS i;
 
+-- 2. Insert 1 post for each of the 19 subreddits
+INSERT INTO post ("id", "subredditId", "reddit_id", "title", "body", "score", "reddit_created_at", "scraped_at")
+SELECT gen_random_uuid(), s.id, 'r_post_e2e_' || i, 'Title ' || i, 'Body ' || i, 100, now(), now()
+FROM generate_series(1, 19) AS i
+JOIN subreddit s ON s.name = ('pool_sub_e2e_' || i);
+
+-- 3. Subscribe channel to all 19 subreddits
 INSERT INTO channel_subreddit ("channelId", "subredditId")
-SELECT :'chan_id',
-       (SELECT "id" FROM subreddit WHERE "name" = 'dead_prod_sub_e2e_77401');
+SELECT :'chan_id', s.id
+FROM subreddit s
+WHERE s.name LIKE 'pool_sub_e2e_%';
