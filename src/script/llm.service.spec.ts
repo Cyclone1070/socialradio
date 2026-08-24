@@ -17,9 +17,10 @@ describe('LlmService', () => {
   const mockGenerateText = aiModule.generateText as jest.Mock<any>;
 
   const mockConfigService = {
-    get: jest.fn((key: string) => {
-      if (key === 'DEEPSEEK_API_KEY') return 'test-key';
-      if (key === 'DEEPSEEK_MODEL') return 'deepseek-chat';
+    get: jest.fn((key: string): string | null => {
+      if (key === 'LLM_API_KEY') return 'test-key';
+      if (key === 'LLM_BASE_URL') return 'https://opencode.ai/zen/v1';
+      if (key === 'LLM_MODEL') return 'deepseek-chat';
       return null;
     }),
   };
@@ -53,11 +54,36 @@ describe('LlmService', () => {
     expect(result).toBe('Generated script output');
   });
 
-  it('should throw error if DEEPSEEK_API_KEY is not configured', async () => {
-    mockConfigService.get.mockReturnValue(null);
+  it('should throw error if LLM API key is not configured', async () => {
+    mockConfigService.get.mockImplementation((key: string) => {
+      if (key === 'LLM_API_KEY') return null;
+      return 'val';
+    });
 
     await expect(service.generateText('sys', 'user')).rejects.toThrow(
-      'DeepSeek API key is not configured',
+      'LLM API key is not configured (set LLM_API_KEY)',
+    );
+  });
+
+  it('should throw error if LLM base URL is not configured', async () => {
+    mockConfigService.get.mockImplementation((key: string) => {
+      if (key === 'LLM_BASE_URL') return null;
+      return 'val';
+    });
+
+    await expect(service.generateText('sys', 'user')).rejects.toThrow(
+      'LLM base URL is not configured (set LLM_BASE_URL)',
+    );
+  });
+
+  it('should throw error if LLM model name is not configured', async () => {
+    mockConfigService.get.mockImplementation((key: string) => {
+      if (key === 'LLM_MODEL') return null;
+      return 'val';
+    });
+
+    await expect(service.generateText('sys', 'user')).rejects.toThrow(
+      'LLM model name is not configured (set LLM_MODEL)',
     );
   });
 });

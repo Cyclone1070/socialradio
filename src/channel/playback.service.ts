@@ -58,9 +58,8 @@ export class PlaybackService {
           { orderBy: { playOrder: 'ASC' } },
         );
       }
-    }
-
-    if (!segment) {
+    } else {
+      // First track for brand-new channel
       segment = await this.segmentRepo.findOne(
         { channel: channelId },
         { orderBy: { playOrder: 'ASC' } },
@@ -92,33 +91,11 @@ export class PlaybackService {
       };
     }
 
-    // 3. Status Check for Talk Segment
-    if (segment instanceof TalkSegment) {
-      if (segment.status === 'generating') {
-        const jingle = await this.mediaService.getRandomJingle();
-        return {
-          segmentId: 'interim-jingle',
-          type: 'jingle',
-          filePath: jingle.filePath,
-          durationSeconds: jingle.durationSeconds,
-          title: 'Station ID',
-          artist: 'Social Radio',
-        };
-      }
-      if (segment.status === 'failed') {
-        const next = await this.segmentRepo.findOne(
-          { channel: channelId, playOrder: { $gt: segment.playOrder } },
-          { orderBy: { playOrder: 'ASC' } },
-        );
-        if (next) segment = next;
-      }
-    }
-
-    // 4. Update Channel Playhead State
+    // 3. Update Channel Playhead State
     channel.currentSegmentId = segment.id;
     await this.em.flush();
 
-    // 5. Trigger Low Runway Replenishment
+    // 4. Trigger Low Runway Replenishment
     const remainingCount = await this.segmentRepo.count({
       channel: channelId,
       playOrder: { $gt: segment.playOrder },
@@ -131,7 +108,7 @@ export class PlaybackService {
       this.queueService.bufferAhead(channelId).catch(() => {});
     }
 
-    // 6. Prune Consumed Segments
+    // 5. Prune Consumed Segments
     await this.pruneConsumed(channelId, segment.playOrder);
 
     return {

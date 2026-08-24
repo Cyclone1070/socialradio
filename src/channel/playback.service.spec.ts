@@ -5,7 +5,7 @@ import { PlaybackService } from './playback.service';
 import { QueueService } from './queue.service';
 import { MediaContract } from '../domain';
 import { Channel } from './entities/channel.entity';
-import { MusicSegment, TalkSegment } from './entities/segment.entity';
+import { MusicSegment } from './entities/segment.entity';
 import {
   ChannelSchema,
   SegmentSchema,
@@ -105,6 +105,48 @@ describe('PlaybackService', () => {
       expect(mockEntityManager.flush).toHaveBeenCalled();
     });
 
+    it('triggers bufferAhead when queue is empty and plays first track of new batch', async () => {
+      const channelId = 'chan-1';
+      const channel = Object.assign(new Channel(), {
+        id: channelId,
+        currentSegmentId: null,
+      });
+
+      const newSegment = Object.assign(new MusicSegment(), {
+        id: 'new-seg-1',
+        playOrder: 1,
+        durationSeconds: 120,
+        audioUrl: 'song.mp3',
+      });
+
+      mockChannelRepo.findOne.mockResolvedValue(channel);
+      // First findOne returns null (empty queue), second findOne (after bufferAhead) returns newSegment
+      mockSegmentRepo.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(newSegment);
+      mockSegmentRepo.count.mockResolvedValue(5);
+
+      const track = await service.getNextTrack(channelId);
+
+      expect(mockQueueService.bufferAhead).toHaveBeenCalledWith(channelId);
+      expect(track.segmentId).toBe('new-seg-1');
+      expect(channel.currentSegmentId).toBe('new-seg-1');
+    });
+
+    it('returns fallback jingle if queue is empty and bufferAhead produces nothing', async () => {
+      const channelId = 'chan-1';
+      const channel = Object.assign(new Channel(), { id: channelId });
+
+      mockChannelRepo.findOne.mockResolvedValue(channel);
+      mockSegmentRepo.findOne.mockResolvedValue(null);
+
+      const track = await service.getNextTrack(channelId);
+
+      expect(track.segmentId).toBe('fallback-jingle');
+      expect(track.type).toBe('jingle');
+      expect(mockMediaService.getRandomJingle).toHaveBeenCalled();
+    });
+
     it('triggers bufferAhead when remaining runway is low (< 4)', async () => {
       const channelId = 'chan-1';
       const channel = Object.assign(new Channel(), { id: channelId });
@@ -122,24 +164,6 @@ describe('PlaybackService', () => {
       await service.getNextTrack(channelId);
 
       expect(mockQueueService.bufferAhead).toHaveBeenCalledWith(channelId);
-    });
-
-    it('returns interim jingle if next talk segment is still generating', async () => {
-      const channelId = 'chan-1';
-      const channel = Object.assign(new Channel(), { id: channelId });
-      const talk = Object.assign(new TalkSegment(), {
-        id: 'talk-1',
-        playOrder: 1,
-        status: 'generating',
-      });
-
-      mockChannelRepo.findOne.mockResolvedValue(channel);
-      mockSegmentRepo.findOne.mockResolvedValue(talk);
-
-      const track = await service.getNextTrack(channelId);
-
-      expect(track.type).toBe('jingle');
-      expect(track.segmentId).toBe('interim-jingle');
     });
 
     it('prunes segments older than 100 positions behind current playhead', async () => {

@@ -121,14 +121,17 @@ describe('QueueService', () => {
       lastScrapedAt: s.lastScrapedAt,
       createdAt: new Date(),
     }));
+    const completedItems = [...completedPosts];
     const channel = Object.assign(new Channel(), {
       id: 'chan-1',
       subreddits: {
         getItems: jest.fn().mockReturnValue(formatted),
       },
       completedPosts: {
-        getItems: jest.fn().mockReturnValue(completedPosts),
-        add: jest.fn(),
+        getItems: jest.fn().mockReturnValue(completedItems),
+        add: jest.fn((ref: { id: string }) => {
+          completedItems.push(ref);
+        }),
       },
     });
     mockChannelRepo.findOne.mockResolvedValue(channel);
@@ -160,7 +163,7 @@ describe('QueueService', () => {
       );
     });
 
-    it('should NOT trigger scraping at 4 days since the last scrape (7-day window)', async () => {
+    it('should NOT trigger scraping at 4 days since the last scrape if subreddit still has unplayed posts', async () => {
       const channelId = 'chan-1';
       const nearlyFresh = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000);
       mockSegmentRepo.count.mockResolvedValue(0);
@@ -172,7 +175,16 @@ describe('QueueService', () => {
         },
       ]);
       mockContentContract.getPostsBySubredditIds.mockResolvedValue([
-        { id: 'post-1', subredditId: 'sub-1', title: 'news title' },
+        {
+          id: 'post-1',
+          subredditId: 'sub-1',
+          title: 'Breaking Space Discovery',
+        },
+        {
+          id: 'post-2',
+          subredditId: 'sub-1',
+          title: 'Local Bakery Wins Award',
+        },
       ]);
 
       await service.bufferAhead(channelId);
@@ -194,11 +206,21 @@ describe('QueueService', () => {
       }));
       setupChannelSubreddits(subs);
 
-      const posts = Array.from({ length: 22 }, (_, i) => ({
-        id: `post-${i + 1}`,
-        subredditId: `sub-${i + 1}`,
-        title: `title ${i + 1}`,
-      }));
+      // 2 posts per subreddit with distinct topics to prevent cross-sub clustering
+      const posts: Array<{ id: string; subredditId: string; title: string }> =
+        [];
+      subs.forEach((s, i) => {
+        posts.push({
+          id: `post-${i + 1}-a`,
+          subredditId: s.subredditId,
+          title: `Alpha Topic ${i + 1}`,
+        });
+        posts.push({
+          id: `post-${i + 1}-b`,
+          subredditId: s.subredditId,
+          title: `Beta Topic ${i + 1}`,
+        });
+      });
       mockContentContract.getPostsBySubredditIds.mockResolvedValue(posts);
 
       await service.bufferAhead(channelId);
@@ -248,12 +270,21 @@ describe('QueueService', () => {
 
       setupChannelSubreddits([...activeSubs, ...inactiveSubs]);
 
-      // Only active subs have unplayed posts
-      const posts = activeSubs.map((s, i) => ({
-        id: `post-${i + 1}`,
-        subredditId: s.subredditId,
-        title: `post ${i + 1}`,
-      }));
+      // 2 posts per active sub with distinct topics so all 17 remain active after 1 is played
+      const posts: Array<{ id: string; subredditId: string; title: string }> =
+        [];
+      activeSubs.forEach((s, i) => {
+        posts.push({
+          id: `post-${i + 1}-a`,
+          subredditId: s.subredditId,
+          title: `Gamma Topic ${i + 1}`,
+        });
+        posts.push({
+          id: `post-${i + 1}-b`,
+          subredditId: s.subredditId,
+          title: `Delta Topic ${i + 1}`,
+        });
+      });
       mockContentContract.getPostsBySubredditIds.mockResolvedValue(posts);
 
       // toScrapeCount = min(20, 22) - 17 = 3
@@ -342,7 +373,7 @@ describe('QueueService', () => {
   });
 
   describe('bufferAhead cycle generation', () => {
-    it('appends talk segment when topic is found, saves voice track, and marks posts completed', async () => {
+    it('appends talk segment when topic is found, saves voice track, and marks posts completed immediately', async () => {
       const channelId = 'chan-1';
       setupChannelSubreddits([
         {
@@ -370,7 +401,44 @@ describe('QueueService', () => {
       expect(mockVoiceContract.synthesizeScript).toHaveBeenCalled();
     });
 
-    it('handles voice generation failure gracefully without marking posts completed', async () => {
+    it('retries next available topic when first topic fails voice generation', async () => {
+      const channelId = 'chan-1';
+      setupChannelSubreddits([
+        {
+          subredditId: 'sub-1',
+          name: 'AskReddit',
+          lastScrapedAt: new Date(),
+        },
+      ]);
+      mockContentContract.getPostsBySubredditIds.mockResolvedValue([
+        {
+          id: 'post-1',
+          subredditId: 'sub-1',
+          title: 'Topic Title 1',
+          selftext: 'Body 1',
+          ups: 200,
+        },
+        {
+          id: 'post-2',
+          subredditId: 'sub-1',
+          title: 'Cooking Pasta Recipe',
+          selftext: 'Body 2',
+          ups: 100,
+        },
+      ]);
+
+      // First LLM call fails, second succeeds
+      mockScriptContract.generateScript
+        .mockRejectedValueOnce(new Error('LLM error on post 1'))
+        .mockResolvedValueOnce('Valid script for post 2');
+
+      await service.bufferAhead(channelId);
+
+      expect(mockScriptContract.generateScript).toHaveBeenCalledTimes(2);
+      expect(mockVoiceContract.synthesizeScript).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to filler when all available topics fail generation', async () => {
       const channelId = 'chan-1';
       setupChannelSubreddits([
         {
@@ -389,12 +457,13 @@ describe('QueueService', () => {
         },
       ]);
       mockScriptContract.generateScript.mockRejectedValue(
-        new Error('LLM error'),
+        new Error('LLM permanent failure'),
       );
 
       await service.bufferAhead(channelId);
 
-      expect(mockScriptContract.generateScript).toHaveBeenCalled();
+      expect(mockScriptContract.generateScript).toHaveBeenCalledTimes(1);
+      expect(mockMediaService.getRandomAd).toHaveBeenCalled();
     });
   });
 });

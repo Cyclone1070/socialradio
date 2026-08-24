@@ -8,19 +8,23 @@ export class LlmService {
   constructor(private readonly configService: ConfigService) {}
 
   private getLanguageModel(): LanguageModel {
-    const apiKey = this.configService.get<string>('DEEPSEEK_API_KEY');
+    const apiKey = this.configService.get<string>('LLM_API_KEY');
     if (!apiKey) {
-      throw new Error('DeepSeek API key is not configured');
+      throw new Error('LLM API key is not configured (set LLM_API_KEY)');
     }
 
-    const defaultBaseUrl = 'https://api.deepseek.com/v1';
-    const rawBaseUrl =
-      this.configService.get<string>('DEEPSEEK_BASE_URL') || defaultBaseUrl;
+    const rawBaseUrl = this.configService.get<string>('LLM_BASE_URL');
+    if (!rawBaseUrl) {
+      throw new Error('LLM base URL is not configured (set LLM_BASE_URL)');
+    }
     const baseUrl = rawBaseUrl.endsWith('/')
       ? rawBaseUrl.slice(0, -1)
       : rawBaseUrl;
-    const modelName =
-      this.configService.get<string>('DEEPSEEK_MODEL') || 'deepseek-chat';
+
+    const modelName = this.configService.get<string>('LLM_MODEL');
+    if (!modelName) {
+      throw new Error('LLM model name is not configured (set LLM_MODEL)');
+    }
 
     const deepseek = createDeepSeek({
       apiKey,

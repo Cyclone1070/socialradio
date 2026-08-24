@@ -82,42 +82,57 @@ export class QueueService {
     channelId: string,
     playOrder: number,
   ): Promise<number | null> {
-    const talkCluster = await this.findPendingTopicSegment(channelId);
-    if (talkCluster) {
-      const talkItem: TalkSegment = Object.assign(new TalkSegment(), {
-        channel: this.em.getReference(Channel, channelId),
-        channelId,
-        playOrder,
-        clusterId: talkCluster.id,
-      });
-      await this.em.persist(talkItem).flush();
+    const triedPostIds = new Set<string>();
 
-      this.generateTalkVoiceTrack(talkCluster.posts)
-        .then(async ({ voiceTrack, scriptObj }) => {
-          for (const p of talkCluster.posts) {
-            await this.markPostCompletedForChannel(channelId, p.id);
-          }
-          talkItem.audioUrl = voiceTrack.filePath;
-          talkItem.durationSeconds = voiceTrack.durationSeconds;
-          talkItem.status = 'ready';
-          talkItem.script = scriptObj.turns;
-          await this.em.flush();
-        })
-        .catch(async (err) => {
-          talkItem.status = 'failed';
-          await this.em.flush();
-          this.logger.error(
-            {
-              channelId,
-              segmentId: talkItem.id,
-              err: err instanceof Error ? err : new Error(String(err)),
-            },
-            'voice generation failed',
-          );
+    while (true) {
+      const talkCluster = await this.findPendingTopicSegment(
+        channelId,
+        triedPostIds,
+      );
+      if (!talkCluster) {
+        // Pool is completely empty: check and trigger background scrape
+        await this.checkAndScrapePoolDeficit(channelId, triedPostIds);
+        return null;
+      }
+
+      // Step 1: Mark posts completed in DB immediately upon selection
+      for (const p of talkCluster.posts) {
+        triedPostIds.add(p.id);
+        await this.markPostCompletedForChannel(channelId, p.id);
+      }
+
+      // Step 2: Check pool health directly from DB state (now reflecting consumed posts)
+      await this.checkAndScrapePoolDeficit(channelId, triedPostIds);
+
+      // Step 3: Synthesize voice track
+      try {
+        const { voiceTrack, scriptObj } = await this.generateTalkVoiceTrack(
+          talkCluster.posts,
+        );
+        const talkItem: TalkSegment = Object.assign(new TalkSegment(), {
+          channel: this.em.getReference(Channel, channelId),
+          channelId,
+          playOrder,
+          clusterId: talkCluster.id,
+          audioUrl: voiceTrack.filePath,
+          durationSeconds: voiceTrack.durationSeconds,
+          status: 'ready',
+          script: scriptObj.turns,
         });
-      return playOrder + 1;
+        await this.em.persist(talkItem).flush();
+        return playOrder + 1;
+      } catch (err) {
+        this.logger.error(
+          {
+            channelId,
+            clusterId: talkCluster.id,
+            err: err instanceof Error ? err : new Error(String(err)),
+          },
+          'voice generation failed, trying next available topic',
+        );
+        // Continue loop to try the next available unplayed topic cluster
+      }
     }
-    return null;
   }
 
   private async generateTalkVoiceTrack(
@@ -133,7 +148,7 @@ export class QueueService {
       typeof rawScript === 'string'
         ? {
             postId: posts[0].id,
-            turns: [{ speaker: 'Host', text: rawScript }],
+            turns: [{ speaker: 'Dave', text: rawScript }],
           }
         : rawScript;
 
@@ -203,6 +218,7 @@ export class QueueService {
 
   public async findPendingTopicSegment(
     channelId: string,
+    excludedPostIds: Set<string> = new Set(),
   ): Promise<TalkCluster | null> {
     const channel = await this.channelRepo.findOne(
       { id: channelId },
@@ -214,7 +230,37 @@ export class QueueService {
     if (subIds.length === 0) return null;
 
     const completedPosts = channel.completedPosts.getItems();
-    const completedPostIds = completedPosts.map((p: PostRef) => p.id);
+    const completedPostIds = new Set([
+      ...completedPosts.map((p: PostRef) => p.id),
+      ...excludedPostIds,
+    ]);
+
+    const allPosts = await this.contentContract.getPostsBySubredditIds(subIds);
+    const unplayedPosts = allPosts.filter((p) => !completedPostIds.has(p.id));
+    if (unplayedPosts.length === 0) return null;
+
+    const segments = clusterPosts(unplayedPosts);
+    return segments[0] || null;
+  }
+
+  public async checkAndScrapePoolDeficit(
+    channelId: string,
+    excludedPostIds: Set<string> = new Set(),
+  ): Promise<void> {
+    const channel = await this.channelRepo.findOne(
+      { id: channelId },
+      { populate: ['subreddits', 'completedPosts'] },
+    );
+    if (!channel) return;
+    const subreddits = channel.subreddits.getItems();
+    const subIds = subreddits.map((s: SubredditRef) => s.id);
+    if (subIds.length === 0) return;
+
+    const completedPosts = channel.completedPosts.getItems();
+    const completedPostIds = new Set([
+      ...completedPosts.map((p: PostRef) => p.id),
+      ...excludedPostIds,
+    ]);
 
     const subredditDetails: SubredditData[] =
       await this.contentContract.getSubredditsByIds(subIds);
@@ -223,46 +269,27 @@ export class QueueService {
     const activeSubs: SubredditData[] = [];
     const inactiveSubs: SubredditData[] = [];
     const ttlMs = SCRAPE_WINDOW_MS;
+    const target = Math.min(ACTIVE_SUB_POOL_TARGET, subredditDetails.length);
 
     for (const sub of subredditDetails) {
       const isStale =
         !sub.lastScrapedAt || Date.now() - sub.lastScrapedAt.getTime() > ttlMs;
-
       const postsInSub = allPosts.filter((p) => p.subredditId === sub.id);
       const unplayedInSub = postsInSub.filter(
-        (p) => !completedPostIds.includes(p.id),
+        (p) => !completedPostIds.has(p.id),
       );
       const isExhausted = unplayedInSub.length === 0;
-
-      const decision = isStale ? 'stale' : isExhausted ? 'exhausted' : 'fresh';
-      this.logger.debug(
-        {
-          channelId,
-          sub: sub.name,
-          decision,
-          staleAgeMs: sub.lastScrapedAt
-            ? Date.now() - sub.lastScrapedAt.getTime()
-            : null,
-          unplayed: unplayedInSub.length,
-        },
-        'scrape decision',
-      );
 
       if (!isExhausted) {
         activeSubs.push(sub);
       }
-
       if (isStale || isExhausted) {
         inactiveSubs.push(sub);
       }
     }
 
-    let subsToScrape: string[] = [];
-    if (activeSubs.length < ACTIVE_SUB_POOL_TARGET) {
-      const toScrapeCount =
-        Math.min(ACTIVE_SUB_POOL_TARGET, subredditDetails.length) -
-        activeSubs.length;
-
+    if (activeSubs.length < target) {
+      const toScrapeCount = target - activeSubs.length;
       inactiveSubs.sort((a, b) => {
         if (!a.lastScrapedAt && !b.lastScrapedAt) return 0;
         if (!a.lastScrapedAt) return -1;
@@ -270,29 +297,23 @@ export class QueueService {
         return a.lastScrapedAt.getTime() - b.lastScrapedAt.getTime();
       });
 
-      subsToScrape = inactiveSubs.slice(0, toScrapeCount).map((s) => s.name);
+      const subsToScrape = inactiveSubs
+        .slice(0, toScrapeCount)
+        .map((s) => s.name);
+
+      if (subsToScrape.length > 0) {
+        this.logger.info(
+          { channelId, subsToScrape, activeCount: activeSubs.length },
+          'background scrape chain started',
+        );
+        const runSequentialScrapes = async (): Promise<void> => {
+          for (const name of subsToScrape) {
+            await this.contentContract.scrapeSubreddit(name).catch(() => {});
+          }
+        };
+        void runSequentialScrapes();
+      }
     }
-
-    if (subsToScrape.length > 0) {
-      this.logger.info(
-        { channelId, subsToScrape, activeCount: activeSubs.length },
-        'background scrape chain started',
-      );
-      const runSequentialScrapes = async (): Promise<void> => {
-        for (const name of subsToScrape) {
-          await this.contentContract.scrapeSubreddit(name).catch(() => {});
-        }
-      };
-      void runSequentialScrapes();
-    }
-
-    const unplayedPosts = allPosts.filter(
-      (p) => !completedPostIds.includes(p.id),
-    );
-    if (unplayedPosts.length === 0) return null;
-
-    const segments = clusterPosts(unplayedPosts);
-    return segments[0] || null;
   }
 
   private async markPostCompletedForChannel(
