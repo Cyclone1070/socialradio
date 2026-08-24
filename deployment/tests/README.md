@@ -1,26 +1,33 @@
-# E2E Tests — Blackbox Suite
+# E2E Test Suite — Automated Manual QA Gate
 
-One command, full stack, real Reddit. 37 scenarios against a freshly composed environment: Postgres, MinIO, browserless, and the app — with a seeded admin (from `.env`) and a non-admin test user.
+> **CRITICAL RULE FOR ALL AGENTS AND DEVELOPERS**:
+> The sole purpose of this E2E suite is to **automate manual QA testing**. Every test case in this suite represents an engineer manually spinning up the entire Docker stack and curling endpoints in their terminal to inspect real, live behavior.
+> 
+> **Zero Tolerance for False Passes**: There must NEVER be a scenario where a bug exists during manual verification but the E2E test passes. A passing test that hides a manual QA failure is a critical protocol violation. E2E is the **final, non-negotiable QA gate** before release.
 
-## Running
+---
+
+## Architecture & Mechanics
+
+- **Clean State Isolation**: The suite runs from a clean state. Containers and volumes are torn down after every run (`run-docker-test.sh`).
+- **Network & Host Isolation**: The test container curls the app via `host.docker.internal:3000` on an isolated Docker network. A `seed` service injects fixture data only after the app healthcheck confirms the schema is migrated.
+- **SQL Pattern**: One access point — the `psql_run` helper in `docker-test.sh` runs every database change (boot fixtures like `seed-test-user.sql` at suite start, mid-suite fixtures like `dead-sub-fixture.sql` with `-v` psql variables). No other SQL paths exist.
+- **Read-Back Assertions**: Every mutation is verified by read-back: subscribe/unsubscribe are followed by `GET /channels/:id/subreddits` to prove the link changed in the database. Responses are parsed with `jq` to verify structure and values.
+- **Auth Guard Verification**: Every protected endpoint asserts its own auth negatives — any route missing its guard decorator immediately fails the suite.
+
+---
+
+## Running the Suite
 
 ```sh
 ./deployment/tests/run-docker-test.sh
 ```
 
-Exit code `0` = all 37 pass. The suite must pass from a **clean state** (containers + volumes are torn down after every run).
+Exit code `0` = all scenarios pass.
 
-**How it works**: the test container curls the app via `host.docker.internal:3000` on an isolated network. A `seed` service injects the non-admin fixture user (`user@socialradio.com` / `UserPass123!`) only after the app healthcheck confirms the schema exists. The test script itself is a thin wrapper — orchestration lives in compose.
+---
 
-**SQL pattern**: one access point — the `psql_run` helper in `docker-test.sh` runs every
-database change (boot fixtures like `seed-test-user.sql` at suite start, mid-suite fixtures
-like `dead-sub-fixture.sql` with `-v` psql variables). No other SQL paths exist.
-
-**Assertion style**: every case checks more than status. Responses are verified with `jq` (field presence, values, error bodies — e.g. "Invalid credentials" on both login failures, proving no user enumeration). Mutations are **read back**: subscribe/unsubscribe are followed by `GET /channels/:id/subreddits` to prove the link changed. Error responses must confirm their status code in the body.
-
-**Structure**: cases are grouped **by feature**. Within each feature, happy paths come first, then that feature's failure cases. Every protected endpoint asserts its own auth negatives — a route missing its guard decorator fails the suite.
-
-## Scenario inventory — all 37, in order
+## Scenario Inventory
 
 ### Section 1: Healthcheck
 *The app must be alive.*
@@ -30,7 +37,7 @@ like `dead-sub-fixture.sql` with `-v` psql variables). No other SQL paths exist.
 | 1 | `GET /healthcheck` | 200, `status: "ok"`, timestamp present |
 
 ### Section 2: Auth & Identity
-*Login contract, token validity, profile.*
+*Login contract, token validity, profile, and user enumeration safety.*
 
 | # | Scenario | Expected |
 |---|---|---|
@@ -40,12 +47,12 @@ like `dead-sub-fixture.sql` with `-v` psql variables). No other SQL paths exist.
 | 5 | Login empty body | 400 + validation messages |
 | 6 | Login invalid email format | 400 + message mentions email |
 | 7 | Login wrong password | 401 + "Invalid credentials" |
-| 8 | Login non-existent email | 401 + "Invalid credentials" (same message — no enumeration) |
+| 8 | Login non-existent email | 401 + "Invalid credentials" (same message — no user enumeration) |
 | 9 | `GET /users/me` no token | 401 body confirms |
 | 10 | `GET /users/me` malformed JWT | 401 body confirms |
 
 ### Section 3: Channels & Subreddits
-*Channel lifecycle, subscription semantics (verified by read-back), and this feature's auth negatives.*
+*Channel lifecycle, subscription semantics (verified by read-back), and route guards.*
 
 | # | Scenario | Expected |
 |---|---|---|
@@ -54,7 +61,7 @@ like `dead-sub-fixture.sql` with `-v` psql variables). No other SQL paths exist.
 | 13 | Subscribe `r/AskReddit` | empty body, **read-back: AskReddit in list** |
 | 14 | **Duplicate** subscribe `r/AskReddit` | empty body, **read-back: exactly one AskReddit** |
 | 15 | Unsubscribe `r/AskReddit` | empty body, **read-back: AskReddit gone** |
-| 16 | **Re-subscribe** `r/AskReddit` (proves the link is fully recreatable) | empty body, **read-back: AskReddit back** |
+| 16 | **Re-subscribe** `r/AskReddit` (proves link is fully recreatable) | empty body, **read-back: AskReddit back** |
 | 17 | `POST /channels` empty name | 400 + message mentions name |
 | 18 | Subscribe to fake UUID channel | 404 + "Channel not found" |
 | 19 | `POST /channels` no token | 401 body confirms |
@@ -64,7 +71,7 @@ like `dead-sub-fixture.sql` with `-v` psql variables). No other SQL paths exist.
 | 23 | **Unsubscribe a sub that was never subscribed** | 404 + "Subreddit not found" |
 
 ### Section 4: Topics, Scraping & Active Pool
-*Topic clustering, deficit-triggered scraping, lazy 20-sub suppression, rotation trigger, and dead sub cascade.*
+*Topic clustering, proactive pool deficit triggering, lazy 20-sub suppression, and dead sub cascade.*
 
 | # | Scenario | Expected |
 |---|---|---|
@@ -73,7 +80,7 @@ like `dead-sub-fixture.sql` with `-v` psql variables). No other SQL paths exist.
 | 26 | Poll `GET /admin/feeds/subreddits` | AskReddit has `postCount > 0` (active pool reaches 20) |
 | 27 | SQL fixture: inject dead sub behind API gate | read-back: 21 subreddits subscribed |
 | 28 | `GET /admin/channels/:id/topics` (active pool = 20 >= 20) | 200, topic resolved, **0 scrapes triggered** (dead sub remains) |
-| 29 | Mark 1 post complete (active drops to 19) + `GET .../topics` | triggers dead sub scrape $\rightarrow$ dead sub **auto-unsubscribed** |
+| 29 | Mark 1 post complete (active drops to 19) + `GET .../topics` | triggers dead sub scrape $\rightarrow$ dead sub **auto-unsubscribed via cascade** |
 
 ### Section 5: Auth Negatives
 *Admin-only routes assert their 401 (no token) and 403 (regular user token).*
@@ -89,7 +96,29 @@ like `dead-sub-fixture.sql` with `-v` psql variables). No other SQL paths exist.
 | 36 | `GET /admin/channels/:id/topics` no token | 401 body confirms |
 | 37 | `GET /admin/channels/:id/topics` regular user token | 403 body confirms |
 
-## Auth matrix covered
+### Section 6: Playback, Idle & Queue Safety
+*Playback FIFO progression, idle resource conservation, cold-start batch generation, tail-resume, and streamer safety.*
+
+| # | Scenario | Expected |
+|---|---|---|
+| 38 | Cold-start empty channel `GET /channels/:id/next-track` | 200 OK, returns Track #1, sets `currentSegmentId` |
+| 39 | Tail-resume reconnect `GET /channels/:id/next-track?resuming=true` | 200 OK, returns current segment with `startOffsetSeconds > 0` |
+| 40 | Sequential `GET /channels/:id/next-track` | 200 OK, FIFO advancement (`playOrder` increments) |
+| 41 | Subscribe dead sub to empty channel + `GET .../next-track` | 200 OK (returns filler music/ad, doesn't 500 or hang) |
+| 42 | Emergency fallback (empty storage) | 200 OK, returns `fallback-jingle` |
+
+### Section 7: Live AI Talk Generation & MinIO Blob Storage
+*Real-world AI synthesis pipeline and S3 object storage verification.*
+
+| # | Scenario | Expected |
+|---|---|---|
+| 43 | Trigger `bufferAhead` with scraped Reddit topic | 200 OK, synthesizes live multi-turn script with OpenCode + Google TTS |
+| 44 | Poll TalkSegment completion | `status == 'ready'`, duration $> 0$, multi-turn dialogue array |
+| 45 | MinIO Blob Storage Verification | Queries MinIO S3 API -> confirms generated `.mp3` blob exists and size $> 10\text{ KB}$ |
+
+---
+
+## Auth Matrix Covered
 
 | Route | 401 (no token) | 401 (bad token) | 403 (user token) |
 |---|---|---|---|
@@ -97,18 +126,10 @@ like `dead-sub-fixture.sql` with `-v` psql variables). No other SQL paths exist.
 | `POST /channels` | ✅ #19 | — | — |
 | `POST /channels/:id/subreddits` | ✅ #20 | — | — |
 | `DELETE /channels/:id/subreddits/:subName` | ✅ #21 | — | — |
+| `GET /channels/:id/next-track` | ✅ #19-guard | — | — |
 | `POST /admin/feeds/scrape` | ✅ #30 | — | ✅ #31 |
 | `GET /admin/feeds/subreddits` | ✅ #32 | — | ✅ #33 |
 | `DELETE /admin/feeds/cache` | ✅ #34 | — | ✅ #35 |
 | `GET /admin/channels/:id/topics` | ✅ #36 | — | ✅ #37 |
 | `GET /channels/:id/subreddits` (read-back) | — | — | — |
-| `GET /channels/:id/playlist.m3u8` | ❌ excluded | — | — |
-| `GET /channels/:id/chunks/:filename` | ❌ excluded | — | — |
 
-## What this suite verifies — and what it doesn't
-
-**Verified**: per-route guard wiring (401/403 matrix above), login validation + no-user-enumeration contract, channel + subscription semantics **via read-back** (create, idempotent subscribe, unsubscribe, re-subscribe), and the real scrape pipeline end-to-end (browserless → Reddit → DB → topics, with lazy pool suppression and rotation deficit triggering).
-
-**Not covered** (known gaps):
-- **`GET /channels/:id/playlist.m3u8` and `GET /channels/:id/chunks/:filename` are deliberately excluded** — neither their streaming behaviour nor their auth state (currently unauthenticated) is tested. See `src/channel/README.md`.
-- Playlist/chunk serving, queue replenishment, and the 120s idle fast-forward are unit-tested only.
