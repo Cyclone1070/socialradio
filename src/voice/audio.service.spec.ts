@@ -98,4 +98,94 @@ describe('AudioService', () => {
       expect.stringContaining('TTS'),
     );
   });
+
+  it('maps each show persona to its dedicated Neural2 voice model', () => {
+    expect(service.getVoiceForSpeaker('Dave')).toBe('en-US-Neural2-J');
+    expect(service.getVoiceForSpeaker('Sarah')).toBe('en-US-Neural2-F');
+    expect(service.getVoiceForSpeaker('Caller')).toBe('en-US-Neural2-I');
+    expect(service.getVoiceForSpeaker('UnknownSpeaker')).toBe(
+      'en-US-Neural2-J',
+    );
+  });
+
+  it('cleans bracketed and parenthetical stage directions from spoken text', () => {
+    const raw = '[laughs] That was wild (pauses) mate!';
+    expect(service.cleanSpokenText(raw)).toBe('That was wild mate!');
+  });
+
+  it('synthesizes multi-speaker script turn-by-turn with persona voices and concatenates audio', async () => {
+    const fakeChunk1 = Buffer.from('chunk-dave-audio').toString('base64');
+    const fakeChunk2 = Buffer.from('chunk-caller-audio').toString('base64');
+    const fakeChunk3 = Buffer.from('chunk-sarah-audio').toString('base64');
+
+    mockHttpService.post
+      .mockReturnValueOnce(of({ data: { audioContent: fakeChunk1 } }))
+      .mockReturnValueOnce(of({ data: { audioContent: fakeChunk2 } }))
+      .mockReturnValueOnce(of({ data: { audioContent: fakeChunk3 } }));
+
+    const script = {
+      postId: 'post-123',
+      turns: [
+        { speaker: 'Dave', text: '[laughs] Welcome Dave here.' },
+        { speaker: 'Caller', text: 'Hey [pauses] there.' },
+        { speaker: 'Sarah', text: 'Totally agree.' },
+      ],
+    };
+
+    const result = await service.synthesizeScript(
+      script,
+      'talk/segments/seg1.mp3',
+    );
+
+    // Verify 3 distinct TTS calls with correct persona voices
+    expect(mockHttpService.post).toHaveBeenCalledTimes(3);
+
+    expect(mockHttpService.post).toHaveBeenNthCalledWith(
+      1,
+      'https://texttospeech.googleapis.com/v1/text:synthesize?key=test_gemini_key',
+      expect.objectContaining({
+        input: { text: 'Welcome Dave here.' },
+        voice: { languageCode: 'en-US', name: 'en-US-Neural2-J' },
+      }),
+      expect.any(Object),
+    );
+
+    expect(mockHttpService.post).toHaveBeenNthCalledWith(
+      2,
+      'https://texttospeech.googleapis.com/v1/text:synthesize?key=test_gemini_key',
+      expect.objectContaining({
+        input: { text: 'Hey there.' },
+        voice: { languageCode: 'en-US', name: 'en-US-Neural2-I' },
+      }),
+      expect.any(Object),
+    );
+
+    expect(mockHttpService.post).toHaveBeenNthCalledWith(
+      3,
+      'https://texttospeech.googleapis.com/v1/text:synthesize?key=test_gemini_key',
+      expect.objectContaining({
+        input: { text: 'Totally agree.' },
+        voice: { languageCode: 'en-US', name: 'en-US-Neural2-F' },
+      }),
+      expect.any(Object),
+    );
+
+    // Verify concatenated buffer was written to storage
+    const expectedCombined = Buffer.concat([
+      Buffer.from(fakeChunk1, 'base64'),
+      Buffer.from(fakeChunk2, 'base64'),
+      Buffer.from(fakeChunk3, 'base64'),
+    ]);
+
+    expect(mockStorageService.write).toHaveBeenCalledWith({
+      key: 'talk/segments/seg1.mp3',
+      content: expectedCombined,
+    });
+
+    expect(result).toEqual({
+      filePath: 'talk/segments/seg1.mp3',
+      durationSeconds: expectedCombined.length / 16000,
+      postIds: ['post-123'],
+    });
+  });
 });

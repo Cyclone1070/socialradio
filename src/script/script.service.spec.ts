@@ -21,24 +21,23 @@ describe('ScriptService (2-Stage Script Generation)', () => {
 ## STEP 2: CALLER NARRATIVE BEATS
 - Alex explains the 70% rent split demand
 
-## STEP 3: ROOM STANCES & GAP ANGLES
-- Mike's Stance: 50/50 lease is binding
+## STEP 3: ROOM STANCES
+- Dave's Angle: Lease terms vs fairness
 - Sarah's Stance: Pay 55/45 max
-- Jenny's Gap Angle: Roommate lost job recently
 
 ## STEP 4: VERDICT & OUTRO
 - Final Verdict: Pay 55/45
-- Line Drop Phrase: Line 2 clear.`;
+- Natural Sign-off: Thanks for calling Alex, good luck mate!`;
 
   const validDialogueText = `Dave: Next up, we've got Alex from Wollongong on Line 2.
 Caller: Hey Dave! My roommate is demanding 70% rent.
-Sarah: [laughs] 70%?! Is his room a broom closet?
-Mike: If the lease says 50/50, he can't change it.
-Jenny: Did he lose his job recently?
+Sarah: 70%?! Is his room a broom closet?
+Dave: If the lease says 50/50, he can't change it.
+Sarah: Did he lose his job recently?
 Caller: Actually yeah, two weeks ago!
-Dave: Alex, stick to 55/45. Line 2 clear.
-[Line Cut Sound]
-Dave: Up next, another crazy story.`;
+Dave: Alex, stick to 55/45. Good luck with the landlord mate!
+Caller: Thanks Dave, will do!
+Sarah: Unbelievable roommate, honestly.`;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -73,8 +72,8 @@ Dave: Up next, another crazy story.`;
 Second line of host.
 Caller: Caller response line.
 Sarah: Sarah line.
-Mike: Mike line.
-Jenny: Jenny line.`;
+Dave: Dave wrap line.
+Sarah: Final reaction.`;
 
       const parsed = service.parseScriptText('post-1', multiLineText);
 
@@ -95,7 +94,7 @@ Jenny: Jenny line.`;
 UnknownSpeaker: Unexpected.
 Caller: Hi.
 Sarah: Hey.
-Mike: Yo.`;
+Dave: Wrap.`;
 
       expect(() => service.parseScriptText('post-1', invalidSpeaker)).toThrow(
         'Invalid speaker encountered in script: "UnknownSpeaker"',
@@ -136,7 +135,7 @@ Mike: Yo.`;
 
       expect(mockLlmService.generateText).toHaveBeenCalledTimes(2);
       expect(result.postId).toBe('post-1');
-      expect(result.turns.length).toBe(8);
+      expect(result.turns.length).toBe(9);
       expect(result.turns[0].speaker).toBe('Dave');
     });
 
@@ -161,7 +160,7 @@ Mike: Yo.`;
       const result = await service.generateScript(posts, []);
 
       expect(mockLlmService.generateText).toHaveBeenCalledTimes(3);
-      expect(result.turns.length).toBe(8);
+      expect(result.turns.length).toBe(9);
     });
 
     it('should retry Stage 2 when Stage 2 dialogue parsing fails', async () => {
@@ -185,7 +184,7 @@ Mike: Yo.`;
       const result = await service.generateScript(posts, []);
 
       expect(mockLlmService.generateText).toHaveBeenCalledTimes(3);
-      expect(result.turns.length).toBe(8);
+      expect(result.turns.length).toBe(9);
     });
 
     it('logs 2-Stage generation metrics at info level', async () => {
@@ -213,7 +212,7 @@ Mike: Yo.`;
       expect(infoSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           postId: 'post-1',
-          turns: 8,
+          turns: 9,
           stage1Attempts: 1,
           stage2Attempts: 1,
           ms: expect.any(Number) as number,
