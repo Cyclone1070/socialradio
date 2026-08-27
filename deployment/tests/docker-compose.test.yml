@@ -10,13 +10,16 @@ services:
     command: ["/scripts/docker-test.sh"]
     env_file: ../../.env
     environment:
-      - TARGET_URL=http://host.docker.internal:3000
+      - TARGET_URL=http://app:3000
+      - STORAGE_ENDPOINT=http://minio:9000
+      - TEST_SUITE=${TEST_SUITE:-all}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ../tests/docker-test.sh:/scripts/docker-test.sh
-      - ../tests/seed-test-user.sql:/scripts/seed-test-user.sql
-      - ../tests/dead-sub-fixture.sql:/scripts/dead-sub-fixture.sql
+      - ../tests/lib:/scripts/lib
+      - ../tests/suites:/scripts/suites
+      - ../tests/fixtures:/scripts/fixtures
     networks:
       - external_test_net
       - default

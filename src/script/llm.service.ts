@@ -29,6 +29,12 @@ export class LlmService {
     const deepseek = createDeepSeek({
       apiKey,
       baseURL: baseUrl,
+      fetch: (input, init) => {
+        return fetch(input, {
+          ...init,
+          signal: init?.signal || AbortSignal.timeout(60000),
+        });
+      },
     });
     return deepseek(modelName);
   }
@@ -41,6 +47,8 @@ export class LlmService {
       model: this.getLanguageModel(),
       system: systemPrompt,
       prompt: userPrompt,
+      abortSignal: AbortSignal.timeout(60000),
+      maxRetries: 3,
     });
     return text;
   }

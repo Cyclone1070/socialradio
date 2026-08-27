@@ -105,4 +105,12 @@ describe('StorageService', () => {
       'http://localhost:9000/socialradio-media/channels/1/chunk_001.ts',
     );
   });
+
+  it('should ensure bucket exists or create it if missing', async () => {
+    mockS3Send.mockRejectedValueOnce(new Error('NoSuchBucket'));
+    mockS3Send.mockResolvedValue({});
+
+    await service.onModuleInit();
+    expect(mockS3Send).toHaveBeenCalledTimes(3);
+  });
 });

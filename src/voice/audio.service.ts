@@ -1,30 +1,24 @@
 import { Injectable } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { ConfigService } from '@nestjs/config';
 import { StorageService } from '../infrastructure/storage/storage.service';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
-import { lastValueFrom } from 'rxjs';
 import { VoiceContract } from '../domain/contracts';
 import { ScriptData } from '../domain/types/script.types';
 import { TalkData } from '../domain/types/audio.types';
+import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 
 export const SPEAKER_VOICE_MAP: Record<string, string> = {
-  Dave: 'en-US-Neural2-J',
-  Sarah: 'en-US-Neural2-F',
-  Caller: 'en-US-Neural2-I',
+  Dave: 'en-US-GuyNeural',
+  Sarah: 'en-US-JennyNeural',
+  Caller: 'en-AU-NatashaNeural',
 };
 
-export const DEFAULT_VOICE = 'en-US-Neural2-J';
+export const DEFAULT_VOICE = 'en-US-GuyNeural';
 
 @Injectable()
 export class AudioService implements VoiceContract {
   private readonly logger = createServiceLogger(AudioService.name);
 
-  constructor(
-    private readonly httpService: HttpService,
-    private readonly configService: ConfigService,
-    private readonly storageService: StorageService,
-  ) {}
+  constructor(private readonly storageService: StorageService) {}
 
   getVoiceForSpeaker(speaker: string): string {
     return SPEAKER_VOICE_MAP[speaker] || DEFAULT_VOICE;
@@ -43,23 +37,40 @@ export class AudioService implements VoiceContract {
     outputPath: string,
   ): Promise<TalkData> {
     const startMs = Date.now();
-    const turnBuffers: Buffer[] = [];
+    process.stderr.write(
+      `[AudioService] Starting multi-speaker TTS synthesis for ${script.turns.length} turns...\n`,
+    );
 
-    for (const turn of script.turns) {
-      const cleaned = this.cleanSpokenText(turn.text);
-      if (!cleaned) continue;
+    const validTurns = script.turns
+      .map((turn) => ({
+        ...turn,
+        cleaned: this.cleanSpokenText(turn.text),
+      }))
+      .filter((t) => t.cleaned.length > 0);
+
+    process.stderr.write(
+      `[AudioService] Synthesizing ${validTurns.length} turns with Microsoft Edge Neural TTS...\n`,
+    );
+    const turnBuffers: Buffer[] = [];
+    for (const turn of validTurns) {
       const voice = this.getVoiceForSpeaker(turn.speaker);
-      const buffer = await this.synthesizeTurn(cleaned, voice);
-      turnBuffers.push(buffer);
+      const buf = await this.synthesizeTurn(turn.cleaned, voice);
+      turnBuffers.push(buf);
     }
+    process.stderr.write(
+      `[AudioService] All ${turnBuffers.length} turns synthesized successfully! Concat & upload to MinIO...\n`,
+    );
 
     const combinedBuffer = Buffer.concat(turnBuffers);
     await this.storageService.write({
       key: outputPath,
       content: combinedBuffer,
     });
+    process.stderr.write(
+      `[AudioService] Uploaded ${combinedBuffer.length} bytes to ${outputPath}!\n`,
+    );
 
-    const durationSeconds = combinedBuffer.length / 16000;
+    const durationSeconds = combinedBuffer.length / 6000;
     this.logger.info(
       {
         postId: script.postId,
@@ -80,37 +91,19 @@ export class AudioService implements VoiceContract {
   }
 
   async synthesizeTurn(text: string, voiceName: string): Promise<Buffer> {
-    const apiKey = this.configService.get<string>('GEMINI_API_KEY');
-    if (!apiKey) {
-      throw new Error('GEMINI_API_KEY is not configured');
-    }
-
-    const response = await lastValueFrom(
-      this.httpService.post(
-        `https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`,
-        {
-          input: { text },
-          voice: { languageCode: 'en-US', name: voiceName },
-          audioConfig: { audioEncoding: 'MP3' },
-        },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        },
-      ),
+    const tts = new MsEdgeTTS();
+    await tts.setMetadata(
+      voiceName,
+      OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3,
     );
-
-    interface GoogleTtsResponse {
-      audioContent?: string;
-    }
-
-    const data = response.data as GoogleTtsResponse;
-    if (!data.audioContent) {
-      throw new Error('No audio content returned from Google TTS API');
-    }
-
-    return Buffer.from(data.audioContent, 'base64');
+    const { audioStream } = tts.toStream(text);
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      audioStream.on('data', (chunk: Buffer) => chunks.push(chunk));
+      audioStream.on('end', () => resolve());
+      audioStream.on('error', (err) => reject(err));
+    });
+    return Buffer.concat(chunks);
   }
 
   async generateSpeech(text: string, outputFilePath: string): Promise<number> {
@@ -121,7 +114,7 @@ export class AudioService implements VoiceContract {
       content: buffer,
     });
 
-    const durationSeconds = buffer.length / 16000;
+    const durationSeconds = buffer.length / 6000;
     this.logger.info(
       {
         textChars: text.length,

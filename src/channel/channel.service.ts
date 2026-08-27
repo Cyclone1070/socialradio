@@ -3,6 +3,7 @@ import { InjectRepository } from '@mikro-orm/nestjs';
 import { EntityRepository, EntityManager } from '@mikro-orm/postgresql';
 import { Channel, SubredditRef } from './entities/channel.entity';
 import { ChannelSchema } from '../infrastructure/database/schemas/channel.schema';
+import { SubredditSchema } from '../infrastructure/database/schemas/content.schema';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { ChannelResponseDto } from './dto/channel-response.dto';
 import { ContentContract } from '../domain/contracts';
@@ -78,10 +79,10 @@ export class ChannelService {
       return;
     }
 
-    const subRef = this.em.getReference<SubredditRef>(
-      'Subreddit',
+    const subRef = this.em.getReference(
+      SubredditSchema,
       subreddit.id,
-    );
+    ) as unknown as SubredditRef;
     channel.subreddits.add(subRef);
     await this.em.flush();
   }

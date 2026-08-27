@@ -11,6 +11,7 @@ export class AdminChannelController {
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles('admin')
   async getTopics(@Param('id') id: string): Promise<unknown> {
+    await this.queueService.checkAndScrapePoolDeficit(id);
     return await this.queueService.findPendingTopicSegment(id);
   }
 }

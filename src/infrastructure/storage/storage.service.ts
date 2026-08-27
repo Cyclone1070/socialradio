@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   S3Client,
@@ -6,6 +6,9 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   DeleteObjectCommand,
+  HeadBucketCommand,
+  CreateBucketCommand,
+  PutBucketPolicyCommand,
 } from '@aws-sdk/client-s3';
 export interface WriteParams {
   key: string;
@@ -15,7 +18,7 @@ export interface WriteParams {
 }
 
 @Injectable()
-export class StorageService {
+export class StorageService implements OnModuleInit {
   private readonly logger = new Logger(StorageService.name);
   private readonly s3Client: S3Client;
   private readonly bucketName: string;
@@ -46,6 +49,52 @@ export class StorageService {
       },
       forcePathStyle: true, // Required for MinIO path-style bucket routing
     });
+  }
+
+  async onModuleInit(): Promise<void> {
+    await this.ensureBucketExists();
+  }
+
+  async ensureBucketExists(): Promise<void> {
+    try {
+      await this.s3Client.send(
+        new HeadBucketCommand({ Bucket: this.bucketName }),
+      );
+    } catch {
+      try {
+        await this.s3Client.send(
+          new CreateBucketCommand({ Bucket: this.bucketName }),
+        );
+        this.logger.log(`Created bucket: ${this.bucketName}`);
+      } catch (err) {
+        this.logger.warn(`Could not create bucket ${this.bucketName}: ${err}`);
+      }
+    }
+
+    try {
+      const publicReadPolicy = {
+        Version: '2012-10-17',
+        Statement: [
+          {
+            Sid: 'PublicReadGetObject',
+            Effect: 'Allow',
+            Principal: '*',
+            Action: ['s3:GetObject'],
+            Resource: [`arn:aws:s3:::${this.bucketName}/*`],
+          },
+        ],
+      };
+      await this.s3Client.send(
+        new PutBucketPolicyCommand({
+          Bucket: this.bucketName,
+          Policy: JSON.stringify(publicReadPolicy),
+        }),
+      );
+    } catch (err) {
+      this.logger.debug(
+        `Could not set public read policy on bucket ${this.bucketName}: ${err}`,
+      );
+    }
   }
 
   async write(params: WriteParams): Promise<void> {

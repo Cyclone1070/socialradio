@@ -13,6 +13,7 @@ import {
   ChannelSchema,
   SegmentSchema,
 } from '../infrastructure/database/schemas/channel.schema';
+import { PostSchema } from '../infrastructure/database/schemas/content.schema';
 import { clusterPosts } from './utils/topic-clustering.util';
 import { TalkCluster } from './interfaces/talk-cluster.interface';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
@@ -82,19 +83,30 @@ export class QueueService {
     channelId: string,
     playOrder: number,
   ): Promise<number | null> {
+    process.stderr.write(
+      `[QueueService] appendTalk called for channel ${channelId}, playOrder ${playOrder}\n`,
+    );
     const triedPostIds = new Set<string>();
 
     while (true) {
+      process.stderr.write(
+        `[QueueService] Looking for pending topic segment...\n`,
+      );
       const talkCluster = await this.findPendingTopicSegment(
         channelId,
         triedPostIds,
       );
       if (!talkCluster) {
-        // Pool is completely empty: check and trigger background scrape
+        process.stderr.write(
+          `[QueueService] No pending topic segment found. Checking pool deficit...\n`,
+        );
         await this.checkAndScrapePoolDeficit(channelId, triedPostIds);
         return null;
       }
 
+      process.stderr.write(
+        `[QueueService] Found topic cluster: ${talkCluster.id} with ${talkCluster.posts.length} post(s). Marking completed...\n`,
+      );
       // Step 1: Mark posts completed in DB immediately upon selection
       for (const p of talkCluster.posts) {
         triedPostIds.add(p.id);
@@ -102,12 +114,21 @@ export class QueueService {
       }
 
       // Step 2: Check pool health directly from DB state (now reflecting consumed posts)
+      process.stderr.write(
+        `[QueueService] Checking pool deficit after consumption...\n`,
+      );
       await this.checkAndScrapePoolDeficit(channelId, triedPostIds);
 
       // Step 3: Synthesize voice track
       try {
+        process.stderr.write(
+          `[QueueService] Starting generateTalkVoiceTrack...\n`,
+        );
         const { voiceTrack, scriptObj } = await this.generateTalkVoiceTrack(
           talkCluster.posts,
+        );
+        process.stderr.write(
+          `[QueueService] Voice track generated: ${voiceTrack.filePath}, persisting TalkSegment...\n`,
         );
         const talkItem: TalkSegment = Object.assign(new TalkSegment(), {
           channel: this.em.getReference(Channel, channelId),
@@ -120,8 +141,14 @@ export class QueueService {
           script: scriptObj.turns,
         });
         await this.em.persist(talkItem).flush();
+        process.stderr.write(
+          `[QueueService] TalkSegment persisted successfully with status 'ready'!\n`,
+        );
         return playOrder + 1;
       } catch (err) {
+        process.stderr.write(
+          `[QueueService] voice generation failed: ${err instanceof Error ? err.stack || err.message : String(err)}\n`,
+        );
         this.logger.error(
           {
             channelId,
@@ -325,7 +352,9 @@ export class QueueService {
       { populate: ['completedPosts'] },
     );
     if (channel) {
-      channel.completedPosts.add(this.em.getReference<PostRef>('Post', postId));
+      channel.completedPosts.add(
+        this.em.getReference(PostSchema, postId) as unknown as PostRef,
+      );
       await this.em.flush();
     }
   }

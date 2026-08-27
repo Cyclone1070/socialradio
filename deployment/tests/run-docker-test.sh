@@ -7,6 +7,11 @@ COMPOSE="docker compose -p $PROJECT -f ../docker/docker-compose.yml -f docker-co
 export COMPOSE_PROGRESS=auto
 
 cleanup() {
+  STATUS=$?
+  if [ $STATUS -ne 0 ]; then
+    echo "=== App Container Logs (Failure Diagnosis) ==="
+    $COMPOSE logs app 2>&1 | grep -v '"/healthcheck"' | tail -100 || true
+  fi
   echo "=== Clean Up ==="
   $COMPOSE down -v >/dev/null 2>&1 || true
 }
@@ -14,5 +19,6 @@ cleanup() {
 # it non-clean (e.g. a dead-sub row surviving a crashed suite).
 trap cleanup EXIT
 
-echo "=== E2E Test ==="
-$COMPOSE run --build --rm tests
+TARGET="${1:-all}"
+echo "=== E2E Test Suite: $TARGET ==="
+TEST_SUITE="$TARGET" $COMPOSE run --build --rm -e TEST_SUITE="$TARGET" tests

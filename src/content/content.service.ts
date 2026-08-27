@@ -45,7 +45,7 @@ export class ContentService implements ContentContract {
   async getPostsBySubredditIds(subredditIds: string[]): Promise<PostData[]> {
     if (subredditIds.length === 0) return [];
     const posts = await this.postRepo.find(
-      { subreddit: { id: { $in: subredditIds } } },
+      { subreddit: { $in: subredditIds } },
       { populate: ['subreddit'] },
     );
     return posts.map((post) => ({
@@ -61,7 +61,7 @@ export class ContentService implements ContentContract {
   async getCommentsByPostIds(postIds: string[]): Promise<CommentData[]> {
     if (postIds.length === 0) return [];
     const comments = await this.commentRepo.find(
-      { post: { id: { $in: postIds } } },
+      { post: { $in: postIds } },
       { populate: ['post'] },
     );
     return comments.map((c) => ({

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@mikro-orm/nestjs';
 import { EntityRepository, EntityManager } from '@mikro-orm/postgresql';
 import { Channel } from './entities/channel.entity';
@@ -22,6 +22,7 @@ export interface NextTrackData {
   type: 'talk' | 'music' | 'ad' | 'jingle';
   filePath: string;
   durationSeconds: number;
+  startOffsetSeconds?: number;
   title?: string;
   artist?: string;
 }
@@ -40,10 +41,32 @@ export class PlaybackService {
     private readonly mediaService: MediaContract,
   ) {}
 
-  async getNextTrack(channelId: string): Promise<NextTrackData> {
+  async getNextTrack(
+    channelId: string,
+    resuming = false,
+  ): Promise<NextTrackData> {
     const channel = await this.channelRepo.findOne({ id: channelId });
     if (!channel) {
-      throw new Error('Channel not found');
+      throw new NotFoundException('Channel not found');
+    }
+
+    // 0. If resuming after dormancy, tail-resume into the current segment
+    if (resuming && channel.currentSegmentId) {
+      const current = await this.segmentRepo.findOne({
+        id: channel.currentSegmentId,
+      });
+      if (current) {
+        const offset = Math.max(0, (current.durationSeconds || 30) - 15);
+        return {
+          segmentId: current.id,
+          type: this.getSegmentType(current),
+          filePath: current.audioUrl || '',
+          durationSeconds: current.durationSeconds || 0,
+          startOffsetSeconds: offset,
+          title: (current as MusicSegment).title,
+          artist: (current as MusicSegment).artist,
+        };
+      }
     }
 
     // 1. Find Next Segment in Queue
@@ -68,11 +91,17 @@ export class PlaybackService {
 
     // 2. Queue Exhausted / Empty Fallback
     if (!segment) {
+      process.stderr.write(
+        `[PlaybackService] Queue empty for ${channelId}, calling bufferAhead...\n`,
+      );
       this.logger.info(
         { channelId, reason: 'empty-queue' },
         'bufferAhead triggered',
       );
       await this.queueService.bufferAhead(channelId);
+      process.stderr.write(
+        `[PlaybackService] bufferAhead finished for ${channelId}\n`,
+      );
       segment = await this.segmentRepo.findOne(
         { channel: channelId },
         { orderBy: { playOrder: 'ASC' } },

@@ -7,6 +7,7 @@ describe('AdminChannelController', () => {
 
   const mockQueueService = {
     findPendingTopicSegment: jest.fn(),
+    checkAndScrapePoolDeficit: jest.fn().mockResolvedValue(undefined),
   };
 
   beforeEach(async () => {

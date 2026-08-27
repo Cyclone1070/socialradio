@@ -5,6 +5,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -74,7 +75,10 @@ export class ChannelController {
 
   @Get(':id/next-track')
   @UseGuards(InternalAuthGuard)
-  async getNextTrack(@Param('id') id: string): Promise<NextTrackData> {
-    return await this.playbackService.getNextTrack(id);
+  async getNextTrack(
+    @Param('id') id: string,
+    @Query('resuming') resuming?: string,
+  ): Promise<NextTrackData> {
+    return await this.playbackService.getNextTrack(id, resuming === 'true');
   }
 }

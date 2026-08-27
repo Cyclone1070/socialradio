@@ -156,7 +156,29 @@ describe('ChannelController', () => {
 
       const result = await controller.getNextTrack('chan-1');
 
-      expect(mockPlaybackService.getNextTrack).toHaveBeenCalledWith('chan-1');
+      expect(mockPlaybackService.getNextTrack).toHaveBeenCalledWith(
+        'chan-1',
+        false,
+      );
+      expect(result).toEqual(track);
+    });
+
+    it('should pass resuming true when query param is true', async () => {
+      const track = {
+        segmentId: 'seg-1',
+        type: 'song',
+        filePath: 'song.mp3',
+        durationSeconds: 180,
+        startOffsetSeconds: 165,
+      };
+      mockPlaybackService.getNextTrack.mockResolvedValue(track);
+
+      const result = await controller.getNextTrack('chan-1', 'true');
+
+      expect(mockPlaybackService.getNextTrack).toHaveBeenCalledWith(
+        'chan-1',
+        true,
+      );
       expect(result).toEqual(track);
     });
   });

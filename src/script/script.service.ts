@@ -37,7 +37,8 @@ Output MUST be valid standard Markdown containing these exact headers:
 
 ## STEP 4: VERDICT & OUTRO
 - Final Verdict: Combined host advice summary.
-- Natural Sign-off: Natural sign-off and goodbye to the caller (e.g. "Alex, good luck with the lease mate, let us know how you go.").`;
+- Natural Sign-off: Natural sign-off and goodbye to the caller (e.g. "Alex, good luck with the lease mate, let us know how you go.").
+- Conciseness: Keep each bullet point brief and punchy. The entire outline must be under 250 words total.`;
 
 export const STAGE2_DIALOGUE_SYSTEM_PROMPT = `You are a master scriptwriter for an authentic call-in talk radio show called "Social Radio".
 Your job is to transform a Stage 1 Show Outline and Original Source Material into a fast-paced, dynamic 3-way call-in radio script.
@@ -48,8 +49,11 @@ Allowed Speakers: Dave, Sarah, Caller.
 === DIALOGUE RULES ===
 1. Follow the Stage 1 Markdown Outline strictly.
 2. Deliver Step 1 Host Intro following the DYNAMIC component ordering pattern specified in Stage 1 (do NOT use a static or repetitive intro structure).
-3. Format every single line EXACTLY as:
-   [Speaker Name]: Spoken text.
+3. Format every single line EXACTLY with one of these three speaker prefixes:
+   Dave: Spoken text
+   Sarah: Spoken text
+   Caller: Spoken text
+   (CRITICAL: Even if a caller name was created in Stage 1 like Marcus or Alex, ALWAYS use "Caller:" as the line prefix. Never prefix lines with the caller's personal name.)
 4. DYNAMIC 3-WAY CONVERSATION FLOW:
    - Dave and Sarah are EQUAL co-hosts with an organic, fluid dynamic:
      * They can agree and build on each other's points, jokes, and theories.
@@ -69,7 +73,8 @@ Allowed Speakers: Dave, Sarah, Caller.
    - Use punctuation pacing (ellipses "...", em-dashes "—", commas) to convey natural pauses, hesitation, and conversational rhythm.
    - STRICT PROHIBITION: NEVER write bracketed or parenthetical stage directions, sound cues, or meta-tags (e.g. NO "[laughs]", NO "(sighs)", NO "[pause]", NO "[clears throat]"). All emotional nuances must be written purely as natural spoken words and punctuation.
 7. Zero corporate greetings, zero Reddit jargon ("OP", "upvote", "subreddit").
-8. Aim to explore thread content comprehensively and only skip nonsense or repetitive comments.`;
+8. Pacing & Length: Aim for a tight, high-energy 8 to 14 dialogue turns total (approx 200-350 words spoken airtime). Keep turns punchy (1-3 sentences per turn).
+9. Aim to explore thread content concisely and skip repetitive comments.`;
 
 const ALLOWED_SPEAKERS = new Set(['Dave', 'Sarah', 'Caller']);
 
@@ -105,14 +110,24 @@ export class ScriptService implements ScriptContract {
     return hasStep1 && hasStep2 && hasStep3 && hasStep4;
   }
 
-  parseScriptText(postId: string, rawText: string): ScriptData {
-    const lines = rawText
+  private normalizeSpeaker(speaker: string): string {
+    if (speaker === 'Host' || speaker === 'Lead') return 'Dave';
+    if (speaker === 'CoHost' || speaker === 'Co-Host') return 'Sarah';
+    if (speaker === 'Guest' || speaker === 'OP') return 'Caller';
+    return speaker;
+  }
+
+  parseScriptText(postId: string, text: string): ScriptData {
+    const lines = text
       .split('\n')
       .map((l) => l.trim())
       .filter(Boolean);
     const turns: ScriptTurn[] = [];
 
-    for (const line of lines) {
+    for (const rawLine of lines) {
+      // Clean leading bullet points or markdown headers
+      const line = rawLine.replace(/^[*-\d.\s]+/, '').trim();
+
       // Ignore section headers and markdown dividers
       if (
         line.startsWith('---') ||
@@ -123,22 +138,27 @@ export class ScriptService implements ScriptContract {
         continue;
       }
 
-      const match = line.match(/^\[?([A-Za-z]+)\]?:\s*(.+)$/);
+      // Match speaker prefix like **Dave:**, **Dave**:, [Dave]:, Dave:, Dave (Host):, **Dave (Host)**:
+      const match = line.match(
+        /^\*{0,2}\[?([A-Za-z-]+)(?:\s*\([^)]*\))?\]?\*{0,2}\s*:\*{0,2}\s*(.+)$/,
+      );
       if (match) {
-        const speaker = match[1];
-        const text = match[2].trim();
-
+        const rawSpeaker = match[1];
+        const speaker = this.normalizeSpeaker(rawSpeaker);
         if (!ALLOWED_SPEAKERS.has(speaker)) {
           throw new Error(
             `Invalid speaker encountered in script: "${speaker}"`,
           );
         }
+        const text = match[2].replace(/^\*\*|\*\*$/g, '').trim();
         turns.push({ speaker, text });
-      } else if (turns.length > 0) {
+        continue;
+      }
+
+      if (turns.length > 0) {
         // Multi-line continuation: append to previous speaker's turn
-        turns[turns.length - 1].text += ` ${line}`;
-      } else {
-        throw new Error(`Unparseable line at start of script: "${line}"`);
+        turns[turns.length - 1].text +=
+          ` ${rawLine.replace(/^\*\*|\*\*$/g, '').trim()}`;
       }
     }
 
@@ -182,76 +202,62 @@ export class ScriptService implements ScriptContract {
           }
         }
 
-        const postBaseWords = (post.title + ' ' + (post.body || ''))
-          .split(/\s+/)
-          .filter(Boolean).length;
-        let currentWordCount = postBaseWords;
-        const selectedComments: CommentData[] = [];
-        const sortedTopLevel = [...topLevel].sort((a, b) => b.score - a.score);
-
-        for (const topComment of sortedTopLevel) {
-          if (currentWordCount >= 2500) break;
+        const sortedTop = topLevel.sort((a, b) => b.score - a.score);
+        let count = 0;
+        for (const top of sortedTop) {
+          if (count >= 5) break;
           const chainList: CommentData[] = [];
-          const chainWords = this.collectChain(
-            topComment,
-            repliesMap,
-            chainList,
-          );
+          this.collectChain(top, repliesMap, chainList);
 
-          if (currentWordCount + chainWords > 3500) break;
-
-          selectedComments.push(...chainList);
-          currentWordCount += chainWords;
-        }
-
-        const selectedIds = new Set(selectedComments.map((c) => c.id));
-        const filteredTopLevel = sortedTopLevel.filter((c) =>
-          selectedIds.has(c.id),
-        );
-
-        const renderThread = (c: CommentData, depth: number) => {
-          const indent = '  '.repeat(depth);
-          const label = c.isOp ? '[Caller Reply]' : '[Public Stance]';
-          sourceMaterial += `${indent}- ${label}: "${c.body}" (Score: ${c.score})\n`;
-
-          const replies = repliesMap.get(c.redditId) || [];
-          const filteredReplies = replies.filter((reply) =>
-            selectedIds.has(reply.id),
-          );
-          filteredReplies.sort((a, b) => b.score - a.score);
-
-          for (const reply of filteredReplies) {
-            renderThread(reply, depth + 1);
+          for (const item of chainList) {
+            const indent = item.parentRedditId ? '  - Reply: ' : '- Comment: ';
+            const label = item.isOp ? '[Caller Reply]' : '[Public Stance]';
+            sourceMaterial += `${indent}${label} (${item.score} pts): ${item.body}\n`;
           }
-        };
-
-        for (const c of filteredTopLevel) {
-          renderThread(c, 0);
+          count++;
         }
       }
       sourceMaterial += `\n`;
     }
 
-    // === STAGE 1: OUTLINE GENERATION (Up to 5 attempts) ===
+    // === STAGE 1: OUTLINE GENERATION (Up to 2 attempts) ===
     let outlineMarkdown = '';
     let stage1Attempts = 0;
     const stage1UserPrompt = `Here is the topic for the call-in segment:\n\n${sourceMaterial}\nPlease generate the Stage 1 Call-In Segment Outline now.`;
 
-    while (stage1Attempts < 5) {
+    process.stderr.write(
+      `[ScriptService] Starting Stage 1 outline generation (post: ${primaryPost.id})...\n`,
+    );
+    while (stage1Attempts < 2) {
       stage1Attempts++;
       try {
+        process.stderr.write(
+          `[ScriptService] Calling LLM for Stage 1 (attempt ${stage1Attempts})...\n`,
+        );
         outlineMarkdown = await this.llmService.generateText(
           STAGE1_OUTLINE_SYSTEM_PROMPT,
           stage1UserPrompt,
         );
+        process.stderr.write(
+          `[ScriptService] Stage 1 LLM response received (${outlineMarkdown.length} chars), validating...\n`,
+        );
         if (this.validateOutline(outlineMarkdown)) {
+          process.stderr.write(
+            `[ScriptService] Stage 1 outline validated successfully!\n`,
+          );
           break;
         }
+        process.stderr.write(
+          `[ScriptService] Stage 1 validation failed on attempt ${stage1Attempts}\n`,
+        );
         this.logger.warn(
           { attempt: stage1Attempts },
           'Stage 1 outline validation failed, retrying Stage 1',
         );
       } catch (err) {
+        process.stderr.write(
+          `[ScriptService] Stage 1 LLM call error on attempt ${stage1Attempts}: ${err instanceof Error ? err.stack || err.message : String(err)}\n`,
+        );
         this.logger.warn(
           {
             attempt: stage1Attempts,
@@ -264,28 +270,46 @@ export class ScriptService implements ScriptContract {
 
     if (!this.validateOutline(outlineMarkdown)) {
       throw new Error(
-        'Failed to generate a valid Stage 1 outline after 5 attempts',
+        'Failed to generate a valid Stage 1 outline after 2 attempts',
       );
     }
 
-    // === STAGE 2: FULL DIALOGUE GENERATION (Up to 5 attempts) ===
+    // === STAGE 2: FULL DIALOGUE GENERATION (Up to 2 attempts) ===
     const stage2UserPrompt = `=== STAGE 1 SHOW OUTLINE (Follow this Markdown roadmap strictly) ===\n${outlineMarkdown}\n\n=== ORIGINAL SOURCE MATERIAL (Use for rich dialogue details & quotes) ===\n${sourceMaterial}\n\nPlease write the complete spoken dialogue script now following the Stage 1 outline.`;
 
     let scriptData: ScriptData | null = null;
     let stage2Attempts = 0;
 
-    while (stage2Attempts < 5) {
+    process.stderr.write(
+      `[ScriptService] Starting Stage 2 dialogue generation...\n`,
+    );
+    while (stage2Attempts < 2) {
       stage2Attempts++;
       try {
+        process.stderr.write(
+          `[ScriptService] Calling LLM for Stage 2 (attempt ${stage2Attempts})...\n`,
+        );
         const rawDialogue = await this.llmService.generateText(
           STAGE2_DIALOGUE_SYSTEM_PROMPT,
           stage2UserPrompt,
         );
+        process.stderr.write(
+          `[ScriptService] Stage 2 LLM response received (${rawDialogue.length} chars), parsing turns...\n`,
+        );
         scriptData = this.parseScriptText(primaryPost.id, rawDialogue);
+        process.stderr.write(
+          `[ScriptService] Parsed ${scriptData.turns.length} turns\n`,
+        );
         if (scriptData.turns.length >= 5) {
+          process.stderr.write(
+            `[ScriptService] Stage 2 dialogue valid with ${scriptData.turns.length} turns!\n`,
+          );
           break;
         }
       } catch (err) {
+        process.stderr.write(
+          `[ScriptService] Stage 2 error on attempt ${stage2Attempts}: ${err instanceof Error ? err.stack || err.message : String(err)}\n`,
+        );
         this.logger.warn(
           {
             attempt: stage2Attempts,
@@ -298,7 +322,7 @@ export class ScriptService implements ScriptContract {
 
     if (!scriptData || scriptData.turns.length < 5) {
       throw new Error(
-        'Failed to generate valid Stage 2 dialogue after 5 attempts',
+        'Failed to generate valid Stage 2 dialogue after 2 attempts',
       );
     }
 
