@@ -4,6 +4,7 @@ import { LlmService } from './llm.service';
 import * as aiModule from 'ai';
 
 jest.mock('ai', () => ({
+  streamText: jest.fn(),
   generateText: jest.fn(),
 }));
 
@@ -14,7 +15,7 @@ jest.mock('@ai-sdk/deepseek', () => ({
 describe('LlmService', () => {
   let service: LlmService;
 
-  const mockGenerateText = aiModule.generateText as jest.Mock<any>;
+  const mockStreamText = aiModule.streamText as jest.Mock<any>;
 
   const mockConfigService = {
     get: jest.fn((key: string): string | null => {
@@ -41,17 +42,31 @@ describe('LlmService', () => {
     expect(service).toBeDefined();
   });
 
-  it('should call Vercel AI generateText with prompts and return text', async () => {
-    mockGenerateText.mockResolvedValue({ text: 'Generated script output' });
+  it('should stream text via streamText with firstChunkMs, chunkMs, and totalMs timeouts', async () => {
+    async function* fakeStream() {
+      await Promise.resolve();
+      yield 'Chunk 1, ';
+      yield 'Chunk 2.';
+    }
+
+    mockStreamText.mockReturnValue({
+      textStream: fakeStream(),
+    });
 
     const result = await service.generateText('sys prompt', 'user prompt');
 
-    const calls = mockGenerateText.mock.calls as unknown as Array<
-      [{ system: string; prompt: string }]
-    >;
-    expect(calls[0][0].system).toBe('sys prompt');
-    expect(calls[0][0].prompt).toBe('user prompt');
-    expect(result).toBe('Generated script output');
+    expect(mockStreamText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        system: 'sys prompt',
+        prompt: 'user prompt',
+        timeout: {
+          firstChunkMs: 30000,
+          chunkMs: 15000,
+          totalMs: 300000,
+        },
+      }),
+    );
+    expect(result).toBe('Chunk 1, Chunk 2.');
   });
 
   it('should throw error if LLM API key is not configured', async () => {

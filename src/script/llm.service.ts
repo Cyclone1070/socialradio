@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { generateText, LanguageModel } from 'ai';
+import { streamText, LanguageModel } from 'ai';
 import { createDeepSeek } from '@ai-sdk/deepseek';
 
 @Injectable()
@@ -29,12 +29,6 @@ export class LlmService {
     const deepseek = createDeepSeek({
       apiKey,
       baseURL: baseUrl,
-      fetch: (input, init) => {
-        return fetch(input, {
-          ...init,
-          signal: init?.signal || AbortSignal.timeout(60000),
-        });
-      },
     });
     return deepseek(modelName);
   }
@@ -43,13 +37,21 @@ export class LlmService {
     systemPrompt: string,
     userPrompt: string,
   ): Promise<string> {
-    const { text } = await generateText({
+    const result = streamText({
       model: this.getLanguageModel(),
       system: systemPrompt,
       prompt: userPrompt,
-      abortSignal: AbortSignal.timeout(60000),
-      maxRetries: 3,
+      timeout: {
+        firstChunkMs: 30000,
+        chunkMs: 15000,
+        totalMs: 300000,
+      },
     });
-    return text;
+
+    let fullText = '';
+    for await (const chunk of result.textStream) {
+      fullText += chunk;
+    }
+    return fullText;
   }
 }
