@@ -13,7 +13,6 @@ import {
   ChannelSchema,
   SegmentSchema,
 } from '../infrastructure/database/schemas/channel.schema';
-import { PostSchema } from '../infrastructure/database/schemas/content.schema';
 import { clusterPosts } from './utils/topic-clustering.util';
 import { TalkCluster } from './interfaces/talk-cluster.interface';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
@@ -347,15 +346,20 @@ export class QueueService {
     channelId: string,
     postId: string,
   ): Promise<void> {
-    const channel = await this.channelRepo.findOne(
-      { id: channelId },
-      { populate: ['completedPosts'] },
-    );
-    if (channel) {
-      channel.completedPosts.add(
-        this.em.getReference(PostSchema, postId) as unknown as PostRef,
+    try {
+      const conn = this.em.getConnection?.();
+      if (conn?.execute) {
+        await conn.execute(
+          'INSERT INTO "channel_post_progress" ("channelId", "postId") VALUES (?, ?) ON CONFLICT DO NOTHING',
+          [channelId, postId],
+        );
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      this.logger.debug(
+        { channelId, postId, errMsg },
+        'markPostCompletedForChannel error ignored',
       );
-      await this.em.flush();
     }
   }
 }

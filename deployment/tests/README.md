@@ -146,6 +146,19 @@
 | 49 | SQL verification: inspect TalkSegment in DB | `status == 'ready'`, duration $> 0$, multi-turn dialogue array |
 | 50 | MinIO Blob Storage Verification | Queries MinIO S3 API -> confirms generated `.mp3` blob exists and size $> 10\text{ KB}$ |
 
+### Section 8: Live Broadcast & Streaming (`suites/08-broadcast.sh`)
+*Icecast server health, dynamic Liquidsoap channel mounts, HTTP live stream handshake, stream byte capture, audio energy verification, and listener telemetry.*
+
+| # | Scenario | Expected |
+|---|---|---|
+| 51 | `GET http://icecast:8000/` | 200 OK, Icecast server online |
+| 52 | `POST /channels` | 201 Created, channel created for broadcast |
+| 53 | Poll Icecast mount `/channels/:id.mp3` | Registered by Liquidsoap dynamic sync |
+| 54 | Live stream HTTP handshake | 200 OK, `Content-Type: audio/mpeg`, ICY headers |
+| 55 | Stream byte capture (4s) | Continuous stream data $> 30\text{ KB}$ at 128kbps |
+| 56 | Audio energy / non-silence verification | `ffmpeg` volumedetect `mean_volume > -60 dB` (non-silent audio frames) |
+| 57 | Listener telemetry | `/admin/stats` tracks listener connection & disconnection (0 $\rightarrow$ 1 $\rightarrow$ 0) |
+
 ---
 
 ## Auth Matrix Covered

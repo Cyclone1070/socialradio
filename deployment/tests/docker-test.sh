@@ -50,6 +50,11 @@ case "$TARGET" in
     run_suite /scripts/suites/02-auth.sh
     run_suite /scripts/suites/07-ai-storage.sh
     ;;
+  08|broadcast|stream|radio|icecast)
+    run_suite /scripts/suites/01-healthcheck.sh
+    run_suite /scripts/suites/02-auth.sh
+    run_suite /scripts/suites/08-broadcast.sh
+    ;;
   all|"")
     run_suite /scripts/suites/01-healthcheck.sh
     run_suite /scripts/suites/02-auth.sh
@@ -58,9 +63,10 @@ case "$TARGET" in
     run_suite /scripts/suites/05-playback.sh
     run_suite /scripts/suites/06-scraping.sh
     run_suite /scripts/suites/07-ai-storage.sh
+    run_suite /scripts/suites/08-broadcast.sh
     ;;
   *)
-    fail "Unknown test suite: $TARGET (Valid options: 01, 02, 03, 04, 05, 06, 07, all)"
+    fail "Unknown test suite: $TARGET (Valid options: 01, 02, 03, 04, 05, 06, 07, 08, all)"
     ;;
 esac
 

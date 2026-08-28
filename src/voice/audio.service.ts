@@ -90,20 +90,32 @@ export class AudioService implements VoiceContract {
     };
   }
 
-  async synthesizeTurn(text: string, voiceName: string): Promise<Buffer> {
-    const tts = new MsEdgeTTS();
-    await tts.setMetadata(
-      voiceName,
-      OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3,
-    );
-    const { audioStream } = tts.toStream(text);
-    const chunks: Buffer[] = [];
-    await new Promise<void>((resolve, reject) => {
-      audioStream.on('data', (chunk: Buffer) => chunks.push(chunk));
-      audioStream.on('end', () => resolve());
-      audioStream.on('error', (err) => reject(err));
-    });
-    return Buffer.concat(chunks);
+  async synthesizeTurn(
+    text: string,
+    voiceName: string,
+    retries = 2,
+  ): Promise<Buffer> {
+    for (let attempt = 1; attempt <= retries + 1; attempt++) {
+      try {
+        const tts = new MsEdgeTTS();
+        await tts.setMetadata(
+          voiceName,
+          OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3,
+        );
+        const { audioStream } = tts.toStream(text);
+        const chunks: Buffer[] = [];
+        await new Promise<void>((resolve, reject) => {
+          audioStream.on('data', (chunk: Buffer) => chunks.push(chunk));
+          audioStream.on('end', () => resolve());
+          audioStream.on('error', (err) => reject(err));
+        });
+        return Buffer.concat(chunks);
+      } catch (err) {
+        if (attempt > retries) throw err;
+        await new Promise((res) => setTimeout(res, 500 * attempt));
+      }
+    }
+    throw new Error('TTS turn synthesis failed');
   }
 
   async generateSpeech(text: string, outputFilePath: string): Promise<number> {

@@ -26,6 +26,10 @@ services:
     depends_on:
       app:
         condition: service_healthy
+      icecast:
+        condition: service_started
+      liquidsoap:
+        condition: service_started
 
 networks:
   external_test_net:

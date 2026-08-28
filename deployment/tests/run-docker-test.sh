@@ -11,6 +11,10 @@ cleanup() {
   if [ $STATUS -ne 0 ]; then
     echo "=== App Container Logs (Failure Diagnosis) ==="
     $COMPOSE logs app 2>&1 | grep -v '"/healthcheck"' | tail -100 || true
+    echo "=== Liquidsoap Container Logs (Failure Diagnosis) ==="
+    $COMPOSE logs liquidsoap 2>&1 | tail -100 || true
+    echo "=== Icecast Container Logs (Failure Diagnosis) ==="
+    $COMPOSE logs icecast 2>&1 | tail -100 || true
   fi
   echo "=== Clean Up ==="
   $COMPOSE down -v >/dev/null 2>&1 || true

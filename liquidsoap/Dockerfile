@@ -6,4 +6,4 @@ RUN mkdir -p /etc/liquidsoap /app/storage && chown -R liquidsoap:liquidsoap /etc
 USER liquidsoap
 COPY radio.liq /etc/liquidsoap/radio.liq
 
-ENTRYPOINT ["liquidsoap", "/etc/liquidsoap/radio.liq"]
+ENTRYPOINT ["liquidsoap", "--force-start", "/etc/liquidsoap/radio.liq"]

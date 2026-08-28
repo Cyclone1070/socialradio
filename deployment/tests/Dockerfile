@@ -1,3 +1,3 @@
 FROM alpine:3.20
 
-RUN apk add --no-cache curl jq postgresql-client
+RUN apk add --no-cache curl jq postgresql-client ffmpeg file
