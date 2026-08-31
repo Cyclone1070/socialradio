@@ -27,10 +27,12 @@ describe('QueueService', () => {
     findOne: jest.fn(),
   };
 
+  const mockExecute = jest.fn();
   const mockEntityManager = {
     persist: jest.fn().mockReturnThis(),
     flush: jest.fn(),
     getReference: jest.fn((_cls, id: string) => ({ id }) as unknown as Channel),
+    getConnection: jest.fn(() => ({ execute: mockExecute })),
   };
 
   const mockContentContract = {
@@ -399,6 +401,10 @@ describe('QueueService', () => {
 
       expect(mockScriptContract.generateScript).toHaveBeenCalled();
       expect(mockVoiceContract.synthesizeScript).toHaveBeenCalled();
+      expect(mockExecute).toHaveBeenCalledWith(
+        expect.stringContaining('ON CONFLICT DO NOTHING'),
+        ['chan-1', 'post-1'],
+      );
     });
 
     it('retries next available topic when first topic fails voice generation', async () => {
@@ -464,6 +470,44 @@ describe('QueueService', () => {
 
       expect(mockScriptContract.generateScript).toHaveBeenCalledTimes(1);
       expect(mockMediaService.getRandomAd).toHaveBeenCalled();
+    });
+
+    it('deduplicates concurrent bufferAhead calls on the same channel to prevent duplicate batch generation', async () => {
+      const channelId = 'chan-1';
+      setupChannelSubreddits([
+        {
+          subredditId: 'sub-1',
+          name: 'AskReddit',
+          lastScrapedAt: new Date(),
+        },
+      ]);
+      mockContentContract.getPostsBySubredditIds.mockResolvedValue([
+        {
+          id: 'post-1',
+          subredditId: 'sub-1',
+          title: 'Topic Title',
+          selftext: 'Body',
+          ups: 100,
+        },
+      ]);
+      mockScriptContract.generateScript.mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(() => resolve('Script text'), 50),
+          ),
+      );
+      mockVoiceContract.synthesizeScript.mockResolvedValue({
+        filePath: 'audio/talk-1.mp3',
+        durationSeconds: 60,
+        postIds: ['post-1'],
+      });
+
+      await Promise.all([
+        service.bufferAhead(channelId),
+        service.bufferAhead(channelId),
+      ]);
+
+      expect(mockScriptContract.generateScript).toHaveBeenCalledTimes(1);
     });
   });
 });

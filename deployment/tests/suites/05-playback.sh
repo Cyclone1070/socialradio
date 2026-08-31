@@ -34,7 +34,7 @@ if [ "$CURRENT_DB_SEG" != "$FIRST_SEGMENT_ID" ]; then
 fi
 echo "  ✓ channel playhead updated in DB ($CURRENT_DB_SEG)"
 
-echo "37. GET /channels/$PLAY_CHAN_ID/next-track?resuming=true (Tail-resume after dormancy)"
+echo "37. GET /channels/$PLAY_CHAN_ID/next-track?resuming=true (Tail-resume after idle standby)"
 assert_status GET "$BASE_URL/channels/$PLAY_CHAN_ID/next-track?resuming=true" 200 \
   -H "x-internal-token: $SECRET"
 assert_jq ".segmentId == \"$FIRST_SEGMENT_ID\"" 'returns same current segment on tail-resume'

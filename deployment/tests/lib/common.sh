@@ -16,9 +16,9 @@ req() {
   HEADER_FILE=$(mktemp)
   BODY_FILE=$(mktemp)
 
-  curl -s --max-time 600 -X "$METHOD" "$URL" "$@" \
+  REQ_TIME=$(curl -s --max-time 600 -w "%{time_total}" -X "$METHOD" "$URL" "$@" \
     -D "$HEADER_FILE" \
-    -o "$BODY_FILE"
+    -o "$BODY_FILE")
 
   STATUS=$(grep -i '^HTTP/' "$HEADER_FILE" | tail -1 | awk '{print $2}')
   BODY=$(cat "$BODY_FILE")
@@ -41,13 +41,13 @@ assert_status() {
         fail "expected 2xx status, got $STATUS"
         ;;
     esac
-    echo "  Status: $STATUS (expected 2xx)"
+    echo "  Status: $STATUS (expected 2xx) [${REQ_TIME}s]"
   else
     if [ "$STATUS" != "$EXPECTED" ]; then
       echo "  Body: $BODY"
       fail "expected $EXPECTED, got $STATUS"
     fi
-    echo "  Status: $STATUS (expected $EXPECTED)"
+    echo "  Status: $STATUS (expected $EXPECTED) [${REQ_TIME}s]"
   fi
 }
 

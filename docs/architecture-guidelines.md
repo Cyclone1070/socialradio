@@ -30,7 +30,7 @@ This document provides decision rules for file placement, code organization, str
 4. **Live Audio Streaming Architecture (Icecast + Liquidsoap)**
    - Continuous 128 kbps MP3 stream served to listeners via Icecast mount `/channels/:channelId.mp3` on port 8000.
    - Source generation powered by Liquidsoap sidecar dynamically polling `GET /channels/:channelId/next-track`.
-   - **Listener-Aware 10-Minute Dormancy**: Liquidsoap tracks Icecast listener count. With 0 listeners for > 10 minutes, Liquidsoap stops polling `next-track` (pausing background LLM/TTS generation). When a listener connects, stream resumes seamlessly from where the playhead was left off.
+   - **Listener-Aware 10-Minute Idle Timeout**: Liquidsoap tracks Icecast listener count. With 0 listeners for > 10 minutes, Liquidsoap pauses stream polling and cuts to blank standby (pausing background LLM/TTS generation). When a listener connects, stream resumes seamlessly from where the playhead was left off.
    - **Low Runway Replenishment**: When fewer than 4 segments remain in queue, background `bufferAhead` fills the runway.
    - **Zero 10s Chunking**: Flat-rate stream eliminates HLS manifest slicing and CDN egress multiplication.
 

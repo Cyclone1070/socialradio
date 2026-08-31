@@ -47,7 +47,31 @@ export class QueueService {
     private readonly voiceContract: VoiceContract,
   ) {}
 
+  private readonly inFlightBuffers = new Map<string, Promise<void>>();
+
   async bufferAhead(channelId: string): Promise<void> {
+    const existing = this.inFlightBuffers.get(channelId);
+    if (existing) {
+      this.logger.debug(
+        { channelId },
+        'bufferAhead already in progress for channel, reusing in-flight batch',
+      );
+      return existing;
+    }
+
+    const promise = (async () => {
+      try {
+        await this.doBufferAhead(channelId);
+      } finally {
+        this.inFlightBuffers.delete(channelId);
+      }
+    })();
+
+    this.inFlightBuffers.set(channelId, promise);
+    return promise;
+  }
+
+  private async doBufferAhead(channelId: string): Promise<void> {
     const lastItem = await this.segmentRepo.findOne(
       { channel: channelId },
       { orderBy: { playOrder: 'DESC' } },

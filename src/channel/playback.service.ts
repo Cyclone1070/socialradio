@@ -50,7 +50,7 @@ export class PlaybackService {
       throw new NotFoundException('Channel not found');
     }
 
-    // 0. If resuming after dormancy, tail-resume into the current segment
+    // 0. If resuming after idle state, tail-resume into the current segment
     if (resuming && channel.currentSegmentId) {
       const current = await this.segmentRepo.findOne({
         id: channel.currentSegmentId,

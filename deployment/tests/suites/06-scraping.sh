@@ -102,3 +102,12 @@ while [ $i -lt 45 ]; do
 done
 [ "$GONE" = 0 ] || fail "dead sub still subscribed after 135s (scrape chain did not trigger when active pool < 20)"
 echo "  ✓ dead sub gone (chain isInvalid -> delete -> cascade) after ~$((i * 3))s"
+
+# Clean up Section 6 scraped posts and subreddits so only mock data exists for AI generation
+psql_run -c "
+  DELETE FROM channel_subreddit WHERE \"channelId\" = '$CHAN_ID';
+  DELETE FROM comment WHERE \"postId\" IN (SELECT id FROM post WHERE \"subredditId\" IN (SELECT id FROM subreddit WHERE name LIKE 'pool_sub_e2e_%' OR name = 'AskReddit'));
+  DELETE FROM post WHERE \"subredditId\" IN (SELECT id FROM subreddit WHERE name LIKE 'pool_sub_e2e_%' OR name = 'AskReddit');
+  DELETE FROM subreddit WHERE name LIKE 'pool_sub_e2e_%' OR name = 'AskReddit';
+" >/dev/null
+

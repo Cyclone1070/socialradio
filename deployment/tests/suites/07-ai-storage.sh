@@ -9,6 +9,13 @@ ensure_base_fixtures
 echo ""
 echo "=== Section 7: Live AI Talk Generation & MinIO Blob Storage ==="
 
+# Clean all extraneous posts & comments so only mock fixture data exists in DB
+psql_run -c "
+  DELETE FROM channel_post_progress;
+  DELETE FROM comment;
+  DELETE FROM post;
+" >/dev/null
+
 echo "46. Seed targeted AI talk fixture (r/ai_talk_fixture_sub_e2e)"
 psql_run -f /scripts/fixtures/ai-talk.sql >/dev/null \
   || fail "ai-talk.sql fixture failed"

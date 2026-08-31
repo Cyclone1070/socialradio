@@ -11,11 +11,15 @@ icecast_pass    = environment.get(default="hackme", "ICECAST_PASSWORD")
 backend_url     = environment.get(default="http://app:3000", "BACKEND_URL")
 storage_url     = environment.get(default="http://minio:9000/socialradio-media", "STORAGE_PUBLIC_URL")
 internal_secret = environment.get(default="secret", "INTERNAL_SERVICE_SECRET")
-idle_sec        = float_of_string(environment.get(default="600.0", "IDLE_THRESHOLD_SECONDS"))
+idle_timeout_sec = float_of_string(environment.get(default="600.0", "IDLE_TIMEOUT_SECONDS"))
 
 # Dynamic Track Request Function (Backend Queue)
-def get_next_track(channel_id) =
-  uri = "#{backend_url}/channels/#{channel_id}/next-track"
+def get_next_track(channel_id, ~resuming=false) =
+  uri = if resuming then
+    "#{backend_url}/channels/#{channel_id}/next-track?resuming=true"
+  else
+    "#{backend_url}/channels/#{channel_id}/next-track"
+  end
   try
     response = http.get(headers=[("x-internal-token", internal_secret)], uri)
     if string.contains(substring="\"filePath\":\"", response) then
@@ -31,7 +35,7 @@ def get_next_track(channel_id) =
         else
           "#{storage_url}/#{file_path}"
         end
-        print("Channel #{channel_id} fetched next track: #{full_url}")
+        print("Channel #{channel_id} fetched next track (resuming=#{resuming}): #{full_url}")
         request.create(full_url)
       end
     else
@@ -56,6 +60,7 @@ def create_channel_stream(channel_id) =
 
     # State tracking
     is_idle = ref(false)
+    was_idle = ref(false)
     zero_listeners_since = ref(-1.0)
 
     # Check listener count periodically from Icecast
@@ -68,17 +73,18 @@ def create_channel_stream(channel_id) =
         if string.contains(substring="<listeners>0</listeners>", stats_resp) or not string.contains(substring=mount_str, stats_resp) then
           if zero_listeners_since() < 0.0 then
             zero_listeners_since := time()
-          elsif time() - zero_listeners_since() >= idle_sec then
+          elsif time() - zero_listeners_since() >= idle_timeout_sec then
             if not is_idle() then
-              print("Channel #{channel_id} entered idle state (0 listeners > #{idle_sec}s). Pausing generation.")
+              print("Channel #{channel_id} entered idle state (0 listeners > #{idle_timeout_sec}s). Pausing generation.")
               is_idle := true
             end
           end
         else
           zero_listeners_since := -1.0
-          if not is_idle() then
+          if is_idle() then
             print("Channel #{channel_id} active: listener connected. Resuming stream.")
             is_idle := false
+            was_idle := true
           end
         end
       catch _ do
@@ -86,21 +92,34 @@ def create_channel_stream(channel_id) =
       end
     end
 
-    # Run listener check every 10 seconds
-    thread.run(every=10.0, check_listeners)
+    # Run listener check every second
+    thread.run(every=1.0, check_listeners)
 
-    # Dynamic track supplier: pauses backend requests when idle
+    # Dynamic track supplier: pauses backend requests when idle, triggers tail-resume on wakeup
     def dynamic_track_supplier() =
       if is_idle() then
         null()
       else
-        get_next_track(channel_id)
+        is_resuming = was_idle()
+        if is_resuming then
+          was_idle := false
+        end
+        get_next_track(channel_id, resuming=is_resuming)
       end
     end
 
-    # Dynamic track playlist source
-    source = request.dynamic(dynamic_track_supplier)
+    # Dynamic track playlist source with 2s retry delay to prevent tight-loop hammering
+    dyn_source = request.dynamic(retry_delay=2.0, dynamic_track_supplier)
     
+    # Active / Idle switch:
+    # - Plays dyn_source normally during active playback and during the 10-minute 0-listener window.
+    # - If 10 minutes expire with 0 listeners, instantly cuts to blank standby in memory.
+    # - When a listener reconnects, instantly switches back to dyn_source.
+    source = switch(track_sensitive=false, [
+      ({not is_idle()}, dyn_source),
+      ({true}, blank())
+    ])
+
     # Fallback safety (silence standby if idle or queue resolving)
     source = mksafe(source)
 

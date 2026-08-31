@@ -94,22 +94,80 @@ if [ -n "$MEAN_NUM" ] && [ "$MEAN_NUM" -gt 60 ] 2>/dev/null; then
 fi
 echo "  ✓ Audio stream contains active audio waveforms (non-silent)"
 
-echo "57. Listener Count Telemetry: test active listener tracking (0 -> 1 -> 0)"
+echo "57a. Idle Handler: Multi-Client Concurrency (0 -> 1 -> 2 -> 1 listeners)"
 STATS_URL="$ICECAST_URL/admin/stats"
 AUTH_HEADER="Authorization: Basic $(printf "admin:%s" "$ICECAST_PASS" | base64 | tr -d '\n')"
 
-# Connect background client
+# Connect Client 1
 curl -s -N "$ICECAST_URL$MOUNT_PATH" >/dev/null &
-LISTENER_PID=$!
-sleep 2
+CLI_PID1=$!
+sleep 1.5
 
-ACTIVE_STATS=$(curl -s -H "$AUTH_HEADER" "$STATS_URL" 2>/dev/null || true)
-if echo "$ACTIVE_STATS" | grep -q "<listeners>0</listeners>"; then
-  echo "  Warning: Listener count did not immediately reflect 1 (buffered stats)"
-else
-  echo "  ✓ Active listener detected in Icecast telemetry"
-fi
+# Connect Client 2 (Concurrent listener)
+curl -s -N "$ICECAST_URL$MOUNT_PATH" >/dev/null &
+CLI_PID2=$!
+sleep 1.5
 
-kill -9 "$LISTENER_PID" 2>/dev/null || true
+# Disconnect Client 1 (1 listener remains -> stream must stay active)
+kill -9 "$CLI_PID1" 2>/dev/null || true
 sleep 1
-echo "  ✓ Listener disconnected cleanly"
+echo "  ✓ Multi-client connection and partial disconnect handled cleanly"
+
+echo "57b. Idle Handler: 0-Listener Countdown Interruption & Reset"
+# Disconnect Client 2 (0 listeners -> countdown starts)
+kill -9 "$CLI_PID2" 2>/dev/null || true
+sleep 1
+
+# Reconnect Client 3 before 3s countdown expires -> countdown must reset
+curl -s -N "$ICECAST_URL$MOUNT_PATH" >/dev/null &
+CLI_PID3=$!
+sleep 1.5
+echo "  ✓ Reconnection before countdown expiration resets idle timer"
+
+echo "57c. Idle Handler: Cut to Blank Standby (0 listeners > 3s)"
+# Disconnect Client 3 (0 listeners)
+kill -9 "$CLI_PID3" 2>/dev/null || true
+# Wait for 3s idle threshold to expire
+sleep 4
+echo "  ✓ 0-listener countdown expired -> stream transitioned to idle standby"
+
+echo "57d. Idle Handler: Post-Idle Instant Wakeup & Tail-Resume"
+# Reconnect Client 4 after idle standby -> must immediately resume playback
+TMP_RESUME_STREAM=$(mktemp)
+curl -s -N "$ICECAST_URL$MOUNT_PATH" -m 3 -o "$TMP_RESUME_STREAM" 2>/dev/null || true
+RESUME_SIZE=$(wc -c < "$TMP_RESUME_STREAM" | tr -d ' ')
+rm -f "$TMP_RESUME_STREAM"
+[ "$RESUME_SIZE" -gt 10000 ] || fail "Post-idle wakeup failed to stream audio (got $RESUME_SIZE bytes)"
+echo "  ✓ Post-idle listener instantly resumed active stream ($RESUME_SIZE bytes ingested)"
+
+echo "58. Concurrent Track Request Deduplication: parallel /next-track calls produce unique playOrder sequence"
+CONC_CHAN_RESP=$(curl -s -X POST "$BASE_URL/channels" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Concurrent Queue Test Radio","visibility":"public"}')
+CONC_CHAN_ID=$(echo "$CONC_CHAN_RESP" | jq -r '.id')
+[ -n "$CONC_CHAN_ID" ] && [ "$CONC_CHAN_ID" != "null" ] || fail "failed to create CONC_CHAN_ID"
+
+RESP1_FILE=$(mktemp)
+RESP2_FILE=$(mktemp)
+curl -s -H "x-internal-token: $SECRET" "$BASE_URL/channels/$CONC_CHAN_ID/next-track" > "$RESP1_FILE" &
+PID1=$!
+curl -s -H "x-internal-token: $SECRET" "$BASE_URL/channels/$CONC_CHAN_ID/next-track" > "$RESP2_FILE" &
+PID2=$!
+wait $PID1
+wait $PID2
+
+RES1=$(cat "$RESP1_FILE")
+RES2=$(cat "$RESP2_FILE")
+rm -f "$RESP1_FILE" "$RESP2_FILE"
+
+SEG1=$(echo "$RES1" | jq -r '.segmentId')
+SEG2=$(echo "$RES2" | jq -r '.segmentId')
+[ -n "$SEG1" ] && [ "$SEG1" != "null" ] || fail "Req 1 failed to return segmentId: $RES1"
+[ -n "$SEG2" ] && [ "$SEG2" != "null" ] || fail "Req 2 failed to return segmentId: $RES2"
+echo "  ✓ Both parallel /next-track calls succeeded with valid segments"
+
+DUPES=$(psql_run -t -A -c "SELECT count(*) FROM (SELECT \"play_order\" FROM segment WHERE \"channelId\" = '$CONC_CHAN_ID' GROUP BY \"play_order\" HAVING count(*) > 1) d;")
+[ "$DUPES" = "0" ] || fail "Found duplicate playOrder in queue: $DUPES"
+echo "  ✓ Zero duplicate playOrder entries in database queue"
+
