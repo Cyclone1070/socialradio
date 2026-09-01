@@ -105,28 +105,6 @@ describe('PlaybackService', () => {
       expect(mockEntityManager.flush).toHaveBeenCalled();
     });
 
-    it('returns current track with offset when resuming is true', async () => {
-      const channelId = 'chan-1';
-      const channel = Object.assign(new Channel(), {
-        id: channelId,
-        currentSegmentId: 'seg-1',
-      });
-      const segment = Object.assign(new MusicSegment(), {
-        id: 'seg-1',
-        playOrder: 1,
-        durationSeconds: 180,
-        audioUrl: 'song.mp3',
-      });
-
-      mockChannelRepo.findOne.mockResolvedValue(channel);
-      mockSegmentRepo.findOne.mockResolvedValue(segment);
-
-      const track = await service.getNextTrack(channelId, true);
-
-      expect(track.segmentId).toBe('seg-1');
-      expect(track.startOffsetSeconds).toBe(165);
-    });
-
     it('triggers bufferAhead when queue is empty and plays first track of new batch', async () => {
       const channelId = 'chan-1';
       const channel = Object.assign(new Channel(), {

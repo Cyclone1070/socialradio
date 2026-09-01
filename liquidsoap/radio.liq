@@ -14,12 +14,8 @@ internal_secret = environment.get(default="secret", "INTERNAL_SERVICE_SECRET")
 idle_timeout_sec = float_of_string(environment.get(default="600.0", "IDLE_TIMEOUT_SECONDS"))
 
 # Dynamic Track Request Function (Backend Queue)
-def get_next_track(channel_id, ~resuming=false) =
-  uri = if resuming then
-    "#{backend_url}/channels/#{channel_id}/next-track?resuming=true"
-  else
-    "#{backend_url}/channels/#{channel_id}/next-track"
-  end
+def get_next_track(channel_id) =
+  uri = "#{backend_url}/channels/#{channel_id}/next-track"
   try
     response = http.get(headers=[("x-internal-token", internal_secret)], uri)
     if string.contains(substring="\"filePath\":\"", response) then
@@ -35,7 +31,7 @@ def get_next_track(channel_id, ~resuming=false) =
         else
           "#{storage_url}/#{file_path}"
         end
-        print("Channel #{channel_id} fetched next track (resuming=#{resuming}): #{full_url}")
+        print("Channel #{channel_id} fetched next track: #{full_url}")
         request.create(full_url)
       end
     else
@@ -60,7 +56,6 @@ def create_channel_stream(channel_id) =
 
     # State tracking
     is_idle = ref(false)
-    was_idle = ref(false)
     zero_listeners_since = ref(-1.0)
 
     # Check listener count periodically from Icecast
@@ -84,7 +79,6 @@ def create_channel_stream(channel_id) =
           if is_idle() then
             print("Channel #{channel_id} active: listener connected. Resuming stream.")
             is_idle := false
-            was_idle := true
           end
         end
       catch _ do
@@ -95,16 +89,12 @@ def create_channel_stream(channel_id) =
     # Run listener check every second
     thread.run(every=1.0, check_listeners)
 
-    # Dynamic track supplier: pauses backend requests when idle, triggers tail-resume on wakeup
+    # Dynamic track supplier: pauses backend requests when idle
     def dynamic_track_supplier() =
       if is_idle() then
         null()
       else
-        is_resuming = was_idle()
-        if is_resuming then
-          was_idle := false
-        end
-        get_next_track(channel_id, resuming=is_resuming)
+        get_next_track(channel_id)
       end
     end
 

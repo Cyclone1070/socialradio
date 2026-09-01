@@ -131,7 +131,7 @@ kill -9 "$CLI_PID3" 2>/dev/null || true
 sleep 4
 echo "  ✓ 0-listener countdown expired -> stream transitioned to idle standby"
 
-echo "57d. Idle Handler: Post-Idle Instant Wakeup & Tail-Resume"
+echo "57d. Idle Handler: Post-Idle Instant Wakeup & Resume"
 # Reconnect Client 4 after idle standby -> must immediately resume playback
 TMP_RESUME_STREAM=$(mktemp)
 curl -s -N "$ICECAST_URL$MOUNT_PATH" -m 3 -o "$TMP_RESUME_STREAM" 2>/dev/null || true

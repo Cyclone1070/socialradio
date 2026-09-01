@@ -22,7 +22,6 @@ export interface NextTrackData {
   type: 'talk' | 'music' | 'ad' | 'jingle';
   filePath: string;
   durationSeconds: number;
-  startOffsetSeconds?: number;
   title?: string;
   artist?: string;
 }
@@ -41,32 +40,10 @@ export class PlaybackService {
     private readonly mediaService: MediaContract,
   ) {}
 
-  async getNextTrack(
-    channelId: string,
-    resuming = false,
-  ): Promise<NextTrackData> {
+  async getNextTrack(channelId: string): Promise<NextTrackData> {
     const channel = await this.channelRepo.findOne({ id: channelId });
     if (!channel) {
       throw new NotFoundException('Channel not found');
-    }
-
-    // 0. If resuming after idle state, tail-resume into the current segment
-    if (resuming && channel.currentSegmentId) {
-      const current = await this.segmentRepo.findOne({
-        id: channel.currentSegmentId,
-      });
-      if (current) {
-        const offset = Math.max(0, (current.durationSeconds || 30) - 15);
-        return {
-          segmentId: current.id,
-          type: this.getSegmentType(current),
-          filePath: current.audioUrl || '',
-          durationSeconds: current.durationSeconds || 0,
-          startOffsetSeconds: offset,
-          title: (current as MusicSegment).title,
-          artist: (current as MusicSegment).artist,
-        };
-      }
     }
 
     // 1. Find Next Segment in Queue

@@ -117,11 +117,10 @@
 |---|---|---|
 | 34 | Cold-start empty channel `GET /channels/:id/next-track` | 200 OK, returns Track #1, sets `currentSegmentId` |
 | 35 | Read-back `channel.currentSegmentId` in DB | Matches returned segmentId |
-| 36 | Tail-resume reconnect `GET /channels/:id/next-track?resuming=true` | 200 OK, returns current segment with `startOffsetSeconds >= 0` |
-| 37 | Sequential `GET /channels/:id/next-track` | 200 OK, FIFO advancement |
-| 38 | SQL read-back `play_order` | `play_order` strictly increments |
-| 39 | `GET /channels/:id/next-track` no token / wrong secret | 401 body confirms |
-| 39b | `GET /channels/:fakeUuid/next-track` | 404 + "Channel not found" |
+| 36 | Sequential `GET /channels/:id/next-track` | 200 OK, FIFO advancement |
+| 37 | SQL read-back `play_order` | `play_order` strictly increments |
+| 38 | `GET /channels/:id/next-track` no token / wrong secret | 401 body confirms |
+| 38b | `GET /channels/:fakeUuid/next-track` | 404 + "Channel not found" |
 
 ### Section 6: Real Reddit Scraping & Active Pool (`suites/06-scraping.sh`)
 *Topic clustering, proactive pool deficit triggering, lazy 20-sub suppression, and dead sub cascade deletion.*
