@@ -82,14 +82,35 @@ export class PlaybackService {
 
       // Cold Start playhead anchoring
       if (!channel.currentSegmentId || !channel.playheadStartedAt) {
-        const firstSegment = await this.segmentRepo.findOne(
-          { channel: channelId },
-          { orderBy: { playOrder: 'ASC' } },
-        );
-        if (firstSegment) {
-          channel.currentSegmentId = firstSegment.id;
-          channel.currentPlayOrder = firstSegment.playOrder;
-          channel.playheadStartedAt = now;
+        let anchorSegment: Segment | null = null;
+        if (!channel.playheadStartedAt) {
+          // Brand new channel starting broadcast for the very first time: start at track 1 (ASC)
+          anchorSegment = await this.segmentRepo.findOne(
+            { channel: channelId },
+            { orderBy: { playOrder: 'ASC' } },
+          );
+        } else if (channel.currentPlayOrder) {
+          // In-flight channel where currentSegmentId was cleared/lost: resume from currentPlayOrder
+          anchorSegment = await this.segmentRepo.findOne(
+            { channel: channelId, playOrder: { $gte: channel.currentPlayOrder } },
+            { orderBy: { playOrder: 'ASC' } },
+          );
+        }
+        if (!anchorSegment) {
+          // Both pointers missing on an active station: anchor to live runway edge
+          const latestBatch = await this.segmentRepo.find(
+            { channel: channelId },
+            { orderBy: { playOrder: 'DESC' }, limit: 6 },
+          );
+          if (latestBatch.length > 0) {
+            latestBatch.sort((a, b) => a.playOrder - b.playOrder);
+            anchorSegment = latestBatch[0];
+          }
+        }
+        if (anchorSegment) {
+          channel.currentSegmentId = anchorSegment.id;
+          channel.currentPlayOrder = anchorSegment.playOrder;
+          channel.playheadStartedAt = channel.playheadStartedAt ?? now;
           channel.lastActiveAt = now;
         }
       }
@@ -132,19 +153,23 @@ export class PlaybackService {
 
       // Orphaned playhead recovery: if currentSegmentId is invalid/deleted,
       // recover strictly starting from channel.currentPlayOrder onwards (ASC order).
-      // This prevents rewinding into historical segments (< currentPlayOrder)
-      // and prevents skipping ahead into future buffer runway.
+      // If currentPlayOrder is also missing, recover to the live edge (latest batch).
       if (!currentSegment) {
-        const minOrder = channel.currentPlayOrder ?? 1;
-        currentSegment = await this.segmentRepo.findOne(
-          { channel: channelId, playOrder: { $gte: minOrder } },
-          { orderBy: { playOrder: 'ASC' } },
-        );
-        if (!currentSegment) {
+        if (channel.currentPlayOrder) {
           currentSegment = await this.segmentRepo.findOne(
-            { channel: channelId },
-            { orderBy: { playOrder: 'DESC' } },
+            { channel: channelId, playOrder: { $gte: channel.currentPlayOrder } },
+            { orderBy: { playOrder: 'ASC' } },
           );
+        }
+        if (!currentSegment) {
+          const latestBatch = await this.segmentRepo.find(
+            { channel: channelId },
+            { orderBy: { playOrder: 'DESC' }, limit: 6 },
+          );
+          if (latestBatch.length > 0) {
+            latestBatch.sort((a, b) => a.playOrder - b.playOrder);
+            currentSegment = latestBatch[0];
+          }
         }
         if (currentSegment) {
           channel.currentSegmentId = currentSegment.id;

@@ -213,6 +213,68 @@ describe('PlaybackService', () => {
         expect(channel.currentPlayOrder).toBe(1);
         expect(result.manifest).toContain('#EXT-X-MEDIA-SEQUENCE:1');
       });
+
+      it('recovers to live runway edge when BOTH currentSegmentId and currentPlayOrder are wiped to null on an established station', async () => {
+        const channelId = 'chan-both-wiped';
+        const channel = Object.assign(new Channel(), {
+          id: channelId,
+          currentSegmentId: null, // WIPED!
+          currentPlayOrder: null, // WIPED!
+          playheadStartedAt: new Date(Date.now() - 3600 * 1000), // Established station!
+          lastActiveAt: new Date(),
+        });
+
+        // 50 historical segments (played hours ago) + 6 active runway segments (51 to 56)
+        const allSegments: MusicSegment[] = [];
+        for (let i = 1; i <= 56; i++) {
+          allSegments.push(
+            Object.assign(new MusicSegment(), {
+              id: `seg-${i}`,
+              channelId,
+              playOrder: i,
+              durationSeconds: 30,
+              audioUrl: `music/track-${i}.mp3`,
+            }),
+          );
+        }
+
+        mockEntityManager.findOne.mockResolvedValue(channel);
+        mockSegmentRepo.count.mockResolvedValue(56);
+        mockSegmentRepo.findOne.mockImplementation(
+          (criteria: { id?: string; channel?: string; playOrder?: { $gte?: number } }, options?: { orderBy?: { playOrder?: 'ASC' | 'DESC' } }) => {
+            if (criteria.id) return Promise.resolve(null);
+            if (criteria.playOrder?.$gte !== undefined) {
+              const min = criteria.playOrder.$gte;
+              return Promise.resolve(allSegments.find((s) => s.playOrder >= min) ?? null);
+            }
+            if (options?.orderBy?.playOrder === 'ASC') {
+              // Naive ASC returns segment 1 (the bug!)
+              return Promise.resolve(allSegments[0] ?? null);
+            }
+            return Promise.resolve(null);
+          },
+        );
+
+        mockSegmentRepo.find = jest.fn().mockImplementation(
+          (criteria: { channel?: string; playOrder?: { $gte?: number } }, options?: { orderBy?: { playOrder?: 'ASC' | 'DESC' }; limit?: number }) => {
+            if (options?.orderBy?.playOrder === 'DESC') {
+              const sorted = [...allSegments].sort((a, b) => b.playOrder - a.playOrder);
+              return Promise.resolve(sorted.slice(0, options.limit ?? 6));
+            }
+            const minOrder = criteria.playOrder?.$gte ?? 1;
+            const matching = allSegments.filter((s) => s.playOrder >= minOrder);
+            return Promise.resolve(matching.slice(0, options?.limit ?? 6));
+          },
+        );
+
+        const result = await service.getLiveManifest(channelId);
+
+        // Crucial: Must recover at live edge (51), NOT rewind to track 1!
+        expect(channel.currentSegmentId).toBe('seg-51');
+        expect(channel.currentPlayOrder).toBe(51);
+        expect(result.manifest).toContain('#EXT-X-MEDIA-SEQUENCE:51');
+        expect(result.manifest).not.toContain('#EXT-X-MEDIA-SEQUENCE:1\n');
+      });
     });
 
     describe('Cycle 3.3: Idle Freeze & Post-Idle Resume (Invariants I-2 & I-5)', () => {
@@ -808,7 +870,7 @@ describe('PlaybackService', () => {
                 jest.setSystemTime(currentTime);
 
                 if (corruptPlayhead) {
-                  // Simulate playhead pointing to an ID that was deleted or orphaned
+                  // Simulate playhead pointing to a row that was deleted/orphaned
                   channel.currentSegmentId = 'corrupted-missing-row-id';
                 }
 
