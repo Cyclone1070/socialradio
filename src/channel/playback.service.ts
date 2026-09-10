@@ -1,29 +1,25 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { InjectRepository } from '@mikro-orm/nestjs';
 import { EntityRepository, EntityManager } from '@mikro-orm/postgresql';
-import { Channel } from './entities/channel.entity';
-import {
-  Segment,
-  TalkSegment,
-  MusicSegment,
-  AdSegment,
-  JingleSegment,
-} from './entities/segment.entity';
+import { LockMode } from '@mikro-orm/core';
+import { Segment } from './entities/segment.entity';
 import {
   ChannelSchema,
   SegmentSchema,
 } from '../infrastructure/database/schemas/channel.schema';
 import { QueueService } from './queue.service';
-import { MediaContract } from '../domain';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
+import { generateHlsManifest } from './utils/hls-manifest.util';
+import { StorageService } from '../infrastructure/storage/storage.service';
 
-export interface NextTrackData {
-  segmentId: string;
-  type: 'talk' | 'music' | 'ad' | 'jingle';
-  filePath: string;
-  durationSeconds: number;
-  title?: string;
-  artist?: string;
+export interface LiveManifestResult {
+  manifest: string;
+  visibility: 'public' | 'private';
 }
 
 @Injectable()
@@ -31,100 +27,259 @@ export class PlaybackService {
   private readonly logger = createServiceLogger(PlaybackService.name);
 
   constructor(
-    @InjectRepository(ChannelSchema)
-    private readonly channelRepo: EntityRepository<Channel>,
     @InjectRepository(SegmentSchema)
     private readonly segmentRepo: EntityRepository<Segment>,
     private readonly em: EntityManager,
     private readonly queueService: QueueService,
-    private readonly mediaService: MediaContract,
+    private readonly storageService: StorageService,
   ) {}
 
-  async getNextTrack(channelId: string): Promise<NextTrackData> {
-    const channel = await this.channelRepo.findOne({ id: channelId });
-    if (!channel) {
+  async getLiveManifest(
+    channelId: string,
+    user?: { id: string; role?: string } | null,
+  ): Promise<LiveManifestResult> {
+    const existing = await this.em.findOne(ChannelSchema, { id: channelId });
+    if (!existing) {
       throw new NotFoundException('Channel not found');
     }
 
-    // 1. Find Next Segment in Queue
-    let segment: Segment | null = null;
-    if (channel.currentSegmentId) {
-      const current = await this.segmentRepo.findOne({
-        id: channel.currentSegmentId,
+    // Rule A-3: Public vs Private Access Control
+    if (existing.visibility === 'private') {
+      if (!user) {
+        throw new UnauthorizedException('Unauthorized');
+      }
+      if (user.id !== existing.ownerId && user.role !== 'admin') {
+        throw new ForbiddenException('Forbidden');
+      }
+    }
+
+    // Cold Start & Emergency filler: if channel queue is empty, insert instant pre-recorded filler (takes ~2ms),
+    // and fire background bufferAhead asynchronously (NEVER blocks the HTTP request path!)
+    const segmentCount = await this.segmentRepo.count({ channel: channelId });
+    if (segmentCount === 0) {
+      await this.queueService.ensureInstantFiller(channelId, 6);
+      this.queueService.bufferAhead(channelId).catch((err) => {
+        this.logger.warn(
+          { channelId, err: err instanceof Error ? err.message : String(err) },
+          'Background bufferAhead failed on cold start',
+        );
       });
-      if (current) {
-        segment = await this.segmentRepo.findOne(
-          { channel: channelId, playOrder: { $gt: current.playOrder } },
+    }
+
+    let needsReplenishment = false;
+
+    const manifest = await this.em.transactional(async (em) => {
+      const channel = await em.findOne(
+        ChannelSchema,
+        { id: channelId },
+        { lockMode: LockMode.PESSIMISTIC_WRITE },
+      );
+      if (!channel) {
+        throw new NotFoundException('Channel not found');
+      }
+
+      const now = new Date();
+
+      // Cold Start playhead anchoring
+      if (!channel.currentSegmentId || !channel.playheadStartedAt) {
+        const firstSegment = await this.segmentRepo.findOne(
+          { channel: channelId },
           { orderBy: { playOrder: 'ASC' } },
         );
+        if (firstSegment) {
+          channel.currentSegmentId = firstSegment.id;
+          channel.currentPlayOrder = firstSegment.playOrder;
+          channel.playheadStartedAt = now;
+          channel.lastActiveAt = now;
+        }
       }
-    } else {
-      // First track for brand-new channel
-      segment = await this.segmentRepo.findOne(
-        { channel: channelId },
-        { orderBy: { playOrder: 'ASC' } },
-      );
-    }
 
-    // 2. Queue Exhausted / Empty Fallback
-    if (!segment) {
-      process.stderr.write(
-        `[PlaybackService] Queue empty for ${channelId}, calling bufferAhead...\n`,
-      );
-      this.logger.info(
-        { channelId, reason: 'empty-queue' },
-        'bufferAhead triggered',
-      );
-      await this.queueService.bufferAhead(channelId);
-      process.stderr.write(
-        `[PlaybackService] bufferAhead finished for ${channelId}\n`,
-      );
-      segment = await this.segmentRepo.findOne(
-        { channel: channelId },
-        { orderBy: { playOrder: 'ASC' } },
-      );
-    }
+      if (!channel.playheadStartedAt) {
+        channel.playheadStartedAt = now;
+      }
 
-    if (!segment) {
-      const jingle = await this.mediaService.getRandomJingle();
-      return {
-        segmentId: 'fallback-jingle',
-        type: 'jingle',
-        filePath: jingle.filePath,
-        durationSeconds: jingle.durationSeconds,
-        title: 'Station ID',
-        artist: 'Social Radio',
-      };
-    }
+      // Idle Freeze Detection (Invariants I-2 & I-5)
+      const rawTimeout = process.env.IDLE_TIMEOUT_SECONDS;
+      const parsedTimeout = rawTimeout ? parseFloat(rawTimeout) : NaN;
+      const idleTimeoutSeconds = Number.isFinite(parsedTimeout)
+        ? parsedTimeout
+        : 600;
 
-    // 3. Update Channel Playhead State
-    channel.currentSegmentId = segment.id;
-    await this.em.flush();
+      const lastActive = channel.lastActiveAt ?? now;
+      const quietSeconds = (now.getTime() - lastActive.getTime()) / 1000;
 
-    // 4. Trigger Low Runway Replenishment
-    const remainingCount = await this.segmentRepo.count({
-      channel: channelId,
-      playOrder: { $gt: segment.playOrder },
+      if (quietSeconds > idleTimeoutSeconds) {
+        const elapsedBeforeFreeze =
+          lastActive.getTime() +
+          idleTimeoutSeconds * 1000 -
+          channel.playheadStartedAt.getTime();
+        channel.playheadStartedAt = new Date(
+          now.getTime() - Math.max(0, elapsedBeforeFreeze),
+        );
+      }
+      channel.lastActiveAt = now;
+
+      // Active Playhead Time Advancement
+      let currentSegment: Segment | null = null;
+      if (channel.currentSegmentId) {
+        currentSegment = await this.segmentRepo.findOne({
+          id: channel.currentSegmentId,
+        });
+        if (currentSegment && currentSegment.playOrder !== channel.currentPlayOrder) {
+          channel.currentPlayOrder = currentSegment.playOrder;
+        }
+      }
+
+      // Orphaned playhead recovery: if currentSegmentId is invalid/deleted,
+      // recover strictly starting from channel.currentPlayOrder onwards (ASC order).
+      // This prevents rewinding into historical segments (< currentPlayOrder)
+      // and prevents skipping ahead into future buffer runway.
+      if (!currentSegment) {
+        const minOrder = channel.currentPlayOrder ?? 1;
+        currentSegment = await this.segmentRepo.findOne(
+          { channel: channelId, playOrder: { $gte: minOrder } },
+          { orderBy: { playOrder: 'ASC' } },
+        );
+        if (!currentSegment) {
+          currentSegment = await this.segmentRepo.findOne(
+            { channel: channelId },
+            { orderBy: { playOrder: 'DESC' } },
+          );
+        }
+        if (currentSegment) {
+          channel.currentSegmentId = currentSegment.id;
+          channel.currentPlayOrder = currentSegment.playOrder;
+          channel.playheadStartedAt = now;
+        }
+      }
+
+      if (currentSegment) {
+        while (currentSegment) {
+          const duration = currentSegment.durationSeconds || 10;
+          const elapsed =
+            (now.getTime() - channel.playheadStartedAt.getTime()) / 1000;
+          if (elapsed >= duration) {
+            const nextSegment: Segment | null = await this.segmentRepo.findOne(
+              {
+                channel: channelId,
+                playOrder: { $gt: currentSegment.playOrder },
+              },
+              { orderBy: { playOrder: 'ASC' } },
+            );
+            if (!nextSegment) {
+              channel.playheadStartedAt = new Date(
+                now.getTime() - duration * 1000,
+              );
+              break;
+            }
+            channel.currentSegmentId = nextSegment.id;
+            channel.currentPlayOrder = nextSegment.playOrder;
+            channel.playheadStartedAt = new Date(
+              channel.playheadStartedAt.getTime() + duration * 1000,
+            );
+            currentSegment = nextSegment;
+          } else {
+            break;
+          }
+        }
+      }
+
+      if (currentSegment) {
+        const remainingCount = await this.segmentRepo.count({
+          channel: channelId,
+          playOrder: { $gt: currentSegment.playOrder },
+        });
+        if (remainingCount < 4) {
+          this.logger.info(
+            { channelId, reason: 'low-runway' },
+            'bufferAhead triggered',
+          );
+          needsReplenishment = true;
+        }
+
+        await this.pruneConsumed(channelId, currentSegment.playOrder);
+      } else {
+        needsReplenishment = true;
+      }
+
+      let windowSegments = currentSegment
+        ? await this.segmentRepo.find(
+            {
+              channel: channelId,
+              playOrder: { $gte: currentSegment.playOrder },
+            },
+            {
+              orderBy: { playOrder: 'ASC' },
+              limit: 6,
+            },
+          )
+        : [];
+
+      if (windowSegments.length === 0) {
+        await this.queueService.ensureInstantFiller(channelId, 6);
+        const minOrder = channel.currentPlayOrder ?? 1;
+        windowSegments = await this.segmentRepo.find(
+          { channel: channelId, playOrder: { $gte: minOrder } },
+          { orderBy: { playOrder: 'ASC' }, limit: 6 },
+        );
+        if (windowSegments.length === 0) {
+          windowSegments = await this.segmentRepo.find(
+            { channel: channelId },
+            { orderBy: { playOrder: 'ASC' }, limit: 6 },
+          );
+        }
+        if (!currentSegment && windowSegments.length > 0) {
+          currentSegment = windowSegments[0];
+          channel.currentSegmentId = currentSegment.id;
+          channel.currentPlayOrder = currentSegment.playOrder;
+          channel.playheadStartedAt = now;
+        }
+      }
+
+      await em.flush();
+
+      let prevType: string | null = null;
+      const hlsSegments = windowSegments
+        .filter((s) => Boolean(s.audioUrl))
+        .map((s, idx) => {
+          const currentType = s.type;
+          const isDiscontinuity =
+            idx > 0 && prevType !== null && prevType !== currentType;
+          prevType = currentType;
+          return {
+            durationSeconds: s.durationSeconds || 10,
+            url: this.resolveAudioUrl(s.audioUrl),
+            discontinuity: isDiscontinuity,
+          };
+        });
+
+      return generateHlsManifest({
+        mediaSequence: currentSegment?.playOrder ?? channel.currentPlayOrder ?? 0,
+        segments: hlsSegments,
+      });
     });
-    if (remainingCount < 4) {
-      this.logger.info(
-        { channelId, reason: 'low-runway' },
-        'bufferAhead triggered',
-      );
-      this.queueService.bufferAhead(channelId).catch(() => {});
-    }
 
-    // 5. Prune Consumed Segments
-    await this.pruneConsumed(channelId, segment.playOrder);
+    if (needsReplenishment) {
+      this.queueService.bufferAhead(channelId).catch((err) => {
+        this.logger.warn(
+          { channelId, err: err instanceof Error ? err.message : String(err) },
+          'Background bufferAhead replenishment failed',
+        );
+      });
+    }
 
     return {
-      segmentId: segment.id,
-      type: this.getSegmentType(segment),
-      filePath: segment.audioUrl || '',
-      durationSeconds: segment.durationSeconds || 0,
-      title: (segment as MusicSegment).title,
-      artist: (segment as MusicSegment).artist,
+      manifest,
+      visibility: existing.visibility as 'public' | 'private',
     };
+  }
+
+  private resolveAudioUrl(urlOrKey: string | null): string {
+    if (!urlOrKey) return '';
+    if (urlOrKey.startsWith('http://') || urlOrKey.startsWith('https://')) {
+      return urlOrKey;
+    }
+    return this.storageService.getPublicUrl(urlOrKey);
   }
 
   private async pruneConsumed(
@@ -138,13 +293,5 @@ export class PlaybackService {
       channel: channelId,
       playOrder: { $lt: cutoffPlayOrder },
     });
-  }
-
-  private getSegmentType(segment: Segment): 'talk' | 'music' | 'ad' | 'jingle' {
-    if (segment instanceof TalkSegment) return 'talk';
-    if (segment instanceof MusicSegment) return 'music';
-    if (segment instanceof AdSegment) return 'ad';
-    if (segment instanceof JingleSegment) return 'jingle';
-    return 'music';
   }
 }

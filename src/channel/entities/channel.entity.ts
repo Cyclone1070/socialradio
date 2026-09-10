@@ -15,6 +15,9 @@ export class Channel {
   visibility: 'public' | 'private' = 'public';
   ownerId: string | null = null;
   currentSegmentId: string | null = null;
+  currentPlayOrder: number | null = null;
+  playheadStartedAt: Date | null = null;
+  lastActiveAt: Date | null = null;
   subreddits = new Collection<SubredditRef>(this);
   completedPosts = new Collection<PostRef>(this);
   createdAt: Date = new Date();

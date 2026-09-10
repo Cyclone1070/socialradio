@@ -6,17 +6,20 @@ import {
   Body,
   Param,
   Req,
+  Res,
   UseGuards,
+  Header,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import * as express from 'express';
 import { ChannelService } from './channel.service';
-import { PlaybackService, NextTrackData } from './playback.service';
+import { PlaybackService } from './playback.service';
 import { InternalAuthGuard } from './internal-auth.guard';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { SubscribeSubredditDto } from './dto/subscribe-subreddit.dto';
 import { ChannelResponseDto } from './dto/channel-response.dto';
 import { SubredditRef } from './entities/channel.entity';
+import { OptionalJwtAuthGuard } from './optional-jwt-auth.guard';
 
 @Controller('channels')
 export class ChannelController {
@@ -72,9 +75,25 @@ export class ChannelController {
     await this.channelService.unsubscribeFromSubreddit(id, subName);
   }
 
-  @Get(':id/next-track')
-  @UseGuards(InternalAuthGuard)
-  async getNextTrack(@Param('id') id: string): Promise<NextTrackData> {
-    return await this.playbackService.getNextTrack(id);
+  @Get(':id/live.m3u8')
+  @UseGuards(OptionalJwtAuthGuard)
+  @Header('Content-Type', 'application/vnd.apple.mpegurl')
+  async getLiveManifest(
+    @Param('id') id: string,
+    @Req()
+    req: express.Request & { user?: { id: string; role?: string } | null },
+    @Res({ passthrough: true })
+    res: express.Response,
+  ): Promise<string> {
+    const { manifest, visibility } = await this.playbackService.getLiveManifest(
+      id,
+      req?.user ?? null,
+    );
+    if (visibility === 'private') {
+      res.setHeader('Cache-Control', 'private, no-store');
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=2, s-maxage=2');
+    }
+    return manifest;
   }
 }

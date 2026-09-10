@@ -30,7 +30,7 @@ No email, no name, no expiry surface beyond the token's own — headers stay sma
 
 | Namespace | Rule |
 |---|---|
-| Public | `GET /healthcheck` |
-| Authenticated | login, `/users/me`, `/channels`, `/channels/:id/subreddits` |
+| Public | `GET /healthcheck`, `GET /channels/:id/live.m3u8` (for public channels) |
+| Authenticated | login, `/users/me`, `/channels`, `/channels/:id/subreddits`, `GET /channels/:id/live.m3u8` (for private channels) |
 | Admin | `/admin/feeds/*`, `/admin/channels/:id/topics` |
-| Internal | `/channels/active`, `/channels/:id/next-track` (`X-Internal-Token`) |
+| Internal | `/channels/active` (`X-Internal-Token`) |

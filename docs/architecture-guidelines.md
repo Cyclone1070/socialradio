@@ -27,15 +27,16 @@ This document provides decision rules for file placement, code organization, str
    - **Rule 6: Single Entity Table Ownership**: Every database table/entity is owned exclusively by a single domain slice.
    - **Rule 7: Route Domain Ownership**: Controllers only declare routes belonging to their owning domain slice.
 
-4. **Live Audio Streaming Architecture (Icecast + Liquidsoap)**
-   - Continuous 128 kbps MP3 stream served to listeners via Icecast mount `/channels/:channelId.mp3` on port 8000.
-   - Source generation powered by Liquidsoap sidecar dynamically polling `GET /channels/:channelId/next-track`.
-   - **Listener-Aware 10-Minute Idle Timeout**: Liquidsoap tracks Icecast listener count. With 0 listeners for > 10 minutes, Liquidsoap pauses stream polling and cuts to blank standby (pausing background LLM/TTS generation). When a listener connects, stream resumes seamlessly from where the playhead was left off.
-   - **Low Runway Replenishment**: When fewer than 4 segments remain in queue, background `bufferAhead` fills the runway.
-   - **Zero 10s Chunking**: Flat-rate stream eliminates HLS manifest slicing and CDN egress multiplication.
+4. **Live Audio Streaming Architecture (Native HLS & Lazy Virtual Clock)**
+   - RFC 8216-compliant HLS playlists served dynamically via `GET /channels/:channelId/live.m3u8`.
+   - Scale-to-zero compute: Segment playhead advances on-demand via a lazy-evaluated virtual clock engine during manifest requests.
+   - **CDN-Native Edge Caching**: Manifests are tagged with `Cache-Control: public, max-age=2, s-maxage=2`, collapsing concurrent listener requests at the edge. NestJS origin poll rate is strictly capped at $\le 0.5$ req/s per active channel.
+   - **Idle Freeze & Wakeup**: Channels with no manifest requests for $> 10$ minutes freeze their playhead state cleanly, pausing background AI script synthesis and TTS generation until a listener returns.
+   - **Low Runway Replenishment**: When fewer than 4 segments remain ahead in queue, `bufferAhead` asynchronously fills the runway.
+   - Static audio chunks (`.mp3`) are served directly from MinIO/S3 object storage with immutable cache headers (`Cache-Control: public, max-age=31536000, immutable`).
 
 5. **Sidecar Placement & Docker Orchestration**
-   - Independent background sidecars live at the repository root (e.g. `liquidsoap/`, `reddit-fetcher/`).
+   - Independent background sidecars live at the repository root (e.g. `reddit-fetcher/`).
    - Container orchestration is centralized exclusively in [`deployment/docker/docker-compose.yml`](../deployment/docker/docker-compose.yml).
 
 ---

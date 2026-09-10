@@ -163,11 +163,15 @@ export class QueueService {
           status: 'ready',
           script: scriptObj.turns,
         });
-        await this.em.persist(talkItem).flush();
+        const nextOrder = await this.persistSegmentWithOrderRetry(
+          talkItem,
+          channelId,
+          playOrder,
+        );
         process.stderr.write(
           `[QueueService] TalkSegment persisted successfully with status 'ready'!\n`,
         );
-        return playOrder + 1;
+        return nextOrder;
       } catch (err) {
         process.stderr.write(
           `[QueueService] voice generation failed: ${err instanceof Error ? err.stack || err.message : String(err)}\n`,
@@ -209,6 +213,85 @@ export class QueueService {
     return { voiceTrack, scriptObj };
   }
 
+  private async persistSegmentWithOrderRetry(
+    item: Segment,
+    channelId: string,
+    playOrder: number,
+  ): Promise<number> {
+    try {
+      await this.em.persist(item).flush();
+      return playOrder + 1;
+    } catch (err: unknown) {
+      const errStr = String(err);
+      if (
+        (typeof err === 'object' &&
+          err !== null &&
+          'code' in err &&
+          (err as { code: string }).code === '23505') ||
+        errStr.includes('unique constraint') ||
+        errStr.includes('duplicate key')
+      ) {
+        this.logger.warn(
+          { channelId, playOrder },
+          'playOrder collision detected, advancing to latest order',
+        );
+        const latest = await this.segmentRepo.findOne(
+          { channel: channelId },
+          { orderBy: { playOrder: 'DESC' } },
+        );
+        item.playOrder = (latest?.playOrder ?? playOrder) + 1;
+        await this.em.persist(item).flush();
+        return item.playOrder + 1;
+      }
+      throw err;
+    }
+  }
+
+  public async ensureInstantFiller(
+    channelId: string,
+    minCount: number = 6,
+  ): Promise<void> {
+    const existingCount = await this.segmentRepo.count({
+      channel: channelId,
+    });
+    if (existingCount >= minCount) {
+      return;
+    }
+
+    const lastItem = await this.segmentRepo.findOne(
+      { channel: channelId },
+      { orderBy: { playOrder: 'DESC' } },
+    );
+    let nextPlayOrder = lastItem ? lastItem.playOrder + 1 : 1;
+
+    const needed = minCount - existingCount;
+    for (let i = 0; i < needed; i++) {
+      try {
+        if (i % 3 === 0) {
+          nextPlayOrder = await this.appendJingle(channelId, nextPlayOrder);
+        } else if (i % 3 === 1) {
+          nextPlayOrder = await this.appendAd(channelId, nextPlayOrder);
+        } else {
+          nextPlayOrder = await this.appendMusic(channelId, nextPlayOrder);
+        }
+      } catch (err) {
+        // Fallback: create emergency static jingle segment if media pool is unavailable
+        const fallbackItem = Object.assign(new JingleSegment(), {
+          channel: this.em.getReference(Channel, channelId),
+          channelId,
+          playOrder: nextPlayOrder,
+          audioUrl: 'jingles/station-id.mp3',
+          durationSeconds: 10,
+        });
+        nextPlayOrder = await this.persistSegmentWithOrderRetry(
+          fallbackItem,
+          channelId,
+          nextPlayOrder,
+        );
+      }
+    }
+  }
+
   private async appendFiller(
     channelId: string,
     playOrder: number,
@@ -230,8 +313,11 @@ export class QueueService {
       title: music.title,
       artist: music.artist,
     });
-    await this.em.persist(musicItem).flush();
-    return playOrder + 1;
+    return await this.persistSegmentWithOrderRetry(
+      musicItem,
+      channelId,
+      playOrder,
+    );
   }
 
   private async appendAd(
@@ -246,8 +332,11 @@ export class QueueService {
       audioUrl: ad.filePath,
       durationSeconds: ad.durationSeconds,
     });
-    await this.em.persist(adItem).flush();
-    return playOrder + 1;
+    return await this.persistSegmentWithOrderRetry(
+      adItem,
+      channelId,
+      playOrder,
+    );
   }
 
   private async appendJingle(
@@ -262,8 +351,11 @@ export class QueueService {
       audioUrl: jingle.filePath,
       durationSeconds: jingle.durationSeconds,
     });
-    await this.em.persist(jingleItem).flush();
-    return playOrder + 1;
+    return await this.persistSegmentWithOrderRetry(
+      jingleItem,
+      channelId,
+      playOrder,
+    );
   }
 
   public async findPendingTopicSegment(

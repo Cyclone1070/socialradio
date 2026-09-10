@@ -19,6 +19,7 @@ import { MediaModule } from '../media/media.module';
 import { ContentModule } from '../content/content.module';
 import { ScriptModule } from '../script/script.module';
 import { VoiceModule } from '../voice/voice.module';
+import { StorageModule } from '../infrastructure/storage/storage.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { VoiceModule } from '../voice/voice.module';
     ContentModule,
     ScriptModule,
     VoiceModule,
+    StorageModule,
   ],
   controllers: [ChannelController, AdminChannelController],
   providers: [ChannelService, PlaybackService, QueueService],

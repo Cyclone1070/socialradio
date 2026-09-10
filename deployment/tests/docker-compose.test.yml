@@ -26,14 +26,6 @@ services:
     depends_on:
       app:
         condition: service_healthy
-      icecast:
-        condition: service_started
-      liquidsoap:
-        condition: service_started
-
-  liquidsoap:
-    environment:
-      IDLE_TIMEOUT_SECONDS: "3.0"
 
 networks:
   external_test_net:

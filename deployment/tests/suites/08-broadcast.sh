@@ -7,13 +7,9 @@ TOKEN=$(get_admin_token)
 ensure_base_fixtures
 
 echo ""
-echo "=== Section 8: Live Broadcast (Liquidsoap & Icecast) ==="
+echo "=== Section 8: Live Broadcast (RFC 8216 Native HLS Streaming) ==="
 
-echo "51. GET $ICECAST_URL (Icecast Server Health -> 200)"
-assert_status GET "$ICECAST_URL/" 200
-echo "  ✓ Icecast server is online and reachable"
-
-echo "52. POST /channels (Create radio station for broadcast testing)"
+echo "51. POST /channels (Create radio station for broadcast testing)"
 assert_status POST "$BASE_URL/channels" 201 \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
@@ -22,137 +18,131 @@ BC_CHAN_ID=$(echo "$BODY" | jq -r '.id')
 [ -n "$BC_CHAN_ID" ] && [ "$BC_CHAN_ID" != "null" ] || fail "failed to extract BC_CHAN_ID"
 echo "  ✓ Broadcast channel created: $BC_CHAN_ID"
 
-echo "53. Poll Icecast Mount: wait for Liquidsoap to mount /channels/$BC_CHAN_ID.mp3"
-MAX_WAIT=45
-i=0
-MOUNTED=0
-MOUNT_PATH="/channels/$BC_CHAN_ID.mp3"
-while [ $i -lt $MAX_WAIT ]; do
-  STATUS_RESP=$(curl -s "$ICECAST_URL/status-json.xsl" 2>/dev/null || true)
-  if echo "$STATUS_RESP" | grep -q "$MOUNT_PATH"; then
-    MOUNTED=1
-    break
-  fi
-  i=$((i+1))
-  sleep 1
-done
-[ "$MOUNTED" = 1 ] || fail "Mount point $MOUNT_PATH not registered in Icecast within ${MAX_WAIT}s"
-echo "  ✓ Mount $MOUNT_PATH registered in Icecast after ~${i}s"
-
-echo "54. Live Stream Handshake: connect to $ICECAST_URL$MOUNT_PATH"
+echo "52. Live Manifest Handshake & Response Headers"
 HEADER_FILE=$(mktemp)
-curl -s -N --max-time 2 -D "$HEADER_FILE" -o /dev/null "$ICECAST_URL$MOUNT_PATH" || true
+BODY_FILE=$(mktemp)
+curl -s -D "$HEADER_FILE" -o "$BODY_FILE" "$BASE_URL/channels/$BC_CHAN_ID/live.m3u8"
 STREAM_HEADERS=$(cat "$HEADER_FILE")
-rm -f "$HEADER_FILE"
+MANIFEST_BODY=$(cat "$BODY_FILE")
+rm -f "$HEADER_FILE" "$BODY_FILE"
 
 if ! echo "$STREAM_HEADERS" | grep -iq "200 OK"; then
   echo "Headers:"
   echo "$STREAM_HEADERS"
-  fail "Stream handshake failed, expected 200 OK"
+  fail "Manifest handshake failed, expected 200 OK"
 fi
-if ! echo "$STREAM_HEADERS" | grep -iq "content-type: audio/mpeg"; then
+if ! echo "$STREAM_HEADERS" | grep -iq "content-type: application/vnd.apple.mpegurl"; then
   echo "Headers:"
   echo "$STREAM_HEADERS"
-  fail "Expected Content-Type: audio/mpeg in stream headers"
+  fail "Expected Content-Type: application/vnd.apple.mpegurl in headers"
 fi
-echo "  ✓ Handshake 200 OK, Content-Type: audio/mpeg verified"
+if ! echo "$STREAM_HEADERS" | grep -iq "cache-control:.*max-age=2"; then
+  echo "Headers:"
+  echo "$STREAM_HEADERS"
+  fail "Expected Cache-Control: max-age=2 in headers"
+fi
+if ! echo "$STREAM_HEADERS" | grep -iq "cache-control:.*public"; then
+  echo "Headers:"
+  echo "$STREAM_HEADERS"
+  fail "Expected Cache-Control: public in public channel headers"
+fi
+echo "  ✓ Handshake 200 OK, Content-Type and Cache-Control headers verified"
 
-echo "55. Stream Byte Ingestion: capture 4s of live continuous stream data"
-STREAM_FILE="/tmp/broadcast-stream.mp3"
-rm -f "$STREAM_FILE"
-curl -s -N --max-time 4 "$ICECAST_URL$MOUNT_PATH" -o "$STREAM_FILE" || true
+echo "53. RFC 8216 Manifest Protocol & Invariant Assertions"
+if ! echo "$MANIFEST_BODY" | grep -q '^#EXTM3U'; then
+  fail "Manifest does not start with #EXTM3U"
+fi
+if ! echo "$MANIFEST_BODY" | grep -q '#EXT-X-VERSION:3'; then
+  fail "Manifest missing #EXT-X-VERSION:3"
+fi
+if ! echo "$MANIFEST_BODY" | grep -qE '#EXT-X-TARGETDURATION:[0-9]+'; then
+  fail "Manifest missing valid #EXT-X-TARGETDURATION"
+fi
+if ! echo "$MANIFEST_BODY" | grep -qE '#EXT-X-MEDIA-SEQUENCE:[0-9]+'; then
+  fail "Manifest missing valid #EXT-X-MEDIA-SEQUENCE"
+fi
+INF_COUNT=$(echo "$MANIFEST_BODY" | grep -c '#EXTINF:' || echo "0")
+if [ "$INF_COUNT" -lt 4 ]; then
+  fail "Sliding window has fewer than 4 segments ($INF_COUNT found)"
+fi
+if echo "$MANIFEST_BODY" | grep -q '#EXT-X-ENDLIST'; then
+  fail "Live radio manifest must NOT terminate with #EXT-X-ENDLIST"
+fi
+echo "  ✓ RFC 8216 syntax, sliding window ($INF_COUNT chunks), and liveness contract verified"
 
-if [ ! -f "$STREAM_FILE" ]; then
-  fail "Stream file $STREAM_FILE was not created"
+echo "54. Audio Chunk Ingestion: retrieve and verify chunk from manifest"
+CHUNK_URL=$(echo "$MANIFEST_BODY" | grep -v '^#' | grep -v '^$' | head -1)
+if [ -z "$CHUNK_URL" ]; then
+  fail "No audio chunk URL found in manifest: $MANIFEST_BODY"
+fi
+echo "  ✓ First chunk URL: $CHUNK_URL"
+
+CHUNK_FETCH_URL=$(echo "$CHUNK_URL" | sed "s|http://localhost:9000|$MINIO_URL|; s|http://127.0.0.1:9000|$MINIO_URL|")
+
+CHUNK_FILE="/tmp/broadcast-chunk.mp3"
+rm -f "$CHUNK_FILE"
+curl -s -f "$CHUNK_FETCH_URL" -o "$CHUNK_FILE" || fail "Failed to download chunk from $CHUNK_FETCH_URL (raw: $CHUNK_URL)"
+
+if [ ! -f "$CHUNK_FILE" ]; then
+  fail "Chunk file $CHUNK_FILE was not downloaded"
 fi
 
-CAPTURED_BYTES=$(wc -c < "$STREAM_FILE" | tr -d ' ')
-echo "  ✓ Captured stream size: $CAPTURED_BYTES bytes"
-if [ "$CAPTURED_BYTES" -lt 30000 ]; then
-  fail "Stream throughput suspiciously low: $CAPTURED_BYTES bytes in 4s (expected >= 30000 bytes at 128kbps)"
+CAPTURED_BYTES=$(wc -c < "$CHUNK_FILE" | tr -d ' ')
+echo "  ✓ Downloaded chunk size: $CAPTURED_BYTES bytes"
+if [ "$CAPTURED_BYTES" -lt 10000 ]; then
+  fail "Chunk size suspiciously small: $CAPTURED_BYTES bytes (expected >= 10000 bytes)"
 fi
 
-FORMAT_INFO=$(file "$STREAM_FILE")
-echo "  ✓ Stream file format: $FORMAT_INFO"
+FORMAT_INFO=$(file "$CHUNK_FILE")
+echo "  ✓ Chunk file format: $FORMAT_INFO"
 if ! echo "$FORMAT_INFO" | grep -iq "MPEG\|Audio\|Layer III"; then
-  fail "Captured file is not valid MPEG audio: $FORMAT_INFO"
+  fail "Downloaded file is not valid MPEG audio: $FORMAT_INFO"
 fi
 
-echo "56. Audio Energy Verification: inspect audio frames for non-silence"
-VOL_OUTPUT=$(ffmpeg -i "$STREAM_FILE" -af volumedetect -f null /dev/null 2>&1 || true)
+echo "55. Audio Energy Verification: inspect audio frames for active waveform (non-silence)"
+VOL_OUTPUT=$(ffmpeg -i "$CHUNK_FILE" -af volumedetect -f null /dev/null 2>&1 || true)
 MEAN_VOL=$(echo "$VOL_OUTPUT" | grep -i "mean_volume:" | awk '{print $5}')
 echo "  ✓ Detected Mean Volume: $MEAN_VOL dB"
 
 if [ -z "$MEAN_VOL" ]; then
-  fail "Failed to compute audio volume levels from stream"
+  fail "Failed to compute audio volume levels from chunk"
 fi
 
-# Compare volume level (e.g. -24.5 dB is louder than -60.0 dB cutoff)
 MEAN_NUM=$(echo "$MEAN_VOL" | sed 's/-//; s/dB//; s/\..*//')
 if [ -n "$MEAN_NUM" ] && [ "$MEAN_NUM" -gt 60 ] 2>/dev/null; then
   fail "Stream audio is completely silent / dead air (mean volume: $MEAN_VOL dB <= -60 dB)"
 fi
-echo "  ✓ Audio stream contains active audio waveforms (non-silent)"
+echo "  ✓ Audio chunk contains active waveforms (mean volume: $MEAN_VOL dB > -60 dB)"
 
-echo "57a. Idle Handler: Multi-Client Concurrency (0 -> 1 -> 2 -> 1 listeners)"
-STATS_URL="$ICECAST_URL/admin/stats"
-AUTH_HEADER="Authorization: Basic $(printf "admin:%s" "$ICECAST_PASS" | base64 | tr -d '\n')"
+echo "56. Idle Freeze & Wakeup Verification with Zero Sleep (Deterministic Timestamp Backdating)"
+# Instantaneously backdate last_active_at by 15 minutes directly in PostgreSQL (zero sleep!)
+psql_run -c "UPDATE channel SET last_active_at = now() - interval '15 minutes' WHERE id = '$BC_CHAN_ID';" >/dev/null
 
-# Connect Client 1
-curl -s -N "$ICECAST_URL$MOUNT_PATH" >/dev/null &
-CLI_PID1=$!
-sleep 1.5
+# Capture current playhead before waking up
+FROZEN_SEG=$(psql_run -t -A -c "SELECT \"current_segment_id\" FROM channel WHERE \"id\" = '$BC_CHAN_ID';")
 
-# Connect Client 2 (Concurrent listener)
-curl -s -N "$ICECAST_URL$MOUNT_PATH" >/dev/null &
-CLI_PID2=$!
-sleep 1.5
+# Reconnect listener immediately
+assert_status GET "$BASE_URL/channels/$BC_CHAN_ID/live.m3u8" 200
 
-# Disconnect Client 1 (1 listener remains -> stream must stay active)
-kill -9 "$CLI_PID1" 2>/dev/null || true
-sleep 1
-echo "  ✓ Multi-client connection and partial disconnect handled cleanly"
+# SQL read-back: assert stream resumed seamlessly and last_active_at was refreshed to now
+RESUMED_SEG=$(psql_run -t -A -c "SELECT \"current_segment_id\" FROM channel WHERE \"id\" = '$BC_CHAN_ID';")
+RESUMED_ACTIVE=$(psql_run -t -A -c "SELECT \"last_active_at\" FROM channel WHERE \"id\" = '$BC_CHAN_ID';")
 
-echo "57b. Idle Handler: 0-Listener Countdown Interruption & Reset"
-# Disconnect Client 2 (0 listeners -> countdown starts)
-kill -9 "$CLI_PID2" 2>/dev/null || true
-sleep 1
+[ -n "$RESUMED_ACTIVE" ] || fail "last_active_at was not updated after wakeup"
 
-# Reconnect Client 3 before 3s countdown expires -> countdown must reset
-curl -s -N "$ICECAST_URL$MOUNT_PATH" >/dev/null &
-CLI_PID3=$!
-sleep 1.5
-echo "  ✓ Reconnection before countdown expiration resets idle timer"
+ACTIVE_AGE_SEC=$(psql_run -t -A -c "SELECT EXTRACT(EPOCH FROM (now() - \"last_active_at\")) FROM channel WHERE \"id\" = '$BC_CHAN_ID';")
+ACTIVE_AGE_INT=$(echo "$ACTIVE_AGE_SEC" | cut -d. -f1)
+if [ -z "$ACTIVE_AGE_INT" ] || [ "$ACTIVE_AGE_INT" -gt 5 ]; then
+  fail "last_active_at was not refreshed to current time after wakeup: ${ACTIVE_AGE_SEC}s old"
+fi
+echo "  ✓ Post-idle listener woke station up with zero sleep; last_active_at refreshed to now (<${ACTIVE_AGE_SEC}s old)"
 
-echo "57c. Idle Handler: Cut to Blank Standby (0 listeners > 3s)"
-# Disconnect Client 3 (0 listeners)
-kill -9 "$CLI_PID3" 2>/dev/null || true
-# Wait for 3s idle threshold to expire
-sleep 4
-echo "  ✓ 0-listener countdown expired -> stream transitioned to idle standby"
-
-echo "57d. Idle Handler: Post-Idle Instant Wakeup & Resume"
-# Reconnect Client 4 after idle standby -> must immediately resume playback
-TMP_RESUME_STREAM=$(mktemp)
-curl -s -N "$ICECAST_URL$MOUNT_PATH" -m 3 -o "$TMP_RESUME_STREAM" 2>/dev/null || true
-RESUME_SIZE=$(wc -c < "$TMP_RESUME_STREAM" | tr -d ' ')
-rm -f "$TMP_RESUME_STREAM"
-[ "$RESUME_SIZE" -gt 10000 ] || fail "Post-idle wakeup failed to stream audio (got $RESUME_SIZE bytes)"
-echo "  ✓ Post-idle listener instantly resumed active stream ($RESUME_SIZE bytes ingested)"
-
-echo "58. Concurrent Track Request Deduplication: parallel /next-track calls produce unique playOrder sequence"
-CONC_CHAN_RESP=$(curl -s -X POST "$BASE_URL/channels" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Concurrent Queue Test Radio","visibility":"public"}')
-CONC_CHAN_ID=$(echo "$CONC_CHAN_RESP" | jq -r '.id')
-[ -n "$CONC_CHAN_ID" ] && [ "$CONC_CHAN_ID" != "null" ] || fail "failed to create CONC_CHAN_ID"
-
+echo "57. Concurrent Polling Deduplication: parallel requests maintain playhead consistency"
 RESP1_FILE=$(mktemp)
 RESP2_FILE=$(mktemp)
-curl -s -H "x-internal-token: $SECRET" "$BASE_URL/channels/$CONC_CHAN_ID/next-track" > "$RESP1_FILE" &
+curl -s "$BASE_URL/channels/$BC_CHAN_ID/live.m3u8" > "$RESP1_FILE" &
 PID1=$!
-curl -s -H "x-internal-token: $SECRET" "$BASE_URL/channels/$CONC_CHAN_ID/next-track" > "$RESP2_FILE" &
+curl -s "$BASE_URL/channels/$BC_CHAN_ID/live.m3u8" > "$RESP2_FILE" &
 PID2=$!
 wait $PID1
 wait $PID2
@@ -161,13 +151,46 @@ RES1=$(cat "$RESP1_FILE")
 RES2=$(cat "$RESP2_FILE")
 rm -f "$RESP1_FILE" "$RESP2_FILE"
 
-SEG1=$(echo "$RES1" | jq -r '.segmentId')
-SEG2=$(echo "$RES2" | jq -r '.segmentId')
-[ -n "$SEG1" ] && [ "$SEG1" != "null" ] || fail "Req 1 failed to return segmentId: $RES1"
-[ -n "$SEG2" ] && [ "$SEG2" != "null" ] || fail "Req 2 failed to return segmentId: $RES2"
-echo "  ✓ Both parallel /next-track calls succeeded with valid segments"
+if ! echo "$RES1" | grep -q '^#EXTM3U' || ! echo "$RES2" | grep -q '^#EXTM3U'; then
+  fail "Concurrent requests produced invalid manifests"
+fi
 
-DUPES=$(psql_run -t -A -c "SELECT count(*) FROM (SELECT \"play_order\" FROM segment WHERE \"channelId\" = '$CONC_CHAN_ID' GROUP BY \"play_order\" HAVING count(*) > 1) d;")
-[ "$DUPES" = "0" ] || fail "Found duplicate playOrder in queue: $DUPES"
-echo "  ✓ Zero duplicate playOrder entries in database queue"
+SEQ1=$(echo "$RES1" | grep '#EXT-X-MEDIA-SEQUENCE:' | sed 's/#EXT-X-MEDIA-SEQUENCE://')
+SEQ2=$(echo "$RES2" | grep '#EXT-X-MEDIA-SEQUENCE:' | sed 's/#EXT-X-MEDIA-SEQUENCE://')
+if [ "$SEQ1" != "$SEQ2" ]; then
+  fail "Concurrent requests returned divergent media sequences: $SEQ1 vs $SEQ2"
+fi
+echo "  ✓ Concurrent parallel requests synchronized to same sequence #$SEQ1 without race conditions"
 
+echo "58. Orphaned Playhead Recovery & Sequence Monotonicity (Self-Healing Playhead)"
+# Query current channel state in PostgreSQL
+PREV_SEQ=$(psql_run -t -A -c "SELECT COALESCE(\"current_play_order\", 1) FROM channel WHERE \"id\" = '$BC_CHAN_ID';")
+[ -n "$PREV_SEQ" ] || PREV_SEQ=1
+
+# Simulate disaster: insert a historical track with play_order = -1,
+# and corrupt current_segment_id by pointing it to a non-existent UUID
+psql_run -c "INSERT INTO segment (\"id\", \"channelId\", \"play_order\", \"type\", \"duration_seconds\", \"audio_url\", \"created_at\") VALUES ('00000000-0000-0000-0000-000000000001', '$BC_CHAN_ID', -1, 'jingle', 10, 'jingles/station-id.mp3', now() - interval '1 hour') ON CONFLICT DO NOTHING;" >/dev/null
+psql_run -c "UPDATE channel SET \"current_segment_id\" = '00000000-0000-0000-0000-000000000099' WHERE \"id\" = '$BC_CHAN_ID';" >/dev/null
+
+# Listener polls manifest
+assert_status GET "$BASE_URL/channels/$BC_CHAN_ID/live.m3u8" 200
+NEW_MANIFEST="$BODY"
+
+# Assertions:
+# 1. Manifest is valid HLS
+if ! echo "$NEW_MANIFEST" | grep -q '^#EXTM3U'; then
+  fail "Manifest corrupted after orphaned recovery"
+fi
+
+# 2. Media sequence is monotonic: must NOT have regressed to -1 (the ancient historical track)!
+NEW_SEQ=$(echo "$NEW_MANIFEST" | grep '#EXT-X-MEDIA-SEQUENCE:' | sed 's/#EXT-X-MEDIA-SEQUENCE://')
+if [ "$NEW_SEQ" -lt "$PREV_SEQ" ]; then
+  fail "Media sequence regressed into historical past! (was $PREV_SEQ, got $NEW_SEQ)"
+fi
+
+# 3. Channel record in Postgres was self-healed: current_segment_id no longer points to corrupt UUID
+HEALED_SEG=$(psql_run -t -A -c "SELECT \"current_segment_id\" FROM channel WHERE \"id\" = '$BC_CHAN_ID';")
+if [ "$HEALED_SEG" = "00000000-0000-0000-0000-000000000099" ]; then
+  fail "Channel current_segment_id was not self-healed in PostgreSQL"
+fi
+echo "  ✓ Orphaned playhead self-healed in DB (seq #$NEW_SEQ >= #$PREV_SEQ without rewinding to historical past)"

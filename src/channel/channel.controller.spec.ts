@@ -21,7 +21,7 @@ describe('ChannelController', () => {
   };
 
   const mockPlaybackService = {
-    getNextTrack: jest.fn(),
+    getLiveManifest: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -144,20 +144,70 @@ describe('ChannelController', () => {
     });
   });
 
-  describe('getNextTrack', () => {
-    it('should return next track metadata from playback service', async () => {
-      const track = {
-        segmentId: 'seg-1',
-        type: 'song',
-        filePath: 'song.mp3',
-        durationSeconds: 180,
-      };
-      mockPlaybackService.getNextTrack.mockResolvedValue(track);
+  describe('getLiveManifest', () => {
+    describe('Cycle 4.1: Controller Route Binding', () => {
+      it('delegates to playbackService.getLiveManifest and sets public Cache-Control', async () => {
+        const manifest = '#EXTM3U\n#EXT-X-VERSION:3\n';
+        mockPlaybackService.getLiveManifest.mockResolvedValue({
+          manifest,
+          visibility: 'public',
+        });
 
-      const result = await controller.getNextTrack('chan-1');
+        const req = { user: null } as unknown as Request & {
+          user?: { id: string; role?: string } | null;
+        };
+        const res = { setHeader: jest.fn() } as unknown as Response;
+        const result = await controller.getLiveManifest('chan-1', req, res);
 
-      expect(mockPlaybackService.getNextTrack).toHaveBeenCalledWith('chan-1');
-      expect(result).toEqual(track);
+        expect(mockPlaybackService.getLiveManifest).toHaveBeenCalledWith(
+          'chan-1',
+          null,
+        );
+        expect(res.setHeader).toHaveBeenCalledWith(
+          'Cache-Control',
+          'public, max-age=2, s-maxage=2',
+        );
+        expect(result).toBe(manifest);
+      });
+
+      it('sets private, no-store Cache-Control for private channels (Security Invariant)', async () => {
+        const manifest = '#EXTM3U\n#EXT-X-VERSION:3\n';
+        mockPlaybackService.getLiveManifest.mockResolvedValue({
+          manifest,
+          visibility: 'private',
+        });
+
+        const req = { user: { id: 'user-1' } } as unknown as Request & {
+          user?: { id: string; role?: string } | null;
+        };
+        const res = { setHeader: jest.fn() } as unknown as Response;
+        const result = await controller.getLiveManifest('chan-priv', req, res);
+
+        expect(res.setHeader).toHaveBeenCalledWith(
+          'Cache-Control',
+          'private, no-store',
+        );
+        expect(result).toBe(manifest);
+      });
+    });
+
+    describe('Cycle 4.2: HLS Response Headers (Invariant HLS-6)', () => {
+      interface HeaderMeta {
+        name: string;
+        value: string;
+      }
+
+      it('sets Content-Type to application/vnd.apple.mpegurl', () => {
+        // eslint-disable-next-line @typescript-eslint/unbound-method
+        const targetMethod = ChannelController.prototype.getLiveManifest;
+        const headers = Reflect.getMetadata('__headers__', targetMethod) as
+          HeaderMeta[] | undefined;
+
+        const contentTypeHeader = headers?.find(
+          (h) => h.name === 'Content-Type',
+        );
+        expect(contentTypeHeader?.value).toBe('application/vnd.apple.mpegurl');
+      });
     });
   });
 

@@ -19,6 +19,9 @@ export const ChannelSchema = new EntitySchema<Channel>({
     visibility: { type: 'string', default: 'public' },
     ownerId: { type: 'string', nullable: true },
     currentSegmentId: { type: 'string', nullable: true },
+    currentPlayOrder: { type: 'integer', nullable: true },
+    playheadStartedAt: { type: 'Date', nullable: true },
+    lastActiveAt: { type: 'Date', nullable: true },
     createdAt: {
       type: 'Date',
       onCreate: () => new Date(),
@@ -65,9 +68,11 @@ export const SegmentSchema = new EntitySchema<Segment>({
       defaultRaw: 'now()',
     },
   },
+  uniques: [
+    { properties: ['channel', 'playOrder'] },
+  ],
   indexes: [
     { properties: ['channel'] },
-    { properties: ['channel', 'playOrder'] },
   ],
 });
 

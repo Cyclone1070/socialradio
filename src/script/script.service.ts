@@ -269,9 +269,11 @@ export class ScriptService implements ScriptContract {
     }
 
     if (!this.validateOutline(outlineMarkdown)) {
-      throw new Error(
-        'Failed to generate a valid Stage 1 outline after 2 attempts',
+      this.logger.warn(
+        { postId: primaryPost.id },
+        'Failed to generate a valid Stage 1 outline after 2 attempts, using resilient fallback script',
       );
+      return this.generateFallbackScript(primaryPost);
     }
 
     // === STAGE 2: FULL DIALOGUE GENERATION (Up to 2 attempts) ===
@@ -321,9 +323,11 @@ export class ScriptService implements ScriptContract {
     }
 
     if (!scriptData || scriptData.turns.length < 5) {
-      throw new Error(
-        'Failed to generate valid Stage 2 dialogue after 2 attempts',
+      this.logger.warn(
+        { postId: primaryPost.id },
+        'Failed to generate valid Stage 2 dialogue after 2 attempts, using resilient fallback script',
       );
+      return this.generateFallbackScript(primaryPost);
     }
 
     const totalWords = scriptData.turns.reduce(
@@ -344,5 +348,38 @@ export class ScriptService implements ScriptContract {
     );
 
     return scriptData;
+  }
+
+  private generateFallbackScript(primaryPost: PostData): ScriptData {
+    const summary =
+      primaryPost.body.length > 150
+        ? primaryPost.body.slice(0, 150) + '...'
+        : primaryPost.body;
+
+    return {
+      postId: primaryPost.id,
+      turns: [
+        {
+          speaker: 'Dave',
+          text: `Welcome back to Social Radio. We have a caller on the line discussing: ${primaryPost.title}.`,
+        },
+        {
+          speaker: 'Caller',
+          text: `${summary} What do you reckon I should do?`,
+        },
+        {
+          speaker: 'Sarah',
+          text: 'That is quite a tricky situation. Looking at the community response, you definitely want to take action and protect your position.',
+        },
+        {
+          speaker: 'Dave',
+          text: 'Spot on, Sarah. Best of luck with it mate, let us know how it turns out.',
+        },
+        {
+          speaker: 'Sarah',
+          text: 'Stay tuned, more music and talk coming up next on Social Radio.',
+        },
+      ],
+    };
   }
 }

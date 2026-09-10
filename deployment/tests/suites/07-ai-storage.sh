@@ -41,20 +41,31 @@ assert_status GET "$BASE_URL/channels/$AI_CHAN_ID/subreddits" 200 \
   -H "Authorization: Bearer $TOKEN"
 assert_jq '[.[] | select(.name == "ai_talk_fixture_sub_e2e")] | length == 1' 'ai_talk_fixture_sub_e2e in channel subreddits list'
 
-echo "49. GET /channels/$AI_CHAN_ID/next-track (Trigger bufferAhead -> Synthesizes live AI TalkSegment)"
+echo "49. GET /channels/$AI_CHAN_ID/live.m3u8 (Trigger bufferAhead -> Synthesizes live AI TalkSegment)"
 echo "  Calling OpenCode Zen LLM + Microsoft Edge Neural TTS (generating dialogue and audio)..."
-assert_status GET "$BASE_URL/channels/$AI_CHAN_ID/next-track" 200 \
-  -H "x-internal-token: $SECRET"
-assert_jq '.segmentId | type == "string" and length > 0' 'segmentId present in next-track response'
-assert_jq '.type == "talk"' 'response type is talk'
-assert_jq '.filePath | type == "string" and length > 0' 'filePath present in next-track response'
-assert_jq '.durationSeconds | type == "number" and . > 0' 'durationSeconds is positive'
-
-TALK_STATUS=$(psql_run -t -A -c "SELECT \"status\" FROM segment WHERE \"channelId\" = '$AI_CHAN_ID' AND \"type\" = 'talk' ORDER BY \"play_order\" ASC LIMIT 1;")
-if [ "$TALK_STATUS" != "ready" ]; then
-  fail "expected TalkSegment status 'ready', got '$TALK_STATUS'"
+assert_status GET "$BASE_URL/channels/$AI_CHAN_ID/live.m3u8" 200
+if ! echo "$BODY" | grep -q '^#EXTM3U'; then
+  fail "Manifest does not start with #EXTM3U: $BODY"
 fi
-echo "  ✓ TalkSegment status in DB is 'ready'"
+echo "  ✓ Cold start returned valid RFC 8216 live.m3u8 manifest immediately (non-blocking)"
+
+echo "  Waiting for background AI talk generation (LLM + Edge TTS)..."
+MAX_WAIT=60
+i=0
+TALK_STATUS=""
+while [ $i -lt $MAX_WAIT ]; do
+  TALK_STATUS=$(psql_run -t -A -c "SELECT \"status\" FROM segment WHERE \"channelId\" = '$AI_CHAN_ID' AND \"type\" = 'talk' ORDER BY \"play_order\" ASC LIMIT 1;" 2>/dev/null || echo "")
+  if [ "$TALK_STATUS" = "ready" ]; then
+    break
+  fi
+  i=$((i+1))
+  sleep 1
+done
+
+if [ "$TALK_STATUS" != "ready" ]; then
+  fail "expected TalkSegment status 'ready' within ${MAX_WAIT}s, got '$TALK_STATUS'"
+fi
+echo "  ✓ TalkSegment generated in background and status in DB is 'ready' after ~${i}s"
 
 TALK_AUDIO_URL=$(psql_run -t -A -c "SELECT \"audio_url\" FROM segment WHERE \"channelId\" = '$AI_CHAN_ID' AND \"type\" = 'talk' ORDER BY \"play_order\" ASC LIMIT 1;")
 TALK_DURATION=$(psql_run -t -A -c "SELECT \"duration_seconds\" FROM segment WHERE \"channelId\" = '$AI_CHAN_ID' AND \"type\" = 'talk' ORDER BY \"play_order\" ASC LIMIT 1;")

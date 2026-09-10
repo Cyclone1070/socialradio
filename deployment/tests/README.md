@@ -111,16 +111,16 @@
 | 33 | `GET /admin/channels/:id/topics` regular user token | 403 body confirms |
 
 ### Section 5: Playback, Idle & Queue Safety (`suites/05-playback.sh`)
-*Playback FIFO progression, idle resource conservation, cold-start batch generation, tail-resume, and internal token security.*
+*Virtual clock playhead progression, idle resource conservation, cold-start batch generation, tail-resume, and private channel RBAC.*
 
 | # | Scenario | Expected |
 |---|---|---|
-| 34 | Cold-start empty channel `GET /channels/:id/next-track` | 200 OK, returns Track #1, sets `currentSegmentId` |
-| 35 | Read-back `channel.currentSegmentId` in DB | Matches returned segmentId |
-| 36 | Sequential `GET /channels/:id/next-track` | 200 OK, FIFO advancement |
-| 37 | SQL read-back `play_order` | `play_order` strictly increments |
-| 38 | `GET /channels/:id/next-track` no token / wrong secret | 401 body confirms |
-| 38b | `GET /channels/:fakeUuid/next-track` | 404 + "Channel not found" |
+| 34 | Cold-start empty channel `GET /channels/:id/live.m3u8` | 200 OK, returns `#EXTM3U` playlist, sets `current_segment_id` |
+| 35 | Read-back `channel.current_segment_id` in DB | Matches first segment in playlist |
+| 36 | Sequential `GET /channels/:id/live.m3u8` | 200 OK, sliding window advances |
+| 37 | SQL read-back `play_order` progression | Segment sequence strictly monotonic |
+| 38 | Private channel `GET /channels/:id/live.m3u8` auth checks | 401 unauthenticated, 403 non-owner, 200 owner |
+| 38b | `GET /channels/:fakeUuid/live.m3u8` | 404 + "Channel not found" |
 
 ### Section 6: Real Reddit Scraping & Active Pool (`suites/06-scraping.sh`)
 *Topic clustering, proactive pool deficit triggering, lazy 20-sub suppression, and dead sub cascade deletion.*
@@ -141,22 +141,22 @@
 |---|---|---|
 | 46 | Seed targeted dilemma post on `r/ai_talk_fixture_sub_e2e` | DB contains 1 post + 3 structured comments |
 | 47 | Create channel & subscribe `ai_talk_fixture_sub_e2e` | 201 Created & verified |
-| 48 | Trigger `bufferAhead` (`GET /channels/:id/next-track`) | 200 OK, returns talk track, synthesizes live multi-turn script with OpenCode + Edge TTS |
+| 48 | Trigger `bufferAhead` (`GET /channels/:id/live.m3u8`) | 200 OK, returns live manifest, triggers live multi-turn script synthesis with OpenCode + Edge TTS |
 | 49 | SQL verification: inspect TalkSegment in DB | `status == 'ready'`, duration $> 0$, multi-turn dialogue array |
 | 50 | MinIO Blob Storage Verification | Queries MinIO S3 API -> confirms generated `.mp3` blob exists and size $> 10\text{ KB}$ |
 
-### Section 8: Live Broadcast & Streaming (`suites/08-broadcast.sh`)
-*Icecast server health, dynamic Liquidsoap channel mounts, HTTP live stream handshake, stream byte capture, audio energy verification, and listener telemetry.*
+### Section 8: Live Native HLS Broadcast & Streaming (`suites/08-broadcast.sh`)
+*RFC 8216 HLS compliance, edge caching headers, audio chunk retrieval, acoustic energy verification, deterministic idle freeze/wake-up, and concurrent deduplication.*
 
 | # | Scenario | Expected |
 |---|---|---|
-| 51 | `GET http://icecast:8000/` | 200 OK, Icecast server online |
-| 52 | `POST /channels` | 201 Created, channel created for broadcast |
-| 53 | Poll Icecast mount `/channels/:id.mp3` | Registered by Liquidsoap dynamic sync |
-| 54 | Live stream HTTP handshake | 200 OK, `Content-Type: audio/mpeg`, ICY headers |
-| 55 | Stream byte capture (4s) | Continuous stream data $> 30\text{ KB}$ at 128kbps |
-| 56 | Audio energy / non-silence verification | `ffmpeg` volumedetect `mean_volume > -60 dB` (non-silent audio frames) |
-| 57 | Listener telemetry | `/admin/stats` tracks listener connection & disconnection (0 $\rightarrow$ 1 $\rightarrow$ 0) |
+| 51 | Create broadcast channel `POST /channels` | 201 Created |
+| 52 | Live manifest handshake `GET /channels/:id/live.m3u8` | 200 OK, `Content-Type: application/vnd.apple.mpegurl`, `Cache-Control: public, max-age=2` |
+| 53 | RFC 8216 playlist grammar validation | `#EXTM3U`, `#EXT-X-VERSION:3`, `#EXT-X-TARGETDURATION`, `#EXT-X-MEDIA-SEQUENCE`, `#EXTINF`, no `#EXT-X-ENDLIST` |
+| 54 | Chunk retrieval & file validation | Download first chunk URL, HTTP 200, valid MPEG audio $> 10\text{ KB}$ |
+| 55 | Audio acoustic energy verification | `ffmpeg` volumedetect `mean_volume > -60 dB` (non-silent active audio) |
+| 56 | Deterministic zero-sleep idle freeze & wake-up | SQL backdates `last_active_at = now() - 15m`, immediate manifest fetch confirms resumption with 0 dropped frames |
+| 57 | Concurrent poll request deduplication | Parallel requests return consistent, synchronized manifests without double-advancement |
 
 ---
 
@@ -170,7 +170,7 @@
 | `DELETE /channels/:id/subreddits/:subName` | ✅ #21 | ✅ #21 | — |
 | `GET /channels/:id/subreddits` | ✅ #22 | ✅ #22 | — |
 | `GET /channels/active` | ✅ #25 | ✅ #25 | — |
-| `GET /channels/:id/next-track` | ✅ #39 | ✅ #39 | — |
+| `GET /channels/:id/live.m3u8` (private) | ✅ #38 | ✅ #38 | ✅ #38 |
 | `POST /admin/feeds/scrape` | ✅ #26 | — | ✅ #27 |
 | `GET /admin/feeds/subreddits` | ✅ #28 | — | ✅ #29 |
 | `DELETE /admin/feeds/cache` | ✅ #30 | — | ✅ #31 |

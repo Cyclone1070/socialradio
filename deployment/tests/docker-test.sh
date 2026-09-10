@@ -50,7 +50,7 @@ case "$TARGET" in
     run_suite /scripts/suites/02-auth.sh
     run_suite /scripts/suites/07-ai-storage.sh
     ;;
-  08|broadcast|stream|radio|icecast)
+  08|broadcast|stream|radio|hls)
     run_suite /scripts/suites/01-healthcheck.sh
     run_suite /scripts/suites/02-auth.sh
     run_suite /scripts/suites/08-broadcast.sh
