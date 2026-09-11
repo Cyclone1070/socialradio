@@ -68,12 +68,8 @@ export const SegmentSchema = new EntitySchema<Segment>({
       defaultRaw: 'now()',
     },
   },
-  uniques: [
-    { properties: ['channel', 'playOrder'] },
-  ],
-  indexes: [
-    { properties: ['channel'] },
-  ],
+  uniques: [{ properties: ['channel', 'playOrder'] }],
+  indexes: [{ properties: ['channel'] }],
 });
 
 export const MusicSegmentSchema = new EntitySchema<MusicSegment, Segment>({

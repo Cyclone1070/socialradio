@@ -92,7 +92,10 @@ export class PlaybackService {
         } else if (channel.currentPlayOrder) {
           // In-flight channel where currentSegmentId was cleared/lost: resume from currentPlayOrder
           anchorSegment = await this.segmentRepo.findOne(
-            { channel: channelId, playOrder: { $gte: channel.currentPlayOrder } },
+            {
+              channel: channelId,
+              playOrder: { $gte: channel.currentPlayOrder },
+            },
             { orderBy: { playOrder: 'ASC' } },
           );
         }
@@ -146,7 +149,10 @@ export class PlaybackService {
         currentSegment = await this.segmentRepo.findOne({
           id: channel.currentSegmentId,
         });
-        if (currentSegment && currentSegment.playOrder !== channel.currentPlayOrder) {
+        if (
+          currentSegment &&
+          currentSegment.playOrder !== channel.currentPlayOrder
+        ) {
           channel.currentPlayOrder = currentSegment.playOrder;
         }
       }
@@ -157,7 +163,10 @@ export class PlaybackService {
       if (!currentSegment) {
         if (channel.currentPlayOrder) {
           currentSegment = await this.segmentRepo.findOne(
-            { channel: channelId, playOrder: { $gte: channel.currentPlayOrder } },
+            {
+              channel: channelId,
+              playOrder: { $gte: channel.currentPlayOrder },
+            },
             { orderBy: { playOrder: 'ASC' } },
           );
         }
@@ -279,7 +288,8 @@ export class PlaybackService {
         });
 
       return generateHlsManifest({
-        mediaSequence: currentSegment?.playOrder ?? channel.currentPlayOrder ?? 0,
+        mediaSequence:
+          currentSegment?.playOrder ?? channel.currentPlayOrder ?? 0,
         segments: hlsSegments,
       });
     });
@@ -295,7 +305,7 @@ export class PlaybackService {
 
     return {
       manifest,
-      visibility: existing.visibility as 'public' | 'private',
+      visibility: existing.visibility,
     };
   }
 

@@ -274,7 +274,7 @@ export class QueueService {
         } else {
           nextPlayOrder = await this.appendMusic(channelId, nextPlayOrder);
         }
-      } catch (err) {
+      } catch {
         // Fallback: create emergency static jingle segment if media pool is unavailable
         const fallbackItem = Object.assign(new JingleSegment(), {
           channel: this.em.getReference(Channel, channelId),

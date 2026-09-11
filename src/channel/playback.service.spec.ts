@@ -152,18 +152,30 @@ describe('PlaybackService', () => {
         mockSegmentRepo.count.mockResolvedValue(56);
         // Current segment lookup fails because 'deleted-segment-id' was pruned or deleted
         mockSegmentRepo.findOne.mockImplementation(
-          (criteria: { id?: string; channel?: string; playOrder?: { $gte?: number } }) => {
+          (criteria: {
+            id?: string;
+            channel?: string;
+            playOrder?: { $gte?: number };
+          }) => {
             if (criteria.id) return Promise.resolve(null);
             if (criteria.playOrder?.$gte !== undefined) {
               const min = criteria.playOrder.$gte;
-              return Promise.resolve(allSegments.find((s) => s.playOrder >= min) ?? null);
+              return Promise.resolve(
+                allSegments.find((s) => s.playOrder >= min) ?? null,
+              );
             }
             return Promise.resolve(allSegments[0] ?? null);
           },
         );
 
         mockSegmentRepo.find = jest.fn().mockImplementation(
-          (criteria: { channel?: string; playOrder?: { $gte?: number } }, options?: { orderBy?: { playOrder?: 'ASC' | 'DESC' }; limit?: number }) => {
+          (
+            criteria: { channel?: string; playOrder?: { $gte?: number } },
+            options?: {
+              orderBy?: { playOrder?: 'ASC' | 'DESC' };
+              limit?: number;
+            },
+          ) => {
             const minOrder = criteria.playOrder?.$gte ?? 1;
             const matching = allSegments.filter((s) => s.playOrder >= minOrder);
             return Promise.resolve(matching.slice(0, options?.limit ?? 6));
@@ -202,13 +214,17 @@ describe('PlaybackService', () => {
         mockSegmentRepo.count.mockResolvedValue(0);
         mockSegmentRepo.findOne.mockResolvedValue(null);
 
-        mockSegmentRepo.find = jest.fn()
+        mockSegmentRepo.find = jest
+          .fn()
           .mockResolvedValueOnce([]) // initial windowSegments lookup returns empty
           .mockResolvedValueOnce([fillerSegment]); // after ensureInstantFiller
 
         const result = await service.getLiveManifest(channelId);
 
-        expect(mockQueueService.ensureInstantFiller).toHaveBeenCalledWith(channelId, 6);
+        expect(mockQueueService.ensureInstantFiller).toHaveBeenCalledWith(
+          channelId,
+          6,
+        );
         expect(channel.currentSegmentId).toBe('seg-filler-1');
         expect(channel.currentPlayOrder).toBe(1);
         expect(result.manifest).toContain('#EXT-X-MEDIA-SEQUENCE:1');
@@ -241,11 +257,20 @@ describe('PlaybackService', () => {
         mockEntityManager.findOne.mockResolvedValue(channel);
         mockSegmentRepo.count.mockResolvedValue(56);
         mockSegmentRepo.findOne.mockImplementation(
-          (criteria: { id?: string; channel?: string; playOrder?: { $gte?: number } }, options?: { orderBy?: { playOrder?: 'ASC' | 'DESC' } }) => {
+          (
+            criteria: {
+              id?: string;
+              channel?: string;
+              playOrder?: { $gte?: number };
+            },
+            options?: { orderBy?: { playOrder?: 'ASC' | 'DESC' } },
+          ) => {
             if (criteria.id) return Promise.resolve(null);
             if (criteria.playOrder?.$gte !== undefined) {
               const min = criteria.playOrder.$gte;
-              return Promise.resolve(allSegments.find((s) => s.playOrder >= min) ?? null);
+              return Promise.resolve(
+                allSegments.find((s) => s.playOrder >= min) ?? null,
+              );
             }
             if (options?.orderBy?.playOrder === 'ASC') {
               // Naive ASC returns segment 1 (the bug!)
@@ -256,9 +281,17 @@ describe('PlaybackService', () => {
         );
 
         mockSegmentRepo.find = jest.fn().mockImplementation(
-          (criteria: { channel?: string; playOrder?: { $gte?: number } }, options?: { orderBy?: { playOrder?: 'ASC' | 'DESC' }; limit?: number }) => {
+          (
+            criteria: { channel?: string; playOrder?: { $gte?: number } },
+            options?: {
+              orderBy?: { playOrder?: 'ASC' | 'DESC' };
+              limit?: number;
+            },
+          ) => {
             if (options?.orderBy?.playOrder === 'DESC') {
-              const sorted = [...allSegments].sort((a, b) => b.playOrder - a.playOrder);
+              const sorted = [...allSegments].sort(
+                (a, b) => b.playOrder - a.playOrder,
+              );
               return Promise.resolve(sorted.slice(0, options.limit ?? 6));
             }
             const minOrder = criteria.playOrder?.$gte ?? 1;
@@ -629,9 +662,10 @@ describe('PlaybackService', () => {
 
               const channel = Object.assign(new Channel(), {
                 id: channelId,
-                currentSegmentId: null,
-                playheadStartedAt: null,
-                lastActiveAt: null,
+                currentSegmentId: null as string | null,
+                currentPlayOrder: null as number | null,
+                playheadStartedAt: null as Date | null,
+                lastActiveAt: null as Date | null,
               });
 
               // Mock repository state to act as a real stateful in-memory store for this run
@@ -642,7 +676,7 @@ describe('PlaybackService', () => {
                 (criteria: {
                   id?: string;
                   channel?: string;
-                  playOrder?: { $gt?: number };
+                  playOrder?: { $gt?: number; $gte?: number };
                 }) => {
                   if (criteria.id) {
                     return Promise.resolve(
@@ -687,15 +721,22 @@ describe('PlaybackService', () => {
               mockSegmentRepo.find.mockImplementation(
                 (
                   criteria: { channel?: string; playOrder?: { $gte?: number } },
-                  options?: { orderBy?: { playOrder?: 'ASC' | 'DESC' }; limit?: number },
+                  options?: {
+                    orderBy?: { playOrder?: 'ASC' | 'DESC' };
+                    limit?: number;
+                  },
                 ) => {
                   if (options?.orderBy?.playOrder === 'DESC') {
-                    const sorted = [...segments].sort((a, b) => b.playOrder - a.playOrder);
+                    const sorted = [...segments].sort(
+                      (a, b) => b.playOrder - a.playOrder,
+                    );
                     return Promise.resolve(sorted.slice(0, options.limit ?? 6));
                   }
                   const minOrder = criteria.playOrder?.$gte ?? 1;
                   return Promise.resolve(
-                    segments.filter((s) => s.playOrder >= minOrder).slice(0, options?.limit ?? 6),
+                    segments
+                      .filter((s) => s.playOrder >= minOrder)
+                      .slice(0, options?.limit ?? 6),
                   );
                 },
               );
@@ -790,9 +831,10 @@ describe('PlaybackService', () => {
 
               const channel = Object.assign(new Channel(), {
                 id: channelId,
-                currentSegmentId: null,
-                playheadStartedAt: null,
-                lastActiveAt: null,
+                currentSegmentId: null as string | null,
+                currentPlayOrder: null as number | null,
+                playheadStartedAt: null as Date | null,
+                lastActiveAt: null as Date | null,
               });
 
               mockEntityManager.findOne.mockImplementation(() =>
@@ -803,20 +845,26 @@ describe('PlaybackService', () => {
                 (criteria: {
                   id?: string;
                   channel?: string;
-                  playOrder?: { $gt?: number };
+                  playOrder?: { $gt?: number; $gte?: number };
                 }) => {
                   if (criteria.id) {
                     return Promise.resolve(
                       segments.find((s) => s.id === criteria.id) ?? null,
                     );
                   }
-                  if (criteria.channel && criteria.playOrder?.$gt !== undefined) {
+                  if (
+                    criteria.channel &&
+                    criteria.playOrder?.$gt !== undefined
+                  ) {
                     const threshold = criteria.playOrder.$gt;
                     return Promise.resolve(
                       segments.find((s) => s.playOrder > threshold) ?? null,
                     );
                   }
-                  if (criteria.channel && criteria.playOrder?.$gte !== undefined) {
+                  if (
+                    criteria.channel &&
+                    criteria.playOrder?.$gte !== undefined
+                  ) {
                     const threshold = criteria.playOrder.$gte;
                     return Promise.resolve(
                       segments.find((s) => s.playOrder >= threshold) ?? null,
@@ -844,15 +892,22 @@ describe('PlaybackService', () => {
               mockSegmentRepo.find.mockImplementation(
                 (
                   criteria: { channel?: string; playOrder?: { $gte?: number } },
-                  options?: { orderBy?: { playOrder?: 'ASC' | 'DESC' }; limit?: number },
+                  options?: {
+                    orderBy?: { playOrder?: 'ASC' | 'DESC' };
+                    limit?: number;
+                  },
                 ) => {
                   if (options?.orderBy?.playOrder === 'DESC') {
-                    const sorted = [...segments].sort((a, b) => b.playOrder - a.playOrder);
+                    const sorted = [...segments].sort(
+                      (a, b) => b.playOrder - a.playOrder,
+                    );
                     return Promise.resolve(sorted.slice(0, options.limit ?? 6));
                   }
                   const minOrder = criteria.playOrder?.$gte ?? 1;
                   return Promise.resolve(
-                    segments.filter((s) => s.playOrder >= minOrder).slice(0, options?.limit ?? 6),
+                    segments
+                      .filter((s) => s.playOrder >= minOrder)
+                      .slice(0, options?.limit ?? 6),
                   );
                 },
               );
@@ -860,13 +915,18 @@ describe('PlaybackService', () => {
               let previousMediaSequence = -1;
 
               // Initial cold start
-              const { manifest: initialManifest } = await service.getLiveManifest(channelId);
-              const initialSeqMatch = initialManifest.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/);
+              const { manifest: initialManifest } =
+                await service.getLiveManifest(channelId);
+              const initialSeqMatch = initialManifest.match(
+                /#EXT-X-MEDIA-SEQUENCE:(\d+)/,
+              );
               expect(initialSeqMatch).not.toBeNull();
               previousMediaSequence = parseInt(initialSeqMatch![1], 10);
 
               for (const { stepSeconds, corruptPlayhead } of steps) {
-                currentTime = new Date(currentTime.getTime() + stepSeconds * 1000);
+                currentTime = new Date(
+                  currentTime.getTime() + stepSeconds * 1000,
+                );
                 jest.setSystemTime(currentTime);
 
                 if (corruptPlayhead) {
@@ -880,15 +940,21 @@ describe('PlaybackService', () => {
                 const seqMatch = manifest.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/);
                 expect(seqMatch).not.toBeNull();
                 const currentSeq = parseInt(seqMatch![1], 10);
-                expect(currentSeq).toBeGreaterThanOrEqual(previousMediaSequence);
+                expect(currentSeq).toBeGreaterThanOrEqual(
+                  previousMediaSequence,
+                );
                 previousMediaSequence = currentSeq;
 
                 // INVARIANT (HLS-4): Liveness Contract
                 expect(manifest).not.toContain('#EXT-X-ENDLIST');
 
                 // INVARIANT: Channel repaired to a valid segment
-                expect(channel.currentSegmentId).not.toBe('corrupted-missing-row-id');
-                const activeSegment = segments.find((s) => s.id === channel.currentSegmentId);
+                expect(channel.currentSegmentId).not.toBe(
+                  'corrupted-missing-row-id',
+                );
+                const activeSegment = segments.find(
+                  (s) => s.id === channel.currentSegmentId,
+                );
                 expect(activeSegment).toBeDefined();
               }
             },

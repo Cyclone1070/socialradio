@@ -6,7 +6,7 @@ import { PlaybackService } from './playback.service';
 import { InternalAuthGuard } from './internal-auth.guard';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { SubscribeSubredditDto } from './dto/subscribe-subreddit.dto';
-import { Request } from 'express';
+import { Request, Response } from 'express';
 
 describe('ChannelController', () => {
   let controller: ChannelController;
@@ -156,14 +156,15 @@ describe('ChannelController', () => {
         const req = { user: null } as unknown as Request & {
           user?: { id: string; role?: string } | null;
         };
-        const res = { setHeader: jest.fn() } as unknown as Response;
+        const setHeader = jest.fn();
+        const res = { setHeader } as unknown as Response;
         const result = await controller.getLiveManifest('chan-1', req, res);
 
         expect(mockPlaybackService.getLiveManifest).toHaveBeenCalledWith(
           'chan-1',
           null,
         );
-        expect(res.setHeader).toHaveBeenCalledWith(
+        expect(setHeader).toHaveBeenCalledWith(
           'Cache-Control',
           'public, max-age=2, s-maxage=2',
         );
@@ -180,10 +181,11 @@ describe('ChannelController', () => {
         const req = { user: { id: 'user-1' } } as unknown as Request & {
           user?: { id: string; role?: string } | null;
         };
-        const res = { setHeader: jest.fn() } as unknown as Response;
+        const setHeader = jest.fn();
+        const res = { setHeader } as unknown as Response;
         const result = await controller.getLiveManifest('chan-priv', req, res);
 
-        expect(res.setHeader).toHaveBeenCalledWith(
+        expect(setHeader).toHaveBeenCalledWith(
           'Cache-Control',
           'private, no-store',
         );
