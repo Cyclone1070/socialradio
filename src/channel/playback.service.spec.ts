@@ -965,5 +965,240 @@ describe('PlaybackService', () => {
         jest.useRealTimers();
       });
     });
+
+    describe('Cycle 3.8: Issue 1 (MEDIA-SEQUENCE alignment)', () => {
+      it('ensures MEDIA-SEQUENCE matches the first valid playable chunk when earlier segment has missing audio', async () => {
+        const channelId = 'chan-issue-1';
+        const channel = Object.assign(new Channel(), {
+          id: channelId,
+          currentSegmentId: 'seg-10',
+          currentPlayOrder: 10,
+          playheadStartedAt: new Date(),
+          lastActiveAt: new Date(),
+        });
+
+        // Segment 10 has empty audioUrl, segment 11 has valid audio
+        const seg10 = Object.assign(new MusicSegment(), {
+          id: 'seg-10',
+          channelId,
+          playOrder: 10,
+          durationSeconds: 30,
+          audioUrl: '',
+        });
+        const seg11 = Object.assign(new MusicSegment(), {
+          id: 'seg-11',
+          channelId,
+          playOrder: 11,
+          durationSeconds: 30,
+          audioUrl: 'music/track-11.mp3',
+        });
+
+        mockEntityManager.findOne.mockResolvedValue(channel);
+        mockSegmentRepo.count.mockResolvedValue(2);
+        mockSegmentRepo.findOne.mockResolvedValue(seg10);
+        mockSegmentRepo.find = jest.fn().mockResolvedValue([seg10, seg11]);
+
+        const result = await service.getLiveManifest(channelId);
+
+        // Sequence must match segment 11 (the first playable audio file), NOT segment 10
+        expect(result.manifest).toContain('#EXT-X-MEDIA-SEQUENCE:11\n');
+        expect(result.manifest).not.toContain('#EXT-X-MEDIA-SEQUENCE:10\n');
+        expect(result.manifest).toContain('music/track-11.mp3');
+      });
+
+      it('Issue 2: does not rewind to track 1 when playheadStartedAt is null on an established channel', async () => {
+        const channelId = 'chan-issue-2';
+        const channel = Object.assign(new Channel(), {
+          id: channelId,
+          currentSegmentId: null,
+          currentPlayOrder: 150, // Established station!
+          playheadStartedAt: null, // Lost timestamp!
+          lastActiveAt: new Date(),
+        });
+
+        const seg1 = Object.assign(new MusicSegment(), {
+          id: 'seg-1',
+          channelId,
+          playOrder: 1,
+          durationSeconds: 30,
+          audioUrl: 'music/track-1.mp3',
+        });
+        const seg150 = Object.assign(new MusicSegment(), {
+          id: 'seg-150',
+          channelId,
+          playOrder: 150,
+          durationSeconds: 30,
+          audioUrl: 'music/track-150.mp3',
+        });
+
+        mockEntityManager.findOne.mockResolvedValue(channel);
+        mockSegmentRepo.count.mockResolvedValue(10);
+        mockSegmentRepo.findOne.mockImplementation(
+          (
+            criteria: {
+              id?: string;
+              playOrder?: { $gte?: number; $gt?: number };
+              channel?: string;
+            },
+            options?: { orderBy?: { playOrder?: 'ASC' | 'DESC' } },
+          ) => {
+            if (criteria.playOrder?.$gte === 150)
+              return Promise.resolve(seg150);
+            if (options?.orderBy?.playOrder === 'ASC')
+              return Promise.resolve(seg1);
+            return Promise.resolve(null);
+          },
+        );
+        mockSegmentRepo.find = jest.fn().mockResolvedValue([seg150]);
+
+        const result = await service.getLiveManifest(channelId);
+
+        // Must resume from 150, never rewinding to track 1
+        expect(channel.currentPlayOrder).toBe(150);
+        expect(channel.currentSegmentId).toBe('seg-150');
+        expect(channel.playheadStartedAt).toBeInstanceOf(Date);
+        expect(result.manifest).toContain('#EXT-X-MEDIA-SEQUENCE:150\n');
+      });
+
+      it('Issue 3: triggers idle freeze when lastActiveAt is null on an active station that was quiet', async () => {
+        const channelId = 'chan-issue-3';
+        const now = new Date();
+        const twoHoursAgo = new Date(now.getTime() - 7200 * 1000);
+        const channel = Object.assign(new Channel(), {
+          id: channelId,
+          currentSegmentId: 'seg-1',
+          currentPlayOrder: 1,
+          playheadStartedAt: twoHoursAgo, // Station started 2h ago
+          lastActiveAt: null, // Missing lastActiveAt!
+        });
+
+        const seg1 = Object.assign(new MusicSegment(), {
+          id: 'seg-1',
+          channelId,
+          playOrder: 1,
+          durationSeconds: 3600, // Very long segment
+          audioUrl: 'music/long.mp3',
+        });
+
+        mockEntityManager.findOne.mockResolvedValue(channel);
+        mockSegmentRepo.count.mockResolvedValue(10);
+        mockSegmentRepo.findOne.mockResolvedValue(seg1);
+        mockSegmentRepo.find = jest.fn().mockResolvedValue([seg1]);
+
+        await service.getLiveManifest(channelId);
+
+        // Rebased playheadStartedAt should be now - 600s (idle timeout), NOT continuing from 2h ago
+        expect(channel.playheadStartedAt?.getTime()).toBeCloseTo(
+          now.getTime() - 600 * 1000,
+          -2,
+        );
+        expect(channel.lastActiveAt).toBeInstanceOf(Date);
+      });
+
+      it('Issue 4: skips corrupted segment with negative or non-positive duration without infinite loop', async () => {
+        const channelId = 'chan-issue-4';
+        const channel = Object.assign(new Channel(), {
+          id: channelId,
+          currentSegmentId: 'seg-bad',
+          currentPlayOrder: 1,
+          playheadStartedAt: new Date(),
+          lastActiveAt: new Date(),
+        });
+
+        const badSeg = Object.assign(new MusicSegment(), {
+          id: 'seg-bad',
+          channelId,
+          playOrder: 1,
+          durationSeconds: -1, // Corrupted duration!
+          audioUrl: 'music/bad.mp3',
+        });
+        const goodSeg = Object.assign(new MusicSegment(), {
+          id: 'seg-good',
+          channelId,
+          playOrder: 2,
+          durationSeconds: 30,
+          audioUrl: 'music/good.mp3',
+        });
+
+        mockEntityManager.findOne.mockResolvedValue(channel);
+        mockSegmentRepo.count.mockResolvedValue(5);
+        mockSegmentRepo.findOne.mockImplementation(
+          (criteria: {
+            id?: string;
+            playOrder?: { $gte?: number; $gt?: number };
+            channel?: string;
+          }) => {
+            if (criteria.id === 'seg-bad') return Promise.resolve(badSeg);
+            if (criteria.playOrder?.$gt === 1) return Promise.resolve(goodSeg);
+            return Promise.resolve(null);
+          },
+        );
+        mockSegmentRepo.find = jest.fn().mockResolvedValue([badSeg, goodSeg]);
+
+        const result = await service.getLiveManifest(channelId);
+
+        // Should safely skip seg-bad and not render negative duration
+        expect(result.manifest).not.toContain('#EXTINF:-1');
+        expect(channel.currentSegmentId).toBe('seg-good');
+        expect(channel.currentPlayOrder).toBe(2);
+        expect(result.manifest).toContain('music/good.mp3');
+      });
+
+      it('Issue 5: ensures instant filler executes outside the pessimistic write transaction lock', async () => {
+        const channelId = 'chan-issue-5';
+        const channel = Object.assign(new Channel(), {
+          id: channelId,
+          currentSegmentId: 'seg-1',
+          currentPlayOrder: 1,
+          playheadStartedAt: new Date(),
+          lastActiveAt: new Date(),
+        });
+
+        let insideTransaction = false;
+        let fillerCalledInsideTx = false;
+
+        mockEntityManager.transactional.mockImplementation(
+          async <T>(cb: (em: MockEntityManager) => Promise<T>): Promise<T> => {
+            insideTransaction = true;
+            try {
+              return await cb(mockEntityManager);
+            } finally {
+              insideTransaction = false;
+            }
+          },
+        );
+
+        mockQueueService.ensureInstantFiller.mockImplementation(() => {
+          if (insideTransaction) {
+            fillerCalledInsideTx = true;
+          }
+          return Promise.resolve();
+        });
+
+        const seg1 = Object.assign(new MusicSegment(), {
+          id: 'seg-1',
+          channelId,
+          playOrder: 1,
+          durationSeconds: 30,
+          audioUrl: 'music/1.mp3',
+        });
+
+        mockEntityManager.findOne.mockResolvedValue(channel);
+        mockSegmentRepo.count.mockResolvedValue(1);
+        mockSegmentRepo.findOne.mockResolvedValue(seg1);
+        mockSegmentRepo.find = jest
+          .fn()
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([seg1]);
+
+        await service.getLiveManifest(channelId);
+
+        expect(mockQueueService.ensureInstantFiller).toHaveBeenCalledWith(
+          channelId,
+          6,
+        );
+        expect(fillerCalledInsideTx).toBe(false);
+      });
+    });
   });
 });

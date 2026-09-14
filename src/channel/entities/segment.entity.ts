@@ -6,8 +6,8 @@ export abstract class Segment {
   channelId!: string;
   channel?: Channel;
   playOrder!: number;
-  audioUrl: string | null = null;
-  durationSeconds: number | null = null;
+  audioUrl!: string;
+  durationSeconds!: number;
   type!: 'music' | 'talk' | 'ad' | 'jingle';
   createdAt: Date = new Date();
 }

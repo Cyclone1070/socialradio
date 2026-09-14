@@ -68,7 +68,7 @@ export class PlaybackService {
 
     let needsReplenishment = false;
 
-    const manifest = await this.em.transactional(async (em) => {
+    const playheadState = await this.em.transactional(async (em) => {
       const channel = await em.findOne(
         ChannelSchema,
         { id: channelId },
@@ -83,19 +83,23 @@ export class PlaybackService {
       // Cold Start playhead anchoring
       if (!channel.currentSegmentId || !channel.playheadStartedAt) {
         let anchorSegment: Segment | null = null;
-        if (!channel.playheadStartedAt) {
-          // Brand new channel starting broadcast for the very first time: start at track 1 (ASC)
-          anchorSegment = await this.segmentRepo.findOne(
-            { channel: channelId },
-            { orderBy: { playOrder: 'ASC' } },
-          );
-        } else if (channel.currentPlayOrder) {
-          // In-flight channel where currentSegmentId was cleared/lost: resume from currentPlayOrder
+        if (channel.currentPlayOrder) {
+          // In-flight channel where playheadStartedAt or currentSegmentId was cleared/lost: resume from currentPlayOrder
           anchorSegment = await this.segmentRepo.findOne(
             {
               channel: channelId,
               playOrder: { $gte: channel.currentPlayOrder },
             },
+            { orderBy: { playOrder: 'ASC' } },
+          );
+        } else if (channel.currentSegmentId) {
+          anchorSegment = await this.segmentRepo.findOne({
+            id: channel.currentSegmentId,
+          });
+        } else if (!channel.playheadStartedAt) {
+          // Truly brand new channel starting broadcast for the very first time: start at track 1 (ASC)
+          anchorSegment = await this.segmentRepo.findOne(
+            { channel: channelId },
             { orderBy: { playOrder: 'ASC' } },
           );
         }
@@ -129,7 +133,8 @@ export class PlaybackService {
         ? parsedTimeout
         : 600;
 
-      const lastActive = channel.lastActiveAt ?? now;
+      const lastActive =
+        channel.lastActiveAt ?? channel.playheadStartedAt ?? now;
       const quietSeconds = (now.getTime() - lastActive.getTime()) / 1000;
 
       if (quietSeconds > idleTimeoutSeconds) {
@@ -189,7 +194,39 @@ export class PlaybackService {
 
       if (currentSegment) {
         while (currentSegment) {
-          const duration = currentSegment.durationSeconds || 10;
+          const duration =
+            typeof currentSegment.durationSeconds === 'number' &&
+            currentSegment.durationSeconds > 0
+              ? currentSegment.durationSeconds
+              : null;
+
+          if (duration === null) {
+            this.logger.warn(
+              {
+                channelId,
+                segmentId: currentSegment.id,
+                durationSeconds: currentSegment.durationSeconds,
+              },
+              'Skipping corrupted segment with non-positive or missing duration',
+            );
+            const nextSegment: Segment | null = await this.segmentRepo.findOne(
+              {
+                channel: channelId,
+                playOrder: { $gt: currentSegment.playOrder },
+              },
+              { orderBy: { playOrder: 'ASC' } },
+            );
+            if (!nextSegment) {
+              channel.playheadStartedAt = now;
+              break;
+            }
+            channel.currentSegmentId = nextSegment.id;
+            channel.currentPlayOrder = nextSegment.playOrder;
+            channel.playheadStartedAt = now;
+            currentSegment = nextSegment;
+            continue;
+          }
+
           const elapsed =
             (now.getTime() - channel.playheadStartedAt.getTime()) / 1000;
           if (elapsed >= duration) {
@@ -230,71 +267,101 @@ export class PlaybackService {
           );
           needsReplenishment = true;
         }
-
-        await this.pruneConsumed(channelId, currentSegment.playOrder);
       } else {
         needsReplenishment = true;
       }
 
-      let windowSegments = currentSegment
-        ? await this.segmentRepo.find(
-            {
-              channel: channelId,
-              playOrder: { $gte: currentSegment.playOrder },
-            },
-            {
-              orderBy: { playOrder: 'ASC' },
-              limit: 6,
-            },
-          )
-        : [];
-
-      if (windowSegments.length === 0) {
-        await this.queueService.ensureInstantFiller(channelId, 6);
-        const minOrder = channel.currentPlayOrder ?? 1;
-        windowSegments = await this.segmentRepo.find(
-          { channel: channelId, playOrder: { $gte: minOrder } },
-          { orderBy: { playOrder: 'ASC' }, limit: 6 },
-        );
-        if (windowSegments.length === 0) {
-          windowSegments = await this.segmentRepo.find(
-            { channel: channelId },
-            { orderBy: { playOrder: 'ASC' }, limit: 6 },
-          );
-        }
-        if (!currentSegment && windowSegments.length > 0) {
-          currentSegment = windowSegments[0];
-          channel.currentSegmentId = currentSegment.id;
-          channel.currentPlayOrder = currentSegment.playOrder;
-          channel.playheadStartedAt = now;
-        }
-      }
-
       await em.flush();
 
-      let prevType: string | null = null;
-      const hlsSegments = windowSegments
-        .filter((s) => Boolean(s.audioUrl))
-        .map((s, idx) => {
-          const currentType = s.type;
-          const isDiscontinuity =
-            idx > 0 && prevType !== null && prevType !== currentType;
-          prevType = currentType;
-          return {
-            durationSeconds: s.durationSeconds || 10,
-            url: this.resolveAudioUrl(s.audioUrl),
-            discontinuity: isDiscontinuity,
-          };
-        });
-
-      return generateHlsManifest({
-        mediaSequence:
-          currentSegment?.playOrder ?? channel.currentPlayOrder ?? 0,
-        segments: hlsSegments,
-      });
+      return {
+        channel,
+        currentSegment,
+        needsReplenishment,
+        now,
+      };
     });
 
-    if (needsReplenishment) {
+    let currentSegment = playheadState.currentSegment;
+    const channel = playheadState.channel;
+    const now = playheadState.now;
+
+    if (currentSegment) {
+      await this.pruneConsumed(channelId, currentSegment.playOrder);
+    }
+
+    let windowSegments = currentSegment
+      ? await this.segmentRepo.find(
+          {
+            channel: channelId,
+            playOrder: { $gte: currentSegment.playOrder },
+          },
+          {
+            orderBy: { playOrder: 'ASC' },
+            limit: 6,
+          },
+        )
+      : [];
+
+    if (windowSegments.length === 0) {
+      await this.queueService.ensureInstantFiller(channelId, 6);
+      const minOrder = channel.currentPlayOrder ?? 1;
+      windowSegments = await this.segmentRepo.find(
+        { channel: channelId, playOrder: { $gte: minOrder } },
+        { orderBy: { playOrder: 'ASC' }, limit: 6 },
+      );
+      if (windowSegments.length === 0) {
+        windowSegments = await this.segmentRepo.find(
+          { channel: channelId },
+          { orderBy: { playOrder: 'ASC' }, limit: 6 },
+        );
+      }
+      if (!currentSegment && windowSegments.length > 0) {
+        currentSegment = windowSegments[0];
+        channel.currentSegmentId = currentSegment.id;
+        channel.currentPlayOrder = currentSegment.playOrder;
+        channel.playheadStartedAt = now;
+        await this.em.flush();
+      }
+    }
+
+    let prevType: string | null = null;
+    const hlsSegments = windowSegments
+      .filter(
+        (s) =>
+          Boolean(s.audioUrl) &&
+          typeof s.durationSeconds === 'number' &&
+          s.durationSeconds > 0,
+      )
+      .map((s, idx) => {
+        const currentType = s.type;
+        const isDiscontinuity =
+          idx > 0 && prevType !== null && prevType !== currentType;
+        prevType = currentType;
+        return {
+          durationSeconds: s.durationSeconds,
+          url: this.resolveAudioUrl(s.audioUrl),
+          discontinuity: isDiscontinuity,
+        };
+      });
+
+    const firstPlayableSegment = windowSegments.find(
+      (s) =>
+        Boolean(s.audioUrl) &&
+        typeof s.durationSeconds === 'number' &&
+        s.durationSeconds > 0,
+    );
+    const mediaSequence =
+      firstPlayableSegment?.playOrder ??
+      currentSegment?.playOrder ??
+      channel.currentPlayOrder ??
+      0;
+
+    const manifest = generateHlsManifest({
+      mediaSequence,
+      segments: hlsSegments,
+    });
+
+    if (playheadState.needsReplenishment) {
       this.queueService.bufferAhead(channelId).catch((err) => {
         this.logger.warn(
           { channelId, err: err instanceof Error ? err.message : String(err) },

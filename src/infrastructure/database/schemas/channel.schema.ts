@@ -59,8 +59,8 @@ export const SegmentSchema = new EntitySchema<Segment>({
     },
     channelId: { type: 'string', persist: false },
     playOrder: { type: 'integer' },
-    audioUrl: { type: 'string', nullable: true },
-    durationSeconds: { type: 'float', nullable: true },
+    audioUrl: { type: 'string' },
+    durationSeconds: { type: 'float' },
     type: { type: 'string' },
     createdAt: {
       type: 'Date',

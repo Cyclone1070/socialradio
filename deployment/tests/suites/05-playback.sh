@@ -72,6 +72,66 @@ if [ "$SECOND_ORDER" -le "$FIRST_ORDER" ]; then
 fi
 echo "  ✓ FIFO playOrder advanced in DB: #$FIRST_ORDER -> #$SECOND_ORDER"
 
+echo "37c. Issue 1: Missing audio segment in window must not desync MEDIA-SEQUENCE"
+psql_run -c "UPDATE segment SET audio_url = '' WHERE id = '$SECOND_SEGMENT_ID';" >/dev/null
+assert_status GET "$BASE_URL/channels/$PLAY_CHAN_ID/live.m3u8" 200
+DROPPED_SEQ=$(echo "$BODY" | grep '#EXT-X-MEDIA-SEQUENCE:' | sed 's/#EXT-X-MEDIA-SEQUENCE://')
+FIRST_CHUNK_ORDER=$(psql_run -t -A -c "SELECT \"play_order\" FROM segment WHERE \"channelId\" = '$PLAY_CHAN_ID' AND \"audio_url\" != '' AND \"play_order\" >= '$SECOND_ORDER' ORDER BY \"play_order\" ASC LIMIT 1;")
+if [ "$DROPPED_SEQ" -ne "$FIRST_CHUNK_ORDER" ]; then
+  fail "MEDIA-SEQUENCE ($DROPPED_SEQ) does not match first playable chunk play_order ($FIRST_CHUNK_ORDER)"
+fi
+echo "  ✓ MEDIA-SEQUENCE matches first playable chunk ($DROPPED_SEQ = $FIRST_CHUNK_ORDER)"
+
+echo "37d. Issue 2: Established channel with missing playhead_started_at must not rewind to track 1"
+psql_run -c "UPDATE channel SET playhead_started_at = NULL WHERE id = '$PLAY_CHAN_ID';" >/dev/null
+assert_status GET "$BASE_URL/channels/$PLAY_CHAN_ID/live.m3u8" 200
+REWOUND_SEQ=$(echo "$BODY" | grep '#EXT-X-MEDIA-SEQUENCE:' | sed 's/#EXT-X-MEDIA-SEQUENCE://')
+if [ "$REWOUND_SEQ" -lt "$SECOND_ORDER" ]; then
+  fail "Station time-traveled back to $REWOUND_SEQ (expected >= $SECOND_ORDER)"
+fi
+echo "  ✓ Station resumed without time-travel ($REWOUND_SEQ >= $SECOND_ORDER)"
+
+echo "37e. Issue 3: Missing last_active_at on active quiet station must trigger idle freeze"
+psql_run -c "UPDATE channel SET last_active_at = NULL, playhead_started_at = now() - interval '3600 seconds' WHERE id = '$PLAY_CHAN_ID';" >/dev/null
+assert_status GET "$BASE_URL/channels/$PLAY_CHAN_ID/live.m3u8" 200
+LAST_ACTIVE_AFTER=$(psql_run -t -A -c "SELECT \"last_active_at\" FROM channel WHERE id = '$PLAY_CHAN_ID';")
+[ -n "$LAST_ACTIVE_AFTER" ] || fail "last_active_at was not set after wakeup"
+FROZEN_SEQ=$(echo "$BODY" | grep '#EXT-X-MEDIA-SEQUENCE:' | sed 's/#EXT-X-MEDIA-SEQUENCE://')
+if [ "$FROZEN_SEQ" -gt 35 ]; then
+  fail "Idle freeze failed: sequence jumped to $FROZEN_SEQ (burned > 600s of queue)"
+fi
+echo "  ✓ Idle freeze safely clamped advancement (sequence: #$FROZEN_SEQ <= 35)"
+
+echo "37f. Issue 4: DB constraints reject negative duration and null audio_url"
+ACTIVE_SEG_ID=$(psql_run -t -A -c "SELECT id FROM segment WHERE \"channelId\" = '$PLAY_CHAN_ID' AND \"play_order\" >= '$FROZEN_SEQ' ORDER BY \"play_order\" ASC LIMIT 1;")
+if psql_run -c "UPDATE segment SET duration_seconds = -1 WHERE id = '$ACTIVE_SEG_ID';" 2>/dev/null; then
+  fail "DB allowed setting negative duration_seconds on segment"
+fi
+echo "  ✓ DB check constraint rejected negative duration_seconds"
+
+if psql_run -c "UPDATE segment SET audio_url = NULL WHERE id = '$ACTIVE_SEG_ID';" 2>/dev/null; then
+  fail "DB allowed setting NULL audio_url on segment"
+fi
+echo "  ✓ DB NOT NULL constraint rejected NULL audio_url"
+
+echo "37g. Issue 5: Concurrent manifest requests must not deadlock or fail"
+PIDS=""
+for i in 1 2 3 4 5; do
+  curl -s -o /dev/null -w "%{http_code}\n" "$BASE_URL/channels/$PLAY_CHAN_ID/live.m3u8" > "/tmp/concurrent_test_$i.txt" &
+  PIDS="$PIDS $!"
+done
+for pid in $PIDS; do
+  wait "$pid"
+done
+for i in 1 2 3 4 5; do
+  CODE=$(cat "/tmp/concurrent_test_$i.txt")
+  rm -f "/tmp/concurrent_test_$i.txt"
+  if [ "$CODE" != "200" ]; then
+    fail "Concurrent manifest request #$i failed with status $CODE"
+  fi
+done
+echo "  ✓ Concurrent manifest requests resolved cleanly without lock contention"
+
 echo "38. Access Control on Private Channels (Rule A-3)"
 assert_status POST "$BASE_URL/channels" 201 \
   -H "Authorization: Bearer $TOKEN" \
