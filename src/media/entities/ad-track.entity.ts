@@ -1,7 +1,87 @@
 export class AdTrack {
-  id!: string;
-  advertiser!: string;
-  filePath!: string;
-  durationSeconds!: number;
-  createdAt: Date = new Date();
+  private _id!: string;
+  private _advertiser!: string;
+  private _filePath!: string;
+  private _durationSeconds!: number;
+  private _createdAt!: Date;
+
+  constructor(
+    advertiser?: string,
+    filePath?: string,
+    durationSeconds?: number,
+    id?: string,
+    createdAt?: Date,
+  ) {
+    if (advertiser !== undefined) this.advertiser = advertiser;
+    if (filePath !== undefined) {
+      const trimmed = filePath?.trim();
+      if (!trimmed) {
+        throw new Error('filePath cannot be empty');
+      }
+      this._filePath = trimmed;
+    }
+    if (durationSeconds !== undefined) {
+      if (
+        typeof durationSeconds !== 'number' ||
+        isNaN(durationSeconds) ||
+        durationSeconds <= 0
+      ) {
+        throw new Error('durationSeconds must be > 0');
+      }
+      this._durationSeconds = durationSeconds;
+    }
+    if (id !== undefined) this._id = id;
+    if (createdAt !== undefined) this._createdAt = createdAt;
+  }
+
+  get id(): string {
+    return this._id;
+  }
+
+  private set id(value: string) {
+    this._id = value;
+  }
+
+  get advertiser(): string {
+    return this._advertiser;
+  }
+
+  set advertiser(value: string) {
+    const trimmed = value?.trim();
+    if (!trimmed) {
+      throw new Error('advertiser cannot be empty');
+    }
+    this._advertiser = trimmed;
+  }
+
+  get filePath(): string {
+    return this._filePath;
+  }
+
+  private set filePath(value: string) {
+    const trimmed = value?.trim();
+    if (!trimmed) {
+      throw new Error('filePath cannot be empty');
+    }
+    this._filePath = trimmed;
+  }
+
+  get durationSeconds(): number {
+    return this._durationSeconds;
+  }
+
+  private set durationSeconds(value: number) {
+    if (typeof value !== 'number' || isNaN(value) || value <= 0) {
+      throw new Error('durationSeconds must be > 0');
+    }
+    this._durationSeconds = value;
+  }
+
+  get createdAt(): Date {
+    return this._createdAt;
+  }
+
+  private set createdAt(value: Date) {
+    this._createdAt = value;
+  }
 }

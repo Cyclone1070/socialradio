@@ -7,24 +7,40 @@ export const SubredditSchema = new EntitySchema<Subreddit>({
   class: Subreddit,
   tableName: 'subreddit',
   properties: {
-    id: { type: 'uuid', primary: true, defaultRaw: 'gen_random_uuid()' },
-    name: { type: 'string', unique: true },
-    lastScrapedAt: { type: 'Date', nullable: true },
-    scrapeStartedAt: { type: 'Date', nullable: true },
-    scrapeCooldownUntil: { type: 'Date', nullable: true },
+    id: {
+      type: 'uuid',
+      primary: true,
+      defaultRaw: 'gen_random_uuid()',
+      accessor: true,
+    },
+    name: { type: 'string', unique: true, accessor: true },
+    lastScrapedAt: { type: 'Date', nullable: true, accessor: true },
+    scrapeStartedAt: { type: 'Date', nullable: true, accessor: true },
+    scrapeCooldownUntil: { type: 'Date', nullable: true, accessor: true },
     createdAt: {
       type: 'Date',
-      onCreate: () => new Date(),
       defaultRaw: 'now()',
+      accessor: true,
     },
   },
+  checks: [
+    {
+      name: 'subreddit_name_not_empty',
+      expression: 'length(trim(name)) > 0',
+    },
+  ],
 });
 
 export const PostSchema = new EntitySchema<Post>({
   class: Post,
   tableName: 'post',
   properties: {
-    id: { type: 'uuid', primary: true, defaultRaw: 'gen_random_uuid()' },
+    id: {
+      type: 'uuid',
+      primary: true,
+      defaultRaw: 'gen_random_uuid()',
+      accessor: true,
+    },
     subreddit: {
       kind: 'm:1',
       entity: () => Subreddit,
@@ -32,15 +48,15 @@ export const PostSchema = new EntitySchema<Post>({
       deleteRule: 'cascade',
     },
     subredditId: { type: 'string', persist: false },
-    redditId: { type: 'string', unique: true },
-    title: { type: 'string' },
-    body: { type: 'text' },
-    score: { type: 'integer' },
-    redditCreatedAt: { type: 'Date' },
+    redditId: { type: 'string', unique: true, accessor: true },
+    title: { type: 'string', accessor: true },
+    body: { type: 'text', accessor: true },
+    score: { type: 'integer', accessor: true },
+    redditCreatedAt: { type: 'Date', accessor: true },
     scrapedAt: {
       type: 'Date',
-      onCreate: () => new Date(),
       defaultRaw: 'now()',
+      accessor: true,
     },
     comments: {
       kind: '1:m',
@@ -55,7 +71,12 @@ export const CommentSchema = new EntitySchema<Comment>({
   class: Comment,
   tableName: 'comment',
   properties: {
-    id: { type: 'uuid', primary: true, defaultRaw: 'gen_random_uuid()' },
+    id: {
+      type: 'uuid',
+      primary: true,
+      defaultRaw: 'gen_random_uuid()',
+      accessor: true,
+    },
     post: {
       kind: 'm:1',
       entity: () => Post,
@@ -63,12 +84,12 @@ export const CommentSchema = new EntitySchema<Comment>({
       deleteRule: 'cascade',
     },
     postId: { type: 'string', persist: false },
-    redditId: { type: 'string', unique: true },
-    body: { type: 'text' },
-    score: { type: 'integer' },
-    parentRedditId: { type: 'string', nullable: true },
-    isOp: { type: 'boolean', default: false },
-    redditCreatedAt: { type: 'Date' },
+    redditId: { type: 'string', unique: true, accessor: true },
+    body: { type: 'text', accessor: true },
+    score: { type: 'integer', accessor: true },
+    parentRedditId: { type: 'string', nullable: true, accessor: true },
+    isOp: { type: 'boolean', default: false, accessor: true },
+    redditCreatedAt: { type: 'Date', accessor: true },
   },
   indexes: [{ properties: ['post'] }],
 });

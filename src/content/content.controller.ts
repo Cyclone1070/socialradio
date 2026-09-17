@@ -9,6 +9,7 @@ import {
   PostSchema,
 } from '../infrastructure/database/schemas/content.schema';
 import { JwtAuthGuard, RolesGuard, Roles } from '../infrastructure/auth';
+import { ScrapeSubredditDto } from './dto/scrape-subreddit.dto';
 
 @Controller('admin/feeds')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -24,9 +25,9 @@ export class ContentController {
 
   @Post('scrape')
   async scrape(
-    @Body() body: { subredditName: string },
+    @Body() dto: ScrapeSubredditDto,
   ): Promise<ScrapeSubredditResult> {
-    const normalizedName = body.subredditName.trim().toLowerCase();
+    const normalizedName = dto.subredditName?.trim().toLowerCase();
     return this.scraperService.scrapeSubreddit(normalizedName);
   }
 

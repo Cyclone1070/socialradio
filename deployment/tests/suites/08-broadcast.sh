@@ -167,10 +167,16 @@ echo "58. Orphaned Playhead Recovery & Sequence Monotonicity (Self-Healing Playh
 PREV_SEQ=$(psql_run -t -A -c "SELECT COALESCE(\"current_play_order\", 1) FROM channel WHERE \"id\" = '$BC_CHAN_ID';")
 [ -n "$PREV_SEQ" ] || PREV_SEQ=1
 
-# Simulate disaster: insert a historical track with play_order = -1,
-# and corrupt current_segment_id by pointing it to a non-existent UUID
-psql_run -c "INSERT INTO segment (\"id\", \"channelId\", \"play_order\", \"type\", \"duration_seconds\", \"audio_url\", \"created_at\") VALUES ('00000000-0000-0000-0000-000000000001', '$BC_CHAN_ID', -1, 'jingle', 10, 'jingles/station-id.mp3', now() - interval '1 hour') ON CONFLICT DO NOTHING;" >/dev/null
-psql_run -c "UPDATE channel SET \"current_segment_id\" = '00000000-0000-0000-0000-000000000099' WHERE \"id\" = '$BC_CHAN_ID';" >/dev/null
+# Verify DB constraints actively reject corrupted state
+if psql_run -c "INSERT INTO segment (\"id\", \"channelId\", \"play_order\", \"type\", \"duration_seconds\", \"audio_url\", \"created_at\") VALUES ('00000000-0000-0000-0000-000000000001', '$BC_CHAN_ID', -1, 'jingle', 10, 'jingles/station-id.mp3', now() - interval '1 hour');" 2>/dev/null; then
+  fail "DB allowed inserting negative play_order on segment"
+fi
+if psql_run -c "UPDATE channel SET \"current_segment_id\" = '00000000-0000-0000-0000-000000000099' WHERE \"id\" = '$BC_CHAN_ID';" 2>/dev/null; then
+  fail "DB allowed setting nonexistent current_segment_id on channel"
+fi
+
+# Simulate orphaned playhead: set current_segment_id to NULL
+psql_run -c "UPDATE channel SET \"current_segment_id\" = NULL WHERE \"id\" = '$BC_CHAN_ID';" >/dev/null
 
 # Listener polls manifest
 assert_status GET "$BASE_URL/channels/$BC_CHAN_ID/live.m3u8" 200
@@ -182,15 +188,13 @@ if ! echo "$NEW_MANIFEST" | grep -q '^#EXTM3U'; then
   fail "Manifest corrupted after orphaned recovery"
 fi
 
-# 2. Media sequence is monotonic: must NOT have regressed to -1 (the ancient historical track)!
+# 2. Media sequence is monotonic: must NOT have regressed into historical past!
 NEW_SEQ=$(echo "$NEW_MANIFEST" | grep '#EXT-X-MEDIA-SEQUENCE:' | sed 's/#EXT-X-MEDIA-SEQUENCE://')
 if [ "$NEW_SEQ" -lt "$PREV_SEQ" ]; then
   fail "Media sequence regressed into historical past! (was $PREV_SEQ, got $NEW_SEQ)"
 fi
 
-# 3. Channel record in Postgres was self-healed: current_segment_id no longer points to corrupt UUID
+# 3. Channel record in Postgres was self-healed: current_segment_id was restored
 HEALED_SEG=$(psql_run -t -A -c "SELECT \"current_segment_id\" FROM channel WHERE \"id\" = '$BC_CHAN_ID';")
-if [ "$HEALED_SEG" = "00000000-0000-0000-0000-000000000099" ]; then
-  fail "Channel current_segment_id was not self-healed in PostgreSQL"
-fi
+[ -n "$HEALED_SEG" ] || fail "Channel current_segment_id was not self-healed in PostgreSQL"
 echo "  ✓ Orphaned playhead self-healed in DB (seq #$NEW_SEQ >= #$PREV_SEQ without rewinding to historical past)"

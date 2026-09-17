@@ -1109,8 +1109,12 @@ describe('PlaybackService', () => {
           id: 'seg-bad',
           channelId,
           playOrder: 1,
-          durationSeconds: -1, // Corrupted duration!
           audioUrl: 'music/bad.mp3',
+        });
+        // Deliberately simulate corrupted row bypassing entity setter
+        Object.defineProperty(badSeg, 'durationSeconds', {
+          value: -1,
+          configurable: true,
         });
         const goodSeg = Object.assign(new MusicSegment(), {
           id: 'seg-good',

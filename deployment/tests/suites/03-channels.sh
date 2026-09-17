@@ -153,3 +153,22 @@ assert_jq '.statusCode == 401' 'body confirms 401 with wrong internal token'
 assert_status GET "$BASE_URL/channels/active" 200 \
   -H "x-internal-token: $SECRET"
 assert_jq 'type == "array"' 'active channels returns array'
+
+echo "26. DB Invariants: Channel string hygiene & media file_path uniqueness"
+if psql_run -c "INSERT INTO channel (name) VALUES ('   ');" 2>/dev/null; then
+  fail "DB allowed channel with whitespace name"
+fi
+echo "  ✓ DB check constraint rejected whitespace channel name"
+
+if psql_run -c "INSERT INTO subreddit (name) VALUES ('   ');" 2>/dev/null; then
+  fail "DB allowed subreddit with whitespace name"
+fi
+echo "  ✓ DB check constraint rejected whitespace subreddit name"
+
+DUP_PATH="music/e2e-dup-test-track.mp3"
+psql_run -c "INSERT INTO music_track (title, artist, file_path, duration_seconds) VALUES ('Dup1', 'Artist1', '$DUP_PATH', 60) ON CONFLICT DO NOTHING;" >/dev/null
+if psql_run -c "INSERT INTO music_track (title, artist, file_path, duration_seconds) VALUES ('Dup2', 'Artist2', '$DUP_PATH', 120);" 2>/dev/null; then
+  fail "DB allowed duplicate music_track.file_path"
+fi
+psql_run -c "DELETE FROM music_track WHERE file_path = '$DUP_PATH';" >/dev/null
+echo "  ✓ DB unique constraint rejected duplicate music_track.file_path"

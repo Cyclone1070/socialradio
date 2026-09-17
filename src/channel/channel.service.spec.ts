@@ -56,7 +56,7 @@ describe('ChannelService', () => {
       const ownerId = 'user-1';
 
       mockEntityManager.persist.mockImplementation((chan: Channel) => {
-        chan.id = 'chan-1';
+        Object.assign(chan, { id: 'chan-1' });
         return mockEntityManager;
       });
 

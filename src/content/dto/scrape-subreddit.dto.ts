@@ -1,7 +1,7 @@
 import { IsString, IsNotEmpty, MinLength } from 'class-validator';
 import { Transform } from 'class-transformer';
 
-export class SubscribeSubredditDto {
+export class ScrapeSubredditDto {
   @Transform(({ value }: { value: unknown }): unknown =>
     typeof value === 'string' ? value.trim().toLowerCase() : value,
   )

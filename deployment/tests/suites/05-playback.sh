@@ -109,10 +109,41 @@ if psql_run -c "UPDATE segment SET duration_seconds = -1 WHERE id = '$ACTIVE_SEG
 fi
 echo "  ✓ DB check constraint rejected negative duration_seconds"
 
+if psql_run -c "UPDATE segment SET duration_seconds = 99999 WHERE id = '$ACTIVE_SEG_ID';" 2>/dev/null; then
+  fail "DB allowed setting excessive duration_seconds (> 7200s) on segment"
+fi
+echo "  ✓ DB check constraint rejected excessive duration_seconds (> 7200s)"
+
 if psql_run -c "UPDATE segment SET audio_url = NULL WHERE id = '$ACTIVE_SEG_ID';" 2>/dev/null; then
   fail "DB allowed setting NULL audio_url on segment"
 fi
 echo "  ✓ DB NOT NULL constraint rejected NULL audio_url"
+
+if psql_run -c "INSERT INTO segment (id, \"channelId\", play_order, type, duration_seconds, audio_url) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', 0, 'jingle', 10, 'jingles/id.mp3');" 2>/dev/null; then
+  fail "DB allowed inserting play_order = 0 on segment"
+fi
+if psql_run -c "INSERT INTO segment (id, \"channelId\", play_order, type, duration_seconds, audio_url) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', -5, 'jingle', 10, 'jingles/id.mp3');" 2>/dev/null; then
+  fail "DB allowed inserting negative play_order on segment"
+fi
+echo "  ✓ DB check constraint rejected non-positive play_order (<= 0)"
+
+if psql_run -c "INSERT INTO segment (id, \"channelId\", play_order, type, duration_seconds, audio_url, status) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', 9999, 'jingle', 10, 'jingles/id.mp3', 'bogus');" 2>/dev/null; then
+  fail "DB allowed invalid segment status 'bogus'"
+fi
+echo "  ✓ DB check constraint rejected invalid segment status"
+
+if psql_run -c "INSERT INTO segment (id, \"channelId\", play_order, type, duration_seconds, audio_url, title, artist) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', 9998, 'music', 120, 'music/track.mp3', NULL, 'Artist');" 2>/dev/null; then
+  fail "DB allowed music segment with NULL title"
+fi
+if psql_run -c "INSERT INTO segment (id, \"channelId\", play_order, type, duration_seconds, audio_url, title, artist) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', 9997, 'music', 120, 'music/track.mp3', 'Title', NULL);" 2>/dev/null; then
+  fail "DB allowed music segment with NULL artist"
+fi
+echo "  ✓ DB check constraint rejected music segment with missing title/artist"
+
+if psql_run -c "INSERT INTO segment (id, \"channelId\", play_order, type, duration_seconds, audio_url, cluster_id) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', 9996, 'talk', 60, 'talk/track.mp3', NULL);" 2>/dev/null; then
+  fail "DB allowed talk segment with NULL cluster_id"
+fi
+echo "  ✓ DB check constraint rejected talk segment with missing cluster_id"
 
 echo "37g. Issue 5: Concurrent manifest requests must not deadlock or fail"
 PIDS=""
@@ -131,6 +162,30 @@ for i in 1 2 3 4 5; do
   fi
 done
 echo "  ✓ Concurrent manifest requests resolved cleanly without lock contention"
+
+echo "37h. Issue 6: Channel FK integrity (current_segment_id, owner_id) & self-healing playhead"
+if psql_run -c "UPDATE channel SET current_segment_id = '00000000-0000-0000-0000-000000000000' WHERE id = '$PLAY_CHAN_ID';" 2>/dev/null; then
+  fail "DB allowed setting nonexistent current_segment_id on channel"
+fi
+echo "  ✓ DB FK rejected nonexistent current_segment_id"
+
+if psql_run -c "UPDATE channel SET owner_id = '00000000-0000-0000-0000-000000000000' WHERE id = '$PLAY_CHAN_ID';" 2>/dev/null; then
+  fail "DB allowed setting nonexistent owner_id on channel"
+fi
+echo "  ✓ DB FK rejected nonexistent owner_id"
+
+CHAN_CURR_SEG=$(psql_run -t -A -c "SELECT current_segment_id FROM channel WHERE id = '$PLAY_CHAN_ID';")
+if [ -n "$CHAN_CURR_SEG" ] && [ "$CHAN_CURR_SEG" != "" ]; then
+  psql_run -c "DELETE FROM segment WHERE id = '$CHAN_CURR_SEG';" >/dev/null
+  CHAN_SEG_AFTER_DEL=$(psql_run -t -A -c "SELECT current_segment_id FROM channel WHERE id = '$PLAY_CHAN_ID';")
+  [ -z "$CHAN_SEG_AFTER_DEL" ] || fail "ON DELETE SET NULL failed: current_segment_id still set to $CHAN_SEG_AFTER_DEL"
+  echo "  ✓ ON DELETE SET NULL automatically nulled channel.current_segment_id upon segment deletion"
+
+  assert_status GET "$BASE_URL/channels/$PLAY_CHAN_ID/live.m3u8" 200
+  CHAN_SEG_HEALED=$(psql_run -t -A -c "SELECT current_segment_id FROM channel WHERE id = '$PLAY_CHAN_ID';")
+  [ -n "$CHAN_SEG_HEALED" ] && [ "$CHAN_SEG_HEALED" != "" ] || fail "Playback service failed to self-heal current_segment_id"
+  echo "  ✓ Playback service self-healed current_segment_id ($CHAN_SEG_HEALED)"
+fi
 
 echo "38. Access Control on Private Channels (Rule A-3)"
 assert_status POST "$BASE_URL/channels" 201 \

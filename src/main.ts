@@ -26,7 +26,7 @@ async function bootstrap() {
   // Route Nest's own logs through pino (JSON on stdout); pino-http request
   // logging is attached by LoggingModule itself.
   app.useLogger(app.get(Logger));
-  app.useGlobalPipes(new ValidationPipe());
+  app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
 
   await app.listen(process.env.PORT ?? 3000);
 }

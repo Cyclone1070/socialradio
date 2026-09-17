@@ -184,13 +184,14 @@ export class ScraperService {
             continue;
           }
 
-          const post = new Post();
-          post.subreddit = subreddit;
-          post.redditId = rawPost.id;
-          post.title = rawPost.title;
-          post.body = rawPost.selftext || '';
-          post.score = rawPost.score;
-          post.redditCreatedAt = new Date(rawPost.created_utc * 1000);
+          const post = new Post(
+            subreddit,
+            rawPost.id,
+            rawPost.title,
+            rawPost.selftext || '',
+            rawPost.score,
+            new Date(rawPost.created_utc * 1000),
+          );
           this.em.persist(post);
 
           for (const rawComment of rawComments) {
@@ -203,15 +204,14 @@ export class ScraperService {
                 ? parentIdStr.replace(/^t1_/, '')
                 : null;
 
-            const comment = new Comment();
-            comment.post = post;
-            comment.redditId = rawComment.id;
-            comment.body = rawComment.body || '';
-            comment.score = rawComment.score || 0;
-            comment.parentRedditId = parentRedditId;
-            comment.isOp = isOp;
-            comment.redditCreatedAt = new Date(
-              (rawComment.created_utc || 0) * 1000,
+            const comment = new Comment(
+              post,
+              rawComment.id,
+              rawComment.body || '',
+              rawComment.score || 0,
+              parentRedditId,
+              isOp,
+              new Date((rawComment.created_utc || 0) * 1000),
             );
             this.em.persist(comment);
           }

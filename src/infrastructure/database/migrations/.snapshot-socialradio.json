@@ -56,14 +56,14 @@
         },
         "duration_seconds": {
           "name": "duration_seconds",
-          "type": "float4",
+          "type": "real",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": false,
           "unique": false,
           "length": null,
-          "precision": 24,
+          "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
@@ -72,7 +72,7 @@
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamptz(6)",
+          "type": "timestamptz",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
@@ -92,488 +92,34 @@
       "indexes": [
         {
           "columnNames": [
-            "id"
+            "file_path"
           ],
           "composite": false,
-          "constraint": false,
+          "keyName": "ad_track_file_path_unique",
+          "constraint": true,
+          "primary": false,
+          "unique": true
+        },
+        {
           "keyName": "ad_track_pkey",
-          "unique": true,
-          "primary": true
-        }
-      ],
-      "checks": [],
-      "foreignKeys": {},
-      "nativeEnums": {},
-      "comment": null
-    },
-    {
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": true,
-          "nullable": false,
-          "unique": false,
-          "length": null,
-          "precision": null,
-          "scale": null,
-          "default": "gen_random_uuid()",
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "uuid"
-        },
-        "name": {
-          "name": "name",
-          "type": "varchar(255)",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": false,
-          "unique": false,
-          "length": 255,
-          "precision": null,
-          "scale": null,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "string"
-        },
-        "visibility": {
-          "name": "visibility",
-          "type": "varchar(255)",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": false,
-          "unique": false,
-          "length": 255,
-          "precision": null,
-          "scale": null,
-          "default": "'public'",
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "string"
-        },
-        "owner_id": {
-          "name": "owner_id",
-          "type": "varchar(255)",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": true,
-          "unique": false,
-          "length": 255,
-          "precision": null,
-          "scale": null,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "string"
-        },
-        "current_segment_id": {
-          "name": "current_segment_id",
-          "type": "varchar(255)",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": true,
-          "unique": false,
-          "length": 255,
-          "precision": null,
-          "scale": null,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "string"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamptz(6)",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": false,
-          "unique": false,
-          "length": 6,
-          "precision": null,
-          "scale": null,
-          "default": "now()",
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "datetime"
-        }
-      },
-      "name": "channel",
-      "schema": "public",
-      "indexes": [
-        {
           "columnNames": [
             "id"
-          ],
-          "composite": false,
-          "constraint": false,
-          "keyName": "channel_pkey",
-          "unique": true,
-          "primary": true
-        }
-      ],
-      "checks": [],
-      "foreignKeys": {},
-      "nativeEnums": {},
-      "comment": null
-    },
-    {
-      "columns": {
-        "channelId": {
-          "name": "channelId",
-          "type": "uuid",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": true,
-          "nullable": false,
-          "unique": false,
-          "length": null,
-          "precision": null,
-          "scale": null,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "uuid"
-        },
-        "postId": {
-          "name": "postId",
-          "type": "uuid",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": true,
-          "nullable": false,
-          "unique": false,
-          "length": null,
-          "precision": null,
-          "scale": null,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "uuid"
-        }
-      },
-      "name": "channel_post_progress",
-      "schema": "public",
-      "indexes": [
-        {
-          "columnNames": [
-            "channelId",
-            "postId"
-          ],
-          "composite": true,
-          "constraint": false,
-          "keyName": "channel_post_progress_pkey",
-          "unique": true,
-          "primary": true,
-          "expression": "CREATE UNIQUE INDEX channel_post_progress_pkey ON public.channel_post_progress USING btree (\"channelId\", \"postId\")"
-        }
-      ],
-      "checks": [],
-      "foreignKeys": {
-        "channel_post_progress_channelId_foreign": {
-          "columnNames": [
-            "channelId"
-          ],
-          "constraintName": "channel_post_progress_channelId_foreign",
-          "localTableName": "public.channel_post_progress",
-          "referencedTableName": "public.channel",
-          "referencedColumnNames": [
-            "id"
-          ],
-          "updateRule": "cascade",
-          "deleteRule": "cascade"
-        },
-        "channel_post_progress_postId_foreign": {
-          "columnNames": [
-            "postId"
-          ],
-          "constraintName": "channel_post_progress_postId_foreign",
-          "localTableName": "public.channel_post_progress",
-          "referencedTableName": "public.post",
-          "referencedColumnNames": [
-            "id"
-          ],
-          "updateRule": "cascade",
-          "deleteRule": "cascade"
-        }
-      },
-      "nativeEnums": {},
-      "comment": null
-    },
-    {
-      "columns": {
-        "channelId": {
-          "name": "channelId",
-          "type": "uuid",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": true,
-          "nullable": false,
-          "unique": false,
-          "length": null,
-          "precision": null,
-          "scale": null,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "uuid"
-        },
-        "subredditId": {
-          "name": "subredditId",
-          "type": "uuid",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": true,
-          "nullable": false,
-          "unique": false,
-          "length": null,
-          "precision": null,
-          "scale": null,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "uuid"
-        }
-      },
-      "name": "channel_subreddit",
-      "schema": "public",
-      "indexes": [
-        {
-          "columnNames": [
-            "channelId",
-            "subredditId"
-          ],
-          "composite": true,
-          "constraint": false,
-          "keyName": "channel_subreddit_pkey",
-          "unique": true,
-          "primary": true,
-          "expression": "CREATE UNIQUE INDEX channel_subreddit_pkey ON public.channel_subreddit USING btree (\"channelId\", \"subredditId\")"
-        }
-      ],
-      "checks": [],
-      "foreignKeys": {
-        "channel_subreddit_channelId_foreign": {
-          "columnNames": [
-            "channelId"
-          ],
-          "constraintName": "channel_subreddit_channelId_foreign",
-          "localTableName": "public.channel_subreddit",
-          "referencedTableName": "public.channel",
-          "referencedColumnNames": [
-            "id"
-          ],
-          "updateRule": "cascade",
-          "deleteRule": "cascade"
-        },
-        "channel_subreddit_subredditId_foreign": {
-          "columnNames": [
-            "subredditId"
-          ],
-          "constraintName": "channel_subreddit_subredditId_foreign",
-          "localTableName": "public.channel_subreddit",
-          "referencedTableName": "public.subreddit",
-          "referencedColumnNames": [
-            "id"
-          ],
-          "updateRule": "cascade",
-          "deleteRule": "cascade"
-        }
-      },
-      "nativeEnums": {},
-      "comment": null
-    },
-    {
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": true,
-          "nullable": false,
-          "unique": false,
-          "length": null,
-          "precision": null,
-          "scale": null,
-          "default": "gen_random_uuid()",
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "uuid"
-        },
-        "postId": {
-          "name": "postId",
-          "type": "uuid",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": false,
-          "unique": false,
-          "length": null,
-          "precision": null,
-          "scale": null,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "uuid"
-        },
-        "reddit_id": {
-          "name": "reddit_id",
-          "type": "varchar(255)",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": false,
-          "unique": true,
-          "length": 255,
-          "precision": null,
-          "scale": null,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "string"
-        },
-        "body": {
-          "name": "body",
-          "type": "text",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": false,
-          "unique": false,
-          "length": null,
-          "precision": null,
-          "scale": null,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "text"
-        },
-        "score": {
-          "name": "score",
-          "type": "int4",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": false,
-          "unique": false,
-          "length": null,
-          "precision": 32,
-          "scale": 0,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "integer"
-        },
-        "parent_reddit_id": {
-          "name": "parent_reddit_id",
-          "type": "varchar(255)",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": true,
-          "unique": false,
-          "length": 255,
-          "precision": null,
-          "scale": null,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "string"
-        },
-        "is_op": {
-          "name": "is_op",
-          "type": "bool",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": false,
-          "unique": false,
-          "length": null,
-          "precision": null,
-          "scale": null,
-          "default": "false",
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "boolean"
-        },
-        "reddit_created_at": {
-          "name": "reddit_created_at",
-          "type": "timestamptz(6)",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": false,
-          "unique": false,
-          "length": 6,
-          "precision": null,
-          "scale": null,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "datetime"
-        }
-      },
-      "name": "comment",
-      "schema": "public",
-      "indexes": [
-        {
-          "columnNames": [
-            "id"
-          ],
-          "composite": false,
-          "constraint": false,
-          "keyName": "comment_pkey",
-          "unique": true,
-          "primary": true
-        },
-        {
-          "columnNames": [
-            "postId"
-          ],
-          "composite": false,
-          "constraint": false,
-          "keyName": "comment_postId_index",
-          "unique": false,
-          "primary": false,
-          "expression": "CREATE INDEX \"comment_postId_index\" ON public.comment USING btree (\"postId\")"
-        },
-        {
-          "columnNames": [
-            "reddit_id"
           ],
           "composite": false,
           "constraint": true,
-          "keyName": "comment_reddit_id_unique",
-          "unique": true,
-          "primary": false
+          "primary": true,
+          "unique": true
         }
       ],
-      "checks": [],
-      "foreignKeys": {
-        "comment_postId_foreign": {
-          "columnNames": [
-            "postId"
-          ],
-          "constraintName": "comment_postId_foreign",
-          "localTableName": "public.comment",
-          "referencedTableName": "public.post",
-          "referencedColumnNames": [
-            "id"
-          ],
-          "updateRule": "cascade",
-          "deleteRule": "cascade"
+      "checks": [
+        {
+          "name": "ad_track_duration_positive",
+          "expression": "duration_seconds > 0",
+          "definition": "check ((duration_seconds > 0))"
         }
-      },
-      "nativeEnums": {},
-      "comment": null
+      ],
+      "foreignKeys": {},
+      "nativeEnums": {}
     },
     {
       "columns": {
@@ -627,14 +173,14 @@
         },
         "duration_seconds": {
           "name": "duration_seconds",
-          "type": "float4",
+          "type": "real",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": false,
           "unique": false,
           "length": null,
-          "precision": 24,
+          "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
@@ -643,7 +189,7 @@
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamptz(6)",
+          "type": "timestamptz",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
@@ -663,19 +209,34 @@
       "indexes": [
         {
           "columnNames": [
+            "file_path"
+          ],
+          "composite": false,
+          "keyName": "jingle_file_path_unique",
+          "constraint": true,
+          "primary": false,
+          "unique": true
+        },
+        {
+          "keyName": "jingle_pkey",
+          "columnNames": [
             "id"
           ],
           "composite": false,
-          "constraint": false,
-          "keyName": "jingle_pkey",
-          "unique": true,
-          "primary": true
+          "constraint": true,
+          "primary": true,
+          "unique": true
         }
       ],
-      "checks": [],
+      "checks": [
+        {
+          "name": "jingle_duration_positive",
+          "expression": "duration_seconds > 0",
+          "definition": "check ((duration_seconds > 0))"
+        }
+      ],
       "foreignKeys": {},
-      "nativeEnums": {},
-      "comment": null
+      "nativeEnums": {}
     },
     {
       "columns": {
@@ -745,14 +306,14 @@
         },
         "duration_seconds": {
           "name": "duration_seconds",
-          "type": "float4",
+          "type": "real",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": false,
           "unique": false,
           "length": null,
-          "precision": 24,
+          "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
@@ -761,7 +322,7 @@
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamptz(6)",
+          "type": "timestamptz",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
@@ -781,19 +342,167 @@
       "indexes": [
         {
           "columnNames": [
+            "file_path"
+          ],
+          "composite": false,
+          "keyName": "music_track_file_path_unique",
+          "constraint": true,
+          "primary": false,
+          "unique": true
+        },
+        {
+          "keyName": "music_track_pkey",
+          "columnNames": [
             "id"
           ],
           "composite": false,
-          "constraint": false,
-          "keyName": "music_track_pkey",
-          "unique": true,
-          "primary": true
+          "constraint": true,
+          "primary": true,
+          "unique": true
         }
       ],
-      "checks": [],
+      "checks": [
+        {
+          "name": "music_track_duration_positive",
+          "expression": "duration_seconds > 0",
+          "definition": "check ((duration_seconds > 0))"
+        }
+      ],
       "foreignKeys": {},
-      "nativeEnums": {},
-      "comment": null
+      "nativeEnums": {}
+    },
+    {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": true,
+          "nullable": false,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": "gen_random_uuid()",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "uuid"
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 255,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
+        },
+        "last_scraped_at": {
+          "name": "last_scraped_at",
+          "type": "timestamptz",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": 6,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "datetime"
+        },
+        "scrape_started_at": {
+          "name": "scrape_started_at",
+          "type": "timestamptz",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": 6,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "datetime"
+        },
+        "scrape_cooldown_until": {
+          "name": "scrape_cooldown_until",
+          "type": "timestamptz",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": 6,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "datetime"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamptz",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 6,
+          "precision": null,
+          "scale": null,
+          "default": "now()",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "datetime"
+        }
+      },
+      "name": "subreddit",
+      "schema": "public",
+      "indexes": [
+        {
+          "columnNames": [
+            "name"
+          ],
+          "composite": false,
+          "keyName": "subreddit_name_unique",
+          "constraint": true,
+          "primary": false,
+          "unique": true
+        },
+        {
+          "keyName": "subreddit_pkey",
+          "columnNames": [
+            "id"
+          ],
+          "composite": false,
+          "constraint": true,
+          "primary": true,
+          "unique": true
+        }
+      ],
+      "checks": [
+        {
+          "name": "subreddit_name_not_empty",
+          "expression": "length(trim(name)) > 0",
+          "definition": "check ((length(trim(name)) > 0))"
+        }
+      ],
+      "foreignKeys": {},
+      "nativeEnums": {}
     },
     {
       "columns": {
@@ -836,7 +545,7 @@
           "autoincrement": false,
           "primary": false,
           "nullable": false,
-          "unique": true,
+          "unique": false,
           "length": 255,
           "precision": null,
           "scale": null,
@@ -879,15 +588,15 @@
         },
         "score": {
           "name": "score",
-          "type": "int4",
+          "type": "int",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": false,
           "unique": false,
           "length": null,
-          "precision": 32,
-          "scale": 0,
+          "precision": null,
+          "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
@@ -895,7 +604,7 @@
         },
         "reddit_created_at": {
           "name": "reddit_created_at",
-          "type": "timestamptz(6)",
+          "type": "timestamptz",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
@@ -911,7 +620,7 @@
         },
         "scraped_at": {
           "name": "scraped_at",
-          "type": "timestamptz(6)",
+          "type": "timestamptz",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
@@ -931,64 +640,591 @@
       "indexes": [
         {
           "columnNames": [
-            "id"
-          ],
-          "composite": false,
-          "constraint": false,
-          "keyName": "post_pkey",
-          "unique": true,
-          "primary": true
-        },
-        {
-          "columnNames": [
             "reddit_id"
           ],
           "composite": false,
-          "constraint": true,
           "keyName": "post_reddit_id_unique",
-          "unique": true,
-          "primary": false
+          "constraint": true,
+          "primary": false,
+          "unique": true
         },
         {
+          "keyName": "post_subredditId_index",
+          "columnNames": [
+            "subredditId"
+          ],
+          "composite": false,
+          "constraint": false,
+          "primary": false,
+          "unique": false
+        },
+        {
+          "keyName": "post_scraped_at_index",
           "columnNames": [
             "scraped_at"
           ],
           "composite": false,
           "constraint": false,
-          "keyName": "post_scraped_at_index",
-          "unique": false,
-          "primary": false
+          "primary": false,
+          "unique": false
         },
         {
+          "keyName": "post_pkey",
           "columnNames": [
-            "subredditId"
+            "id"
           ],
           "composite": false,
-          "constraint": false,
-          "keyName": "post_subredditId_index",
-          "unique": false,
-          "primary": false,
-          "expression": "CREATE INDEX \"post_subredditId_index\" ON public.post USING btree (\"subredditId\")"
+          "constraint": true,
+          "primary": true,
+          "unique": true
         }
       ],
       "checks": [],
       "foreignKeys": {
         "post_subredditId_foreign": {
+          "constraintName": "post_subredditId_foreign",
           "columnNames": [
             "subredditId"
           ],
-          "constraintName": "post_subredditId_foreign",
           "localTableName": "public.post",
-          "referencedTableName": "public.subreddit",
           "referencedColumnNames": [
             "id"
           ],
-          "updateRule": "cascade",
-          "deleteRule": "cascade"
+          "referencedTableName": "public.subreddit",
+          "deleteRule": "cascade",
+          "updateRule": "cascade"
         }
       },
-      "nativeEnums": {},
-      "comment": null
+      "nativeEnums": {}
+    },
+    {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": true,
+          "nullable": false,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": "gen_random_uuid()",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "uuid"
+        },
+        "postId": {
+          "name": "postId",
+          "type": "uuid",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "uuid"
+        },
+        "reddit_id": {
+          "name": "reddit_id",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 255,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "text"
+        },
+        "score": {
+          "name": "score",
+          "type": "int",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "integer"
+        },
+        "parent_reddit_id": {
+          "name": "parent_reddit_id",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": 255,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
+        },
+        "is_op": {
+          "name": "is_op",
+          "type": "boolean",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": "false",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "boolean"
+        },
+        "reddit_created_at": {
+          "name": "reddit_created_at",
+          "type": "timestamptz",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 6,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "datetime"
+        }
+      },
+      "name": "comment",
+      "schema": "public",
+      "indexes": [
+        {
+          "columnNames": [
+            "reddit_id"
+          ],
+          "composite": false,
+          "keyName": "comment_reddit_id_unique",
+          "constraint": true,
+          "primary": false,
+          "unique": true
+        },
+        {
+          "keyName": "comment_postId_index",
+          "columnNames": [
+            "postId"
+          ],
+          "composite": false,
+          "constraint": false,
+          "primary": false,
+          "unique": false
+        },
+        {
+          "keyName": "comment_pkey",
+          "columnNames": [
+            "id"
+          ],
+          "composite": false,
+          "constraint": true,
+          "primary": true,
+          "unique": true
+        }
+      ],
+      "checks": [],
+      "foreignKeys": {
+        "comment_postId_foreign": {
+          "constraintName": "comment_postId_foreign",
+          "columnNames": [
+            "postId"
+          ],
+          "localTableName": "public.comment",
+          "referencedColumnNames": [
+            "id"
+          ],
+          "referencedTableName": "public.post",
+          "deleteRule": "cascade",
+          "updateRule": "cascade"
+        }
+      },
+      "nativeEnums": {}
+    },
+    {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": true,
+          "nullable": false,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": "gen_random_uuid()",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "uuid"
+        },
+        "email": {
+          "name": "email",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 255,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
+        },
+        "password_hash": {
+          "name": "password_hash",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 255,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
+        },
+        "role": {
+          "name": "role",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 255,
+          "precision": null,
+          "scale": null,
+          "default": "'user'",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamptz",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 6,
+          "precision": null,
+          "scale": null,
+          "default": "now()",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "datetime"
+        }
+      },
+      "name": "user",
+      "schema": "public",
+      "indexes": [
+        {
+          "columnNames": [
+            "email"
+          ],
+          "composite": false,
+          "keyName": "user_email_unique",
+          "constraint": true,
+          "primary": false,
+          "unique": true
+        },
+        {
+          "keyName": "user_pkey",
+          "columnNames": [
+            "id"
+          ],
+          "composite": false,
+          "constraint": true,
+          "primary": true,
+          "unique": true
+        }
+      ],
+      "checks": [
+        {
+          "name": "user_role_check",
+          "expression": "role in ('user', 'admin')",
+          "definition": "check ((role in ('user', 'admin')))"
+        }
+      ],
+      "foreignKeys": {},
+      "nativeEnums": {}
+    },
+    {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": true,
+          "nullable": false,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": "gen_random_uuid()",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "uuid"
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 255,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
+        },
+        "visibility": {
+          "name": "visibility",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 255,
+          "precision": null,
+          "scale": null,
+          "default": "'public'",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "uuid"
+        },
+        "current_segment_id": {
+          "name": "current_segment_id",
+          "type": "uuid",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "uuid"
+        },
+        "current_play_order": {
+          "name": "current_play_order",
+          "type": "int",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "integer"
+        },
+        "playhead_started_at": {
+          "name": "playhead_started_at",
+          "type": "timestamptz",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": 6,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "datetime"
+        },
+        "last_active_at": {
+          "name": "last_active_at",
+          "type": "timestamptz",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": 6,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "datetime"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamptz",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 6,
+          "precision": null,
+          "scale": null,
+          "default": "now()",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "datetime"
+        }
+      },
+      "name": "channel",
+      "schema": "public",
+      "indexes": [
+        {
+          "keyName": "channel_current_segment_id_index",
+          "columnNames": [
+            "current_segment_id"
+          ],
+          "composite": false,
+          "constraint": false,
+          "primary": false,
+          "unique": false
+        },
+        {
+          "keyName": "channel_owner_id_index",
+          "columnNames": [
+            "owner_id"
+          ],
+          "composite": false,
+          "constraint": false,
+          "primary": false,
+          "unique": false
+        },
+        {
+          "keyName": "channel_pkey",
+          "columnNames": [
+            "id"
+          ],
+          "composite": false,
+          "constraint": true,
+          "primary": true,
+          "unique": true
+        }
+      ],
+      "checks": [
+        {
+          "name": "channel_name_not_empty",
+          "expression": "length(trim(name)) > 0",
+          "definition": "check ((length(trim(name)) > 0))"
+        },
+        {
+          "name": "channel_visibility_check",
+          "expression": "visibility in ('public', 'private')",
+          "definition": "check ((visibility in ('public', 'private')))"
+        },
+        {
+          "name": "channel_play_order_positive",
+          "expression": "current_play_order is null or current_play_order >= 1",
+          "definition": "check ((current_play_order is null or current_play_order >= 1))"
+        }
+      ],
+      "foreignKeys": {
+        "channel_owner_id_foreign": {
+          "constraintName": "channel_owner_id_foreign",
+          "columnNames": [
+            "owner_id"
+          ],
+          "localTableName": "public.channel",
+          "referencedColumnNames": [
+            "id"
+          ],
+          "referencedTableName": "public.user",
+          "deleteRule": "set null",
+          "updateRule": "cascade"
+        },
+        "channel_current_segment_id_foreign": {
+          "constraintName": "channel_current_segment_id_foreign",
+          "columnNames": [
+            "current_segment_id"
+          ],
+          "localTableName": "public.channel",
+          "referencedColumnNames": [
+            "id"
+          ],
+          "referencedTableName": "public.segment",
+          "deleteRule": "set null",
+          "updateRule": "cascade",
+          "deferMode": "deferred"
+        }
+      },
+      "nativeEnums": {}
     },
     {
       "columns": {
@@ -1026,15 +1262,15 @@
         },
         "play_order": {
           "name": "play_order",
-          "type": "int4",
+          "type": "int",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": false,
           "unique": false,
           "length": null,
-          "precision": 32,
-          "scale": 0,
+          "precision": null,
+          "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
@@ -1046,7 +1282,7 @@
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
-          "nullable": true,
+          "nullable": false,
           "unique": false,
           "length": 255,
           "precision": null,
@@ -1058,14 +1294,14 @@
         },
         "duration_seconds": {
           "name": "duration_seconds",
-          "type": "float4",
+          "type": "real",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
-          "nullable": true,
+          "nullable": false,
           "unique": false,
           "length": null,
-          "precision": 24,
+          "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
@@ -1085,12 +1321,17 @@
           "scale": null,
           "default": null,
           "comment": null,
-          "enumItems": [],
+          "enumItems": [
+            "music",
+            "talk",
+            "ad",
+            "jingle"
+          ],
           "mappedType": "string"
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamptz(6)",
+          "type": "timestamptz",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
@@ -1190,71 +1431,180 @@
       "indexes": [
         {
           "columnNames": [
+            "type"
+          ],
+          "composite": false,
+          "keyName": "segment_type_index",
+          "constraint": false,
+          "primary": false,
+          "unique": false
+        },
+        {
+          "keyName": "segment_channelId_index",
+          "columnNames": [
             "channelId"
           ],
           "composite": false,
           "constraint": false,
-          "keyName": "segment_channelId_index",
-          "unique": false,
           "primary": false,
-          "expression": "CREATE INDEX \"segment_channelId_index\" ON public.segment USING btree (\"channelId\")"
+          "unique": false
         },
         {
+          "keyName": "segment_channelId_play_order_unique",
           "columnNames": [
             "channelId",
             "play_order"
           ],
           "composite": true,
-          "constraint": false,
-          "keyName": "segment_channelId_play_order_index",
-          "unique": false,
+          "constraint": true,
           "primary": false,
-          "expression": "CREATE INDEX \"segment_channelId_play_order_index\" ON public.segment USING btree (\"channelId\", play_order)"
+          "unique": true
         },
         {
+          "keyName": "segment_pkey",
           "columnNames": [
             "id"
           ],
           "composite": false,
-          "constraint": false,
-          "keyName": "segment_pkey",
-          "unique": true,
-          "primary": true
+          "constraint": true,
+          "primary": true,
+          "unique": true
+        }
+      ],
+      "checks": [
+        {
+          "name": "segment_play_order_positive",
+          "expression": "play_order >= 1",
+          "definition": "check ((play_order >= 1))"
         },
         {
+          "name": "segment_duration_bounds",
+          "expression": "duration_seconds > 0 and duration_seconds <= 7200",
+          "definition": "check ((duration_seconds > 0 and duration_seconds <= 7200))"
+        },
+        {
+          "name": "segment_type_check",
+          "expression": "type in ('music', 'talk', 'ad', 'jingle')",
+          "definition": "check ((type in ('music', 'talk', 'ad', 'jingle')))"
+        },
+        {
+          "name": "segment_status_check",
+          "expression": "status is null or status in ('generating', 'ready', 'failed')",
+          "definition": "check ((status is null or status in ('generating', 'ready', 'failed')))"
+        },
+        {
+          "name": "segment_music_subtype_check",
+          "expression": "type != 'music' or (title is not null and artist is not null)",
+          "definition": "check ((type != 'music' or (title is not null and artist is not null)))"
+        },
+        {
+          "name": "segment_talk_subtype_check",
+          "expression": "type != 'talk' or (cluster_id is not null)",
+          "definition": "check ((type != 'talk' or (cluster_id is not null)))"
+        }
+      ],
+      "foreignKeys": {
+        "segment_channelId_foreign": {
+          "constraintName": "segment_channelId_foreign",
           "columnNames": [
-            "type"
+            "channelId"
           ],
-          "composite": false,
-          "constraint": false,
-          "keyName": "segment_type_index",
+          "localTableName": "public.segment",
+          "referencedColumnNames": [
+            "id"
+          ],
+          "referencedTableName": "public.channel",
+          "deleteRule": "cascade",
+          "updateRule": "cascade"
+        }
+      },
+      "nativeEnums": {}
+    },
+    {
+      "columns": {
+        "channelId": {
+          "name": "channelId",
+          "type": "uuid",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": true,
+          "nullable": false,
           "unique": false,
-          "primary": false
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "uuid"
+        },
+        "subredditId": {
+          "name": "subredditId",
+          "type": "uuid",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": true,
+          "nullable": false,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "uuid"
+        }
+      },
+      "name": "channel_subreddit",
+      "schema": "public",
+      "indexes": [
+        {
+          "keyName": "channel_subreddit_pkey",
+          "columnNames": [
+            "channelId",
+            "subredditId"
+          ],
+          "composite": true,
+          "constraint": true,
+          "primary": true,
+          "unique": true
         }
       ],
       "checks": [],
       "foreignKeys": {
-        "segment_channelId_foreign": {
+        "channel_subreddit_channelId_foreign": {
+          "constraintName": "channel_subreddit_channelId_foreign",
           "columnNames": [
             "channelId"
           ],
-          "constraintName": "segment_channelId_foreign",
-          "localTableName": "public.segment",
-          "referencedTableName": "public.channel",
+          "localTableName": "public.channel_subreddit",
           "referencedColumnNames": [
             "id"
           ],
-          "updateRule": "cascade",
-          "deleteRule": "cascade"
+          "referencedTableName": "public.channel",
+          "deleteRule": "cascade",
+          "updateRule": "cascade"
+        },
+        "channel_subreddit_subredditId_foreign": {
+          "constraintName": "channel_subreddit_subredditId_foreign",
+          "columnNames": [
+            "subredditId"
+          ],
+          "localTableName": "public.channel_subreddit",
+          "referencedColumnNames": [
+            "id"
+          ],
+          "referencedTableName": "public.subreddit",
+          "deleteRule": "cascade",
+          "updateRule": "cascade"
         }
       },
-      "nativeEnums": {},
-      "comment": null
+      "nativeEnums": {}
     },
     {
       "columns": {
-        "id": {
-          "name": "id",
+        "channelId": {
+          "name": "channelId",
           "type": "uuid",
           "unsigned": false,
           "autoincrement": false,
@@ -1264,125 +1614,13 @@
           "length": null,
           "precision": null,
           "scale": null,
-          "default": "gen_random_uuid()",
+          "default": null,
           "comment": null,
           "enumItems": [],
           "mappedType": "uuid"
         },
-        "name": {
-          "name": "name",
-          "type": "varchar(255)",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": false,
-          "unique": true,
-          "length": 255,
-          "precision": null,
-          "scale": null,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "string"
-        },
-        "last_scraped_at": {
-          "name": "last_scraped_at",
-          "type": "timestamptz(6)",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": true,
-          "unique": false,
-          "length": 6,
-          "precision": null,
-          "scale": null,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "datetime"
-        },
-        "scrape_started_at": {
-          "name": "scrape_started_at",
-          "type": "timestamptz(6)",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": true,
-          "unique": false,
-          "length": 6,
-          "precision": null,
-          "scale": null,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "datetime"
-        },
-        "scrape_cooldown_until": {
-          "name": "scrape_cooldown_until",
-          "type": "timestamptz(6)",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": true,
-          "unique": false,
-          "length": 6,
-          "precision": null,
-          "scale": null,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "datetime"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamptz(6)",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": false,
-          "unique": false,
-          "length": 6,
-          "precision": null,
-          "scale": null,
-          "default": "now()",
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "datetime"
-        }
-      },
-      "name": "subreddit",
-      "schema": "public",
-      "indexes": [
-        {
-          "columnNames": [
-            "name"
-          ],
-          "composite": false,
-          "constraint": true,
-          "keyName": "subreddit_name_unique",
-          "unique": true,
-          "primary": false
-        },
-        {
-          "columnNames": [
-            "id"
-          ],
-          "composite": false,
-          "constraint": false,
-          "keyName": "subreddit_pkey",
-          "unique": true,
-          "primary": true
-        }
-      ],
-      "checks": [],
-      "foreignKeys": {},
-      "nativeEnums": {},
-      "comment": null
-    },
-    {
-      "columns": {
-        "id": {
-          "name": "id",
+        "postId": {
+          "name": "postId",
           "type": "uuid",
           "unsigned": false,
           "autoincrement": false,
@@ -1392,104 +1630,57 @@
           "length": null,
           "precision": null,
           "scale": null,
-          "default": "gen_random_uuid()",
+          "default": null,
           "comment": null,
           "enumItems": [],
           "mappedType": "uuid"
-        },
-        "email": {
-          "name": "email",
-          "type": "varchar(255)",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": false,
-          "unique": true,
-          "length": 255,
-          "precision": null,
-          "scale": null,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "string"
-        },
-        "password_hash": {
-          "name": "password_hash",
-          "type": "varchar(255)",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": false,
-          "unique": false,
-          "length": 255,
-          "precision": null,
-          "scale": null,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "string"
-        },
-        "role": {
-          "name": "role",
-          "type": "varchar(255)",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": false,
-          "unique": false,
-          "length": 255,
-          "precision": null,
-          "scale": null,
-          "default": "'user'",
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "string"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamptz(6)",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": false,
-          "unique": false,
-          "length": 6,
-          "precision": null,
-          "scale": null,
-          "default": "now()",
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "datetime"
         }
       },
-      "name": "user",
+      "name": "channel_post_progress",
       "schema": "public",
       "indexes": [
         {
+          "keyName": "channel_post_progress_pkey",
           "columnNames": [
-            "email"
+            "channelId",
+            "postId"
           ],
-          "composite": false,
+          "composite": true,
           "constraint": true,
-          "keyName": "user_email_unique",
-          "unique": true,
-          "primary": false
-        },
-        {
-          "columnNames": [
-            "id"
-          ],
-          "composite": false,
-          "constraint": false,
-          "keyName": "user_pkey",
-          "unique": true,
-          "primary": true
+          "primary": true,
+          "unique": true
         }
       ],
       "checks": [],
-      "foreignKeys": {},
-      "nativeEnums": {},
-      "comment": null
+      "foreignKeys": {
+        "channel_post_progress_channelId_foreign": {
+          "constraintName": "channel_post_progress_channelId_foreign",
+          "columnNames": [
+            "channelId"
+          ],
+          "localTableName": "public.channel_post_progress",
+          "referencedColumnNames": [
+            "id"
+          ],
+          "referencedTableName": "public.channel",
+          "deleteRule": "cascade",
+          "updateRule": "cascade"
+        },
+        "channel_post_progress_postId_foreign": {
+          "constraintName": "channel_post_progress_postId_foreign",
+          "columnNames": [
+            "postId"
+          ],
+          "localTableName": "public.channel_post_progress",
+          "referencedColumnNames": [
+            "id"
+          ],
+          "referencedTableName": "public.post",
+          "deleteRule": "cascade",
+          "updateRule": "cascade"
+        }
+      },
+      "nativeEnums": {}
     }
   ],
   "nativeEnums": {}

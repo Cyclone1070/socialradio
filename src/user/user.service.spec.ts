@@ -60,7 +60,7 @@ describe('UserService', () => {
 
       mockUserRepo.findOne.mockResolvedValue(null);
       mockEntityManager.persist.mockImplementation((user: User) => {
-        user.id = 'uuid';
+        Object.assign(user, { id: 'uuid' });
         return mockEntityManager;
       });
 
@@ -81,7 +81,7 @@ describe('UserService', () => {
     it('logs the new userId at info', async () => {
       mockUserRepo.findOne.mockResolvedValue(null);
       mockEntityManager.persist.mockImplementation((user: User) => {
-        user.id = 'uuid-1';
+        Object.assign(user, { id: 'uuid-1' });
         return mockEntityManager;
       });
 
