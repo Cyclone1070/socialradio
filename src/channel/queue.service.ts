@@ -31,6 +31,12 @@ import { randomUUID } from 'crypto';
 const SCRAPE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7-day scrape window
 const ACTIVE_SUB_POOL_TARGET = 20; // Maximum active subreddits with available posts per channel
 
+/**
+ * QueueService manages channel segment generation and queue replenishment.
+ * Cycle pattern: [1-2 Talk segments] -> [1-2 Music tracks] -> [1-2 Ads] -> [1 Jingle].
+ * Buffer rule: maintains pre-generated segments ahead of the live playhead.
+ * Rescrape rule: Lazy 20-sub pool rotation prior to topic clustering.
+ */
 @Injectable()
 export class QueueService {
   private readonly logger = createServiceLogger(QueueService.name);

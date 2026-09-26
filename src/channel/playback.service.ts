@@ -22,6 +22,12 @@ export interface LiveManifestResult {
   visibility: 'public' | 'private';
 }
 
+/**
+ * PlaybackService manages live RFC 8216 HLS streaming and sliding window playlists.
+ * - Lazy Virtual Clock: playhead advances on-demand based on elapsed wall-clock time between manifest requests.
+ * - Idle Freeze & Wakeup: freezes playhead if no requests for > 10 minutes.
+ * - Edge Caching: Cache-Control public, max-age=2, s-maxage=2.
+ */
 @Injectable()
 export class PlaybackService {
   private readonly logger = createServiceLogger(PlaybackService.name);
