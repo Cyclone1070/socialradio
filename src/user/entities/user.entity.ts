@@ -1,3 +1,5 @@
+import * as bcrypt from 'bcrypt';
+
 export class User {
   private _id!: string;
   private _email!: string;
@@ -54,6 +56,13 @@ export class User {
     this._passwordHash = trimmed;
   }
 
+  async verifyPassword(plainPassword: string): Promise<boolean> {
+    if (!plainPassword || !this._passwordHash) {
+      return false;
+    }
+    return bcrypt.compare(plainPassword, this._passwordHash);
+  }
+
   get role(): 'user' | 'admin' {
     return this._role;
   }
@@ -66,10 +75,17 @@ export class User {
   }
 
   get createdAt(): Date {
-    return this._createdAt;
+    return this._createdAt
+      ? new Date(this._createdAt.getTime())
+      : this._createdAt;
   }
 
   private set createdAt(value: Date) {
-    this._createdAt = value;
+    if (value !== undefined) {
+      if (!(value instanceof Date) || isNaN(value.getTime())) {
+        throw new Error('createdAt must be a valid Date');
+      }
+      this._createdAt = new Date(value.getTime());
+    }
   }
 }

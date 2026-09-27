@@ -4,9 +4,6 @@ import { UnauthorizedException } from '@nestjs/common';
 import { PinoLogger } from 'nestjs-pino';
 import { AuthService } from './auth.service';
 import { UserService } from './user.service';
-import * as bcrypt from 'bcrypt';
-
-jest.mock('bcrypt');
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -46,20 +43,17 @@ describe('AuthService', () => {
       const user = {
         id: 'uuid',
         email: 'admin@socialradio.com',
-        passwordHash: 'hash',
+        role: 'user' as const,
+        verifyPassword: jest.fn().mockResolvedValue(true),
       };
 
       mockUserService.findByEmail.mockResolvedValue(user);
-      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
       mockJwtService.sign.mockReturnValue('signed_jwt');
 
       const result = await service.login(loginDto);
 
       expect(mockUserService.findByEmail).toHaveBeenCalledWith(loginDto.email);
-      expect(bcrypt.compare).toHaveBeenCalledWith(
-        loginDto.password,
-        user.passwordHash,
-      );
+      expect(user.verifyPassword).toHaveBeenCalledWith(loginDto.password);
       expect(mockJwtService.sign).toHaveBeenCalledWith({
         sub: user.id,
         role: 'user',
@@ -71,10 +65,10 @@ describe('AuthService', () => {
       const user = {
         id: 'uuid',
         email: 'admin@socialradio.com',
-        passwordHash: 'hash',
+        role: 'user' as const,
+        verifyPassword: jest.fn().mockResolvedValue(true),
       };
       mockUserService.findByEmail.mockResolvedValue(user);
-      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
       mockJwtService.sign.mockReturnValue('signed_jwt');
 
       const infoSpy = jest
@@ -96,10 +90,9 @@ describe('AuthService', () => {
       const user = {
         id: 'uuid',
         email: 'admin@socialradio.com',
-        passwordHash: 'hash',
+        verifyPassword: jest.fn().mockResolvedValue(false),
       };
       mockUserService.findByEmail.mockResolvedValue(user);
-      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
 
       const warnSpy = jest
         .spyOn(PinoLogger.prototype, 'warn')
@@ -133,7 +126,6 @@ describe('AuthService', () => {
         UnauthorizedException,
       );
       expect(mockUserService.findByEmail).toHaveBeenCalledWith(loginDto.email);
-      expect(bcrypt.compare).not.toHaveBeenCalled();
     });
 
     it('should throw UnauthorizedException if password does not match', async () => {
@@ -144,20 +136,16 @@ describe('AuthService', () => {
       const user = {
         id: 'uuid',
         email: 'admin@socialradio.com',
-        passwordHash: 'hash',
+        verifyPassword: jest.fn().mockResolvedValue(false),
       };
 
       mockUserService.findByEmail.mockResolvedValue(user);
-      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
 
       await expect(service.login(loginDto)).rejects.toThrow(
         UnauthorizedException,
       );
       expect(mockUserService.findByEmail).toHaveBeenCalledWith(loginDto.email);
-      expect(bcrypt.compare).toHaveBeenCalledWith(
-        loginDto.password,
-        user.passwordHash,
-      );
+      expect(user.verifyPassword).toHaveBeenCalledWith(loginDto.password);
       expect(mockJwtService.sign).not.toHaveBeenCalled();
     });
   });

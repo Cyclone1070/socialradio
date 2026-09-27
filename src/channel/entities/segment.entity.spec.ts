@@ -99,6 +99,33 @@ describe('Segment Entities Invariants & Encapsulation', () => {
       expect(talk.script).toHaveLength(1);
       expect(talk.script?.[0].text).toBe('Welcome back');
     });
+
+    it('returns frozen defensive copy of script array to prevent mutation leaks', () => {
+      const talk = new TalkSegment('cluster-1');
+      talk.script = [{ speaker: 'host', text: 'Welcome back' }];
+      const leaked = talk.script as { speaker: string; text: string }[];
+      expect(() => {
+        leaked.push({ speaker: 'co-host', text: 'Another turn' });
+      }).toThrow();
+    });
+
+    it('validates script turns structure and deeply freezes script turns', () => {
+      const talk = new TalkSegment('cluster-1');
+      expect(() => {
+        // @ts-expect-error runtime invalid type
+        talk.script = 'not-an-array';
+      }).toThrow('script must be an array or null');
+
+      expect(() => {
+        talk.script = [{ speaker: '  ', text: 'hello' }];
+      }).toThrow('Each script turn must have a non-empty speaker and text');
+
+      talk.script = [{ speaker: 'host', text: 'Welcome' }];
+      const turns = talk.script;
+      expect(() => {
+        (turns[0] as { text: string }).text = 'Hacked';
+      }).toThrow();
+    });
   });
 
   describe('Lifecycle and Identity Encapsulation', () => {
@@ -113,8 +140,23 @@ describe('Segment Entities Invariants & Encapsulation', () => {
         persistedDate,
         'seg-uuid',
       );
-      expect(persistedSeg.createdAt).toBe(persistedDate);
+      expect(persistedSeg.createdAt).toEqual(persistedDate);
       expect(persistedSeg.id).toBe('seg-uuid');
+    });
+
+    it('returns defensive copies of createdAt to prevent mutation leaks', () => {
+      const persistedDate = new Date('2026-02-01T12:00:00Z');
+      const persistedSeg = new MusicSegment(
+        'Song',
+        'Artist',
+        persistedDate,
+        'seg-uuid',
+      );
+      const leaked = persistedSeg.createdAt;
+      leaked?.setTime(0);
+      expect(persistedSeg.createdAt?.toISOString()).toBe(
+        '2026-02-01T12:00:00.000Z',
+      );
     });
   });
 });

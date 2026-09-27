@@ -31,7 +31,7 @@ export class Migration20260916042008 extends Migration {
     );
 
     this.addSql(
-      `create table "post" ("id" uuid not null default gen_random_uuid(), "subredditId" uuid not null, "reddit_id" varchar(255) not null, "title" varchar(255) not null, "body" text not null, "score" int not null, "reddit_created_at" timestamptz not null, "scraped_at" timestamptz not null default now(), constraint "post_pkey" primary key ("id"));`,
+      `create table "post" ("id" uuid not null default gen_random_uuid(), "subredditId" uuid not null, "reddit_id" varchar(255) not null, "title" text not null, "body" text not null, "score" int not null, "reddit_created_at" timestamptz not null, "scraped_at" timestamptz not null default now(), constraint "post_pkey" primary key ("id"));`,
     );
     this.addSql(
       `alter table "post" add constraint "post_reddit_id_unique" unique ("reddit_id");`,

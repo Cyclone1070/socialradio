@@ -21,4 +21,6 @@ trap cleanup EXIT
 
 TARGET="${1:-all}"
 echo "=== E2E Test Suite: $TARGET ==="
+# Pre-flight amnesiac wipe: ensure zero volume leakage from aborted prior runs
+$COMPOSE down -v >/dev/null 2>&1 || true
 TEST_SUITE="$TARGET" $COMPOSE run --build --rm -e TEST_SUITE="$TARGET" tests

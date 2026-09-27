@@ -46,7 +46,7 @@ export class AdTrack {
     return this._advertiser;
   }
 
-  set advertiser(value: string) {
+  private set advertiser(value: string) {
     const trimmed = value?.trim();
     if (!trimmed) {
       throw new Error('advertiser cannot be empty');
@@ -78,10 +78,17 @@ export class AdTrack {
   }
 
   get createdAt(): Date {
-    return this._createdAt;
+    return this._createdAt
+      ? new Date(this._createdAt.getTime())
+      : this._createdAt;
   }
 
   private set createdAt(value: Date) {
-    this._createdAt = value;
+    if (value !== undefined) {
+      if (!(value instanceof Date) || isNaN(value.getTime())) {
+        throw new Error('createdAt must be a valid Date');
+      }
+      this._createdAt = new Date(value.getTime());
+    }
   }
 }

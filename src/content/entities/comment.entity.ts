@@ -104,10 +104,17 @@ export class Comment {
   }
 
   get redditCreatedAt(): Date {
-    return this._redditCreatedAt;
+    return this._redditCreatedAt
+      ? new Date(this._redditCreatedAt.getTime())
+      : this._redditCreatedAt;
   }
 
   private set redditCreatedAt(value: Date) {
-    this._redditCreatedAt = value;
+    if (value !== undefined) {
+      if (!(value instanceof Date) || isNaN(value.getTime())) {
+        throw new Error('redditCreatedAt must be a valid Date');
+      }
+      this._redditCreatedAt = new Date(value.getTime());
+    }
   }
 }

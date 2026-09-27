@@ -1,3 +1,4 @@
+import * as bcrypt from 'bcrypt';
 import { User } from './user.entity';
 
 describe('UserEntity Invariants & Encapsulation', () => {
@@ -48,7 +49,20 @@ describe('UserEntity Invariants & Encapsulation', () => {
       'usr-123',
       persistedDate,
     );
-    expect(persisted.createdAt).toBe(persistedDate);
+    expect(persisted.createdAt).toEqual(persistedDate);
     expect(persisted.id).toBe('usr-123');
+
+    const leaked = persisted.createdAt;
+    leaked?.setTime(0);
+    expect(persisted.createdAt?.toISOString()).toBe('2026-03-01T00:00:00.000Z');
+  });
+
+  it('verifies password against passwordHash', async () => {
+    const hash = await bcrypt.hash('secret123', 10);
+    const user = new User('alice@example.com', hash);
+
+    await expect(user.verifyPassword('secret123')).resolves.toBe(true);
+    await expect(user.verifyPassword('wrongpassword')).resolves.toBe(false);
+    await expect(user.verifyPassword('')).resolves.toBe(false);
   });
 });

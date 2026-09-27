@@ -49,7 +49,7 @@ export class MusicTrack {
     return this._title;
   }
 
-  set title(value: string) {
+  private set title(value: string) {
     const trimmed = value?.trim();
     if (!trimmed) {
       throw new Error('title cannot be empty');
@@ -61,7 +61,7 @@ export class MusicTrack {
     return this._artist;
   }
 
-  set artist(value: string) {
+  private set artist(value: string) {
     const trimmed = value?.trim();
     if (!trimmed) {
       throw new Error('artist cannot be empty');
@@ -93,10 +93,17 @@ export class MusicTrack {
   }
 
   get createdAt(): Date {
-    return this._createdAt;
+    return this._createdAt
+      ? new Date(this._createdAt.getTime())
+      : this._createdAt;
   }
 
   private set createdAt(value: Date) {
-    this._createdAt = value;
+    if (value !== undefined) {
+      if (!(value instanceof Date) || isNaN(value.getTime())) {
+        throw new Error('createdAt must be a valid Date');
+      }
+      this._createdAt = new Date(value.getTime());
+    }
   }
 }

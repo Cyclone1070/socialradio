@@ -80,11 +80,18 @@ export abstract class Segment {
   }
 
   get createdAt(): Date {
-    return this._createdAt;
+    return this._createdAt
+      ? new Date(this._createdAt.getTime())
+      : this._createdAt;
   }
 
   private set createdAt(value: Date) {
-    this._createdAt = value;
+    if (value !== undefined) {
+      if (!(value instanceof Date) || isNaN(value.getTime())) {
+        throw new Error('createdAt must be a valid Date');
+      }
+      this._createdAt = new Date(value.getTime());
+    }
   }
 }
 
@@ -184,12 +191,37 @@ export class TalkSegment extends Segment {
     this._status = value;
   }
 
-  get script(): ScriptTurn[] | null {
-    return this._script;
+  get script(): readonly ScriptTurn[] | null {
+    return this._script
+      ? Object.freeze(this._script.map((t) => Object.freeze({ ...t })))
+      : null;
   }
 
   set script(value: ScriptTurn[] | null) {
-    this._script = value;
+    if (value === null || value === undefined) {
+      this._script = null;
+      return;
+    }
+    if (!Array.isArray(value)) {
+      throw new Error('script must be an array or null');
+    }
+    for (const turn of value) {
+      if (
+        !turn ||
+        typeof turn.speaker !== 'string' ||
+        !turn.speaker.trim() ||
+        typeof turn.text !== 'string' ||
+        !turn.text.trim()
+      ) {
+        throw new Error(
+          'Each script turn must have a non-empty speaker and text',
+        );
+      }
+    }
+    this._script = value.map((t) => ({
+      speaker: t.speaker.trim(),
+      text: t.text.trim(),
+    }));
   }
 }
 

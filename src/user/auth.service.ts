@@ -4,7 +4,6 @@ import { UserService } from './user.service';
 import { LoginDto } from './dto/login.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
-import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class AuthService {
@@ -25,7 +24,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const isMatch = await bcrypt.compare(dto.password, user.passwordHash);
+    const isMatch = await user.verifyPassword(dto.password);
     if (!isMatch) {
       this.logger.warn(
         { email: dto.email, reason: 'invalid credentials' },

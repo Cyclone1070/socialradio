@@ -30,13 +30,34 @@ describe('SubredditEntity Invariants & Encapsulation', () => {
     sub.lastScrapedAt = now;
     sub.scrapeStartedAt = now;
     sub.scrapeCooldownUntil = now;
-    expect(sub.lastScrapedAt).toBe(now);
-    expect(sub.scrapeStartedAt).toBe(now);
-    expect(sub.scrapeCooldownUntil).toBe(now);
+    expect(sub.lastScrapedAt).toEqual(now);
+    expect(sub.scrapeStartedAt).toEqual(now);
+    expect(sub.scrapeCooldownUntil).toEqual(now);
 
     const persistedDate = new Date('2026-01-15T00:00:00Z');
     const persisted = new Subreddit('worldnews', 'sub-uuid', persistedDate);
-    expect(persisted.createdAt).toBe(persistedDate);
+    expect(persisted.createdAt).toEqual(persistedDate);
     expect(persisted.id).toBe('sub-uuid');
+  });
+
+  it('returns defensive copies of Date getters and validates Date setters', () => {
+    const persistedDate = new Date('2026-01-15T00:00:00Z');
+    const sub = new Subreddit('worldnews', 'sub-uuid', persistedDate);
+    const now = new Date('2026-06-01T00:00:00Z');
+    sub.lastScrapedAt = now;
+    sub.scrapeStartedAt = now;
+    sub.scrapeCooldownUntil = now;
+
+    const leakedCreated = sub.createdAt;
+    leakedCreated?.setTime(0);
+    expect(sub.createdAt?.toISOString()).toBe('2026-01-15T00:00:00.000Z');
+
+    const leakedScraped = sub.lastScrapedAt;
+    leakedScraped?.setTime(0);
+    expect(sub.lastScrapedAt?.toISOString()).toBe('2026-06-01T00:00:00.000Z');
+
+    expect(() => {
+      sub.lastScrapedAt = new Date('invalid');
+    }).toThrow('lastScrapedAt must be a valid Date or null');
   });
 });

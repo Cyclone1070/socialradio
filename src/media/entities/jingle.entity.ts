@@ -46,7 +46,7 @@ export class Jingle {
     return this._name;
   }
 
-  set name(value: string) {
+  private set name(value: string) {
     const trimmed = value?.trim();
     if (!trimmed) {
       throw new Error('name cannot be empty');
@@ -78,10 +78,17 @@ export class Jingle {
   }
 
   get createdAt(): Date {
-    return this._createdAt;
+    return this._createdAt
+      ? new Date(this._createdAt.getTime())
+      : this._createdAt;
   }
 
   private set createdAt(value: Date) {
-    this._createdAt = value;
+    if (value !== undefined) {
+      if (!(value instanceof Date) || isNaN(value.getTime())) {
+        throw new Error('createdAt must be a valid Date');
+      }
+      this._createdAt = new Date(value.getTime());
+    }
   }
 }

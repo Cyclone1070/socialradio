@@ -39,34 +39,66 @@ export class Subreddit {
   }
 
   get lastScrapedAt(): Date | null {
-    return this._lastScrapedAt;
+    return this._lastScrapedAt ? new Date(this._lastScrapedAt.getTime()) : null;
   }
 
   set lastScrapedAt(value: Date | null) {
-    this._lastScrapedAt = value;
+    if (value !== null) {
+      if (!(value instanceof Date) || isNaN(value.getTime())) {
+        throw new Error('lastScrapedAt must be a valid Date or null');
+      }
+      this._lastScrapedAt = new Date(value.getTime());
+    } else {
+      this._lastScrapedAt = null;
+    }
   }
 
   get scrapeStartedAt(): Date | null {
-    return this._scrapeStartedAt;
+    return this._scrapeStartedAt
+      ? new Date(this._scrapeStartedAt.getTime())
+      : null;
   }
 
   set scrapeStartedAt(value: Date | null) {
-    this._scrapeStartedAt = value;
+    if (value !== null) {
+      if (!(value instanceof Date) || isNaN(value.getTime())) {
+        throw new Error('scrapeStartedAt must be a valid Date or null');
+      }
+      this._scrapeStartedAt = new Date(value.getTime());
+    } else {
+      this._scrapeStartedAt = null;
+    }
   }
 
   get scrapeCooldownUntil(): Date | null {
-    return this._scrapeCooldownUntil;
+    return this._scrapeCooldownUntil
+      ? new Date(this._scrapeCooldownUntil.getTime())
+      : null;
   }
 
   set scrapeCooldownUntil(value: Date | null) {
-    this._scrapeCooldownUntil = value;
+    if (value !== null) {
+      if (!(value instanceof Date) || isNaN(value.getTime())) {
+        throw new Error('scrapeCooldownUntil must be a valid Date or null');
+      }
+      this._scrapeCooldownUntil = new Date(value.getTime());
+    } else {
+      this._scrapeCooldownUntil = null;
+    }
   }
 
   get createdAt(): Date {
-    return this._createdAt;
+    return this._createdAt
+      ? new Date(this._createdAt.getTime())
+      : this._createdAt;
   }
 
   private set createdAt(value: Date) {
-    this._createdAt = value;
+    if (value !== undefined) {
+      if (!(value instanceof Date) || isNaN(value.getTime())) {
+        throw new Error('createdAt must be a valid Date');
+      }
+      this._createdAt = new Date(value.getTime());
+    }
   }
 }

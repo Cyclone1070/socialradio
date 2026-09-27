@@ -82,7 +82,15 @@ export class Channel {
   }
 
   set ownerId(value: string | null) {
-    this._ownerId = value;
+    if (value !== null && value !== undefined) {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        throw new Error('ownerId cannot be empty');
+      }
+      this._ownerId = trimmed;
+    } else {
+      this._ownerId = null;
+    }
   }
 
   get currentSegmentId(): string | null {
@@ -90,7 +98,15 @@ export class Channel {
   }
 
   set currentSegmentId(value: string | null) {
-    this._currentSegmentId = value;
+    if (value !== null && value !== undefined) {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        throw new Error('currentSegmentId cannot be empty');
+      }
+      this._currentSegmentId = trimmed;
+    } else {
+      this._currentSegmentId = null;
+    }
   }
 
   get currentPlayOrder(): number | null {
@@ -107,19 +123,35 @@ export class Channel {
   }
 
   get playheadStartedAt(): Date | null {
-    return this._playheadStartedAt;
+    return this._playheadStartedAt
+      ? new Date(this._playheadStartedAt.getTime())
+      : null;
   }
 
   set playheadStartedAt(value: Date | null) {
-    this._playheadStartedAt = value;
+    if (value !== null) {
+      if (!(value instanceof Date) || isNaN(value.getTime())) {
+        throw new Error('playheadStartedAt must be a valid Date or null');
+      }
+      this._playheadStartedAt = new Date(value.getTime());
+    } else {
+      this._playheadStartedAt = null;
+    }
   }
 
   get lastActiveAt(): Date | null {
-    return this._lastActiveAt;
+    return this._lastActiveAt ? new Date(this._lastActiveAt.getTime()) : null;
   }
 
   set lastActiveAt(value: Date | null) {
-    this._lastActiveAt = value;
+    if (value !== null) {
+      if (!(value instanceof Date) || isNaN(value.getTime())) {
+        throw new Error('lastActiveAt must be a valid Date or null');
+      }
+      this._lastActiveAt = new Date(value.getTime());
+    } else {
+      this._lastActiveAt = null;
+    }
   }
 
   get subreddits(): Collection<SubredditRef> {
@@ -139,10 +171,17 @@ export class Channel {
   }
 
   get createdAt(): Date {
-    return this._createdAt;
+    return this._createdAt
+      ? new Date(this._createdAt.getTime())
+      : this._createdAt;
   }
 
   private set createdAt(value: Date) {
-    this._createdAt = value;
+    if (value !== undefined) {
+      if (!(value instanceof Date) || isNaN(value.getTime())) {
+        throw new Error('createdAt must be a valid Date');
+      }
+      this._createdAt = new Date(value.getTime());
+    }
   }
 }

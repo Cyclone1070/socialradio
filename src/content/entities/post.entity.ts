@@ -1,3 +1,4 @@
+import { Collection } from '@mikro-orm/core';
 import { Subreddit } from './subreddit.entity';
 import { Comment } from './comment.entity';
 
@@ -11,7 +12,7 @@ export class Post {
   private _score!: number;
   private _redditCreatedAt!: Date;
   private _scrapedAt!: Date;
-  private _comments: Comment[] = [];
+  private _comments = new Collection<Comment>(this);
 
   constructor(
     subreddit?: Subreddit,
@@ -98,26 +99,43 @@ export class Post {
   }
 
   get redditCreatedAt(): Date {
-    return this._redditCreatedAt;
+    return this._redditCreatedAt
+      ? new Date(this._redditCreatedAt.getTime())
+      : this._redditCreatedAt;
   }
 
   private set redditCreatedAt(value: Date) {
-    this._redditCreatedAt = value;
+    if (value !== undefined) {
+      if (!(value instanceof Date) || isNaN(value.getTime())) {
+        throw new Error('redditCreatedAt must be a valid Date');
+      }
+      this._redditCreatedAt = new Date(value.getTime());
+    }
   }
 
   get scrapedAt(): Date {
-    return this._scrapedAt;
+    return this._scrapedAt
+      ? new Date(this._scrapedAt.getTime())
+      : this._scrapedAt;
   }
 
   private set scrapedAt(value: Date) {
-    this._scrapedAt = value;
+    if (value !== undefined) {
+      if (!(value instanceof Date) || isNaN(value.getTime())) {
+        throw new Error('scrapedAt must be a valid Date');
+      }
+      this._scrapedAt = new Date(value.getTime());
+    }
   }
 
-  get comments(): Comment[] {
+  get comments(): Collection<Comment> {
     return this._comments;
   }
 
-  set comments(value: Comment[]) {
+  private set comments(value: Collection<Comment>) {
+    if (!(value instanceof Collection)) {
+      throw new Error('comments must be an instance of Collection');
+    }
     this._comments = value;
   }
 }

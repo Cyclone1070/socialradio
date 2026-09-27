@@ -49,7 +49,7 @@ export const PostSchema = new EntitySchema<Post>({
     },
     subredditId: { type: 'string', persist: false },
     redditId: { type: 'string', unique: true, accessor: true },
-    title: { type: 'string', accessor: true },
+    title: { type: 'text', accessor: true },
     body: { type: 'text', accessor: true },
     score: { type: 'integer', accessor: true },
     redditCreatedAt: { type: 'Date', accessor: true },

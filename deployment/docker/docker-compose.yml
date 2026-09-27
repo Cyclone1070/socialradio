@@ -20,7 +20,7 @@ services:
       context: ../..
       dockerfile: deployment/docker/Dockerfile
       target: runner
-    command: ["npm", "run", "migration:up"]
+    command: ["npx", "mikro-orm", "migration:up"]
     env_file: ../../.env
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/socialradio

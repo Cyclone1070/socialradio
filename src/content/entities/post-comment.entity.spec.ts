@@ -1,3 +1,4 @@
+import { Collection } from '@mikro-orm/core';
 import { Post } from './post.entity';
 import { Comment } from './comment.entity';
 import { Subreddit } from './subreddit.entity';
@@ -7,7 +8,7 @@ describe('Post and Comment Entities Invariants & Encapsulation', () => {
     it('encapsulates properties and enforces read-only scrapedAt and immutable fields', () => {
       const unpersisted = new Post();
       expect(unpersisted.scrapedAt).toBeUndefined();
-      expect(unpersisted.comments).toEqual([]);
+      expect(unpersisted.comments.getItems()).toEqual([]);
 
       const sub = new Subreddit('news', 'sub-1');
       const redditCreatedAt = new Date('2026-09-10T12:00:00Z');
@@ -31,12 +32,46 @@ describe('Post and Comment Entities Invariants & Encapsulation', () => {
       expect(post.title).toBe('Breaking News');
       expect(post.body).toBe('Article body');
       expect(post.score).toBe(42);
-      expect(post.redditCreatedAt).toBe(redditCreatedAt);
-      expect(post.scrapedAt).toBe(scrapedAt);
+      expect(post.redditCreatedAt).toEqual(redditCreatedAt);
+      expect(post.scrapedAt).toEqual(scrapedAt);
 
       // Score is mutable as upvotes change:
       post.score = 99;
       expect(post.score).toBe(99);
+    });
+
+    it('manages comments collection encapsulation and prevents direct setter exposure', () => {
+      const post = new Post();
+      expect(post.comments).toBeInstanceOf(Collection);
+      expect(post.comments.getItems()).toEqual([]);
+      expect(() => {
+        // @ts-expect-error private setter
+        post.comments = [];
+      }).toThrow();
+    });
+
+    it('returns defensive copies of Date getters', () => {
+      const redditCreatedAt = new Date('2026-09-10T12:00:00Z');
+      const scrapedAt = new Date('2026-09-15T00:00:00Z');
+      const post = new Post(
+        undefined,
+        't3_1',
+        'Title',
+        'Body',
+        1,
+        redditCreatedAt,
+        scrapedAt,
+      );
+
+      const leakedReddit = post.redditCreatedAt;
+      leakedReddit?.setTime(0);
+      expect(post.redditCreatedAt?.toISOString()).toBe(
+        '2026-09-10T12:00:00.000Z',
+      );
+
+      const leakedScraped = post.scrapedAt;
+      leakedScraped?.setTime(0);
+      expect(post.scrapedAt?.toISOString()).toBe('2026-09-15T00:00:00.000Z');
     });
   });
 
@@ -77,11 +112,29 @@ describe('Post and Comment Entities Invariants & Encapsulation', () => {
       expect(comment.score).toBe(10);
       expect(comment.isOp).toBe(true);
       expect(comment.parentRedditId).toBe('t1_parent');
-      expect(comment.redditCreatedAt).toBe(redditCreatedAt);
+      expect(comment.redditCreatedAt).toEqual(redditCreatedAt);
 
       // Score is mutable as comment upvotes change:
       comment.score = 25;
       expect(comment.score).toBe(25);
+    });
+
+    it('returns defensive copies of redditCreatedAt', () => {
+      const redditCreatedAt = new Date('2026-09-10T13:00:00Z');
+      const comment = new Comment(
+        undefined,
+        't1_1',
+        'Body',
+        1,
+        null,
+        false,
+        redditCreatedAt,
+      );
+      const leaked = comment.redditCreatedAt;
+      leaked?.setTime(0);
+      expect(comment.redditCreatedAt?.toISOString()).toBe(
+        '2026-09-10T13:00:00.000Z',
+      );
     });
   });
 });
