@@ -75,7 +75,7 @@ EMAIL="${ADMIN_EMAIL:?ADMIN_EMAIL is required}"
 PASSWORD="${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}"
 BASE_URL="${TARGET_URL:?TARGET_URL is required}"
 SECRET="${INTERNAL_SERVICE_SECRET:-secret}"
-MINIO_URL="${STORAGE_ENDPOINT:-http://minio:9000}"
+STORAGE_URL="${STORAGE_ENDPOINT:-http://seaweedfs:9000}"
 BUCKET="${STORAGE_BUCKET:-socialradio-media}"
 
 # ── SQL Execution ──────────────────────────────────────────────────────
@@ -98,7 +98,7 @@ ensure_base_fixtures() {
   fi
   if [ -f /tmp/synth-fixture.mp3 ]; then
     for path in "music/neon-waves.mp3" "music/midnight-drive.mp3" "ads/acme-coffee.mp3" "ads/cyber-shield.mp3" "jingles/station-id.mp3" "jingles/intro.mp3"; do
-      curl -s -X PUT -T /tmp/synth-fixture.mp3 "$MINIO_URL/$BUCKET/$path" >/dev/null 2>&1 || true
+      curl -s -X PUT -T /tmp/synth-fixture.mp3 "$STORAGE_URL/$BUCKET/$path" >/dev/null 2>&1 || true
     done
   fi
 }

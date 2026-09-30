@@ -77,7 +77,7 @@ if [ -z "$CHUNK_URL" ]; then
 fi
 echo "  ✓ First chunk URL: $CHUNK_URL"
 
-CHUNK_FETCH_URL=$(echo "$CHUNK_URL" | sed "s|http://localhost:9000|$MINIO_URL|; s|http://127.0.0.1:9000|$MINIO_URL|")
+CHUNK_FETCH_URL=$(echo "$CHUNK_URL" | sed "s|http://localhost:9000|$STORAGE_URL|; s|http://127.0.0.1:9000|$STORAGE_URL|")
 
 CHUNK_FILE="/tmp/broadcast-chunk.mp3"
 rm -f "$CHUNK_FILE"
@@ -168,7 +168,7 @@ PREV_SEQ=$(psql_run -t -A -c "SELECT COALESCE(\"current_play_order\", 1) FROM ch
 [ -n "$PREV_SEQ" ] || PREV_SEQ=1
 
 # Verify DB constraints actively reject corrupted state
-if psql_run -c "INSERT INTO segment (\"id\", \"channelId\", \"play_order\", \"type\", \"duration_seconds\", \"audio_url\", \"created_at\") VALUES ('00000000-0000-0000-0000-000000000001', '$BC_CHAN_ID', -1, 'jingle', 10, 'jingles/station-id.mp3', now() - interval '1 hour');" 2>/dev/null; then
+if psql_run -c "INSERT INTO segment (\"id\", \"channel_id\", \"play_order\", \"type\", \"duration_seconds\", \"audio_url\", \"created_at\") VALUES ('00000000-0000-0000-0000-000000000001', '$BC_CHAN_ID', -1, 'jingle', 10, 'jingles/station-id.mp3', now() - interval '1 hour');" 2>/dev/null; then
   fail "DB allowed inserting negative play_order on segment"
 fi
 if psql_run -c "UPDATE channel SET \"current_segment_id\" = '00000000-0000-0000-0000-000000000099' WHERE \"id\" = '$BC_CHAN_ID';" 2>/dev/null; then

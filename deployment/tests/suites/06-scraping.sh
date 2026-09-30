@@ -43,7 +43,7 @@ SCRAPED=0
 while [ $i -lt $MAX_WAIT ]; do
   POST_COUNT=$(psql_run -t -A -c "
     SELECT COUNT(*) FROM post p
-    JOIN subreddit s ON s.id = p.\"subredditId\"
+    JOIN subreddit s ON s.id = p.\"subreddit_id\"
     WHERE LOWER(s.name) = 'askreddit';
   ")
   if [ -n "$POST_COUNT" ] && [ "$POST_COUNT" -gt 0 ] 2>/dev/null; then
@@ -62,7 +62,7 @@ psql_run -c "
   VALUES (gen_random_uuid(), 'dead_prod_sub_e2e_77401', NULL)
   ON CONFLICT DO NOTHING;
 
-  INSERT INTO channel_subreddit (\"channelId\", \"subredditId\")
+  INSERT INTO channel_subreddit (\"channel_id\", \"subreddit_id\")
   SELECT '$CHAN_ID', id FROM subreddit WHERE name = 'dead_prod_sub_e2e_77401'
   ON CONFLICT DO NOTHING;
 " >/dev/null || fail "dead sub injection failed"
@@ -82,7 +82,7 @@ assert_status GET "$BASE_URL/channels/$CHAN_ID/subreddits" 200 \
 assert_jq '[.[] | select(.name == "dead_prod_sub_e2e_77401")] | length == 1' 'dead sub STILL subscribed (0 scrapes triggered)'
 
 echo "45. Mark 1 post completed -> Active pool drops to 19 < 20 (toScrapeCount = 1) -> triggers dead sub scrape & cascade"
-psql_run -c "INSERT INTO channel_post_progress (\"channelId\", \"postId\") SELECT '$CHAN_ID', \"id\" FROM post WHERE \"reddit_id\" = 'r_post_e2e_1' ON CONFLICT DO NOTHING;" >/dev/null \
+psql_run -c "INSERT INTO channel_post_progress (\"channel_id\", \"post_id\") SELECT '$CHAN_ID', \"id\" FROM post WHERE \"reddit_id\" = 'r_post_e2e_1' ON CONFLICT DO NOTHING;" >/dev/null \
   || fail "post progress update failed"
 
 assert_status GET "$BASE_URL/admin/channels/$CHAN_ID/topics" 200 \
@@ -92,7 +92,7 @@ assert_jq '.id != null' 'topic resolved'
 i=0
 GONE=1
 while [ $i -lt 45 ]; do
-  SUB_EXISTS=$(psql_run -t -A -c "SELECT COUNT(*) FROM channel_subreddit cs JOIN subreddit s ON s.id = cs.\"subredditId\" WHERE cs.\"channelId\" = '$CHAN_ID' AND s.name = 'dead_prod_sub_e2e_77401';")
+  SUB_EXISTS=$(psql_run -t -A -c "SELECT COUNT(*) FROM channel_subreddit cs JOIN subreddit s ON s.id = cs.\"subreddit_id\" WHERE cs.\"channel_id\" = '$CHAN_ID' AND s.name = 'dead_prod_sub_e2e_77401';")
   if [ "$SUB_EXISTS" = "0" ]; then
     GONE=0
     break
@@ -105,9 +105,9 @@ echo "  ✓ dead sub gone (chain isInvalid -> delete -> cascade) after ~$((i * 3
 
 # Clean up Section 6 scraped posts and subreddits so only mock data exists for AI generation
 psql_run -c "
-  DELETE FROM channel_subreddit WHERE \"channelId\" = '$CHAN_ID';
-  DELETE FROM comment WHERE \"postId\" IN (SELECT id FROM post WHERE \"subredditId\" IN (SELECT id FROM subreddit WHERE name LIKE 'pool_sub_e2e_%' OR name = 'AskReddit'));
-  DELETE FROM post WHERE \"subredditId\" IN (SELECT id FROM subreddit WHERE name LIKE 'pool_sub_e2e_%' OR name = 'AskReddit');
+  DELETE FROM channel_subreddit WHERE \"channel_id\" = '$CHAN_ID';
+  DELETE FROM comment WHERE \"post_id\" IN (SELECT id FROM post WHERE \"subreddit_id\" IN (SELECT id FROM subreddit WHERE name LIKE 'pool_sub_e2e_%' OR name = 'AskReddit'));
+  DELETE FROM post WHERE \"subreddit_id\" IN (SELECT id FROM subreddit WHERE name LIKE 'pool_sub_e2e_%' OR name = 'AskReddit');
   DELETE FROM subreddit WHERE name LIKE 'pool_sub_e2e_%' OR name = 'AskReddit';
 " >/dev/null
 

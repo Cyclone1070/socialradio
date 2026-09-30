@@ -76,7 +76,7 @@ echo "37c. Issue 1: Missing audio segment in window must not desync MEDIA-SEQUEN
 psql_run -c "UPDATE segment SET audio_url = '' WHERE id = '$SECOND_SEGMENT_ID';" >/dev/null
 assert_status GET "$BASE_URL/channels/$PLAY_CHAN_ID/live.m3u8" 200
 DROPPED_SEQ=$(echo "$BODY" | grep '#EXT-X-MEDIA-SEQUENCE:' | sed 's/#EXT-X-MEDIA-SEQUENCE://')
-FIRST_CHUNK_ORDER=$(psql_run -t -A -c "SELECT \"play_order\" FROM segment WHERE \"channelId\" = '$PLAY_CHAN_ID' AND \"audio_url\" != '' AND \"play_order\" >= '$SECOND_ORDER' ORDER BY \"play_order\" ASC LIMIT 1;")
+FIRST_CHUNK_ORDER=$(psql_run -t -A -c "SELECT \"play_order\" FROM segment WHERE \"channel_id\" = '$PLAY_CHAN_ID' AND \"audio_url\" != '' AND \"play_order\" >= '$SECOND_ORDER' ORDER BY \"play_order\" ASC LIMIT 1;")
 if [ "$DROPPED_SEQ" -ne "$FIRST_CHUNK_ORDER" ]; then
   fail "MEDIA-SEQUENCE ($DROPPED_SEQ) does not match first playable chunk play_order ($FIRST_CHUNK_ORDER)"
 fi
@@ -103,7 +103,7 @@ fi
 echo "  ✓ Idle freeze safely clamped advancement (sequence: #$FROZEN_SEQ <= 35)"
 
 echo "37f. Issue 4: DB constraints reject negative duration and null audio_url"
-ACTIVE_SEG_ID=$(psql_run -t -A -c "SELECT id FROM segment WHERE \"channelId\" = '$PLAY_CHAN_ID' AND \"play_order\" >= '$FROZEN_SEQ' ORDER BY \"play_order\" ASC LIMIT 1;")
+ACTIVE_SEG_ID=$(psql_run -t -A -c "SELECT id FROM segment WHERE \"channel_id\" = '$PLAY_CHAN_ID' AND \"play_order\" >= '$FROZEN_SEQ' ORDER BY \"play_order\" ASC LIMIT 1;")
 if psql_run -c "UPDATE segment SET duration_seconds = -1 WHERE id = '$ACTIVE_SEG_ID';" 2>/dev/null; then
   fail "DB allowed setting negative duration_seconds on segment"
 fi
@@ -119,28 +119,28 @@ if psql_run -c "UPDATE segment SET audio_url = NULL WHERE id = '$ACTIVE_SEG_ID';
 fi
 echo "  ✓ DB NOT NULL constraint rejected NULL audio_url"
 
-if psql_run -c "INSERT INTO segment (id, \"channelId\", play_order, type, duration_seconds, audio_url) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', 0, 'jingle', 10, 'jingles/id.mp3');" 2>/dev/null; then
+if psql_run -c "INSERT INTO segment (id, \"channel_id\", play_order, type, duration_seconds, audio_url) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', 0, 'jingle', 10, 'jingles/id.mp3');" 2>/dev/null; then
   fail "DB allowed inserting play_order = 0 on segment"
 fi
-if psql_run -c "INSERT INTO segment (id, \"channelId\", play_order, type, duration_seconds, audio_url) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', -5, 'jingle', 10, 'jingles/id.mp3');" 2>/dev/null; then
+if psql_run -c "INSERT INTO segment (id, \"channel_id\", play_order, type, duration_seconds, audio_url) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', -5, 'jingle', 10, 'jingles/id.mp3');" 2>/dev/null; then
   fail "DB allowed inserting negative play_order on segment"
 fi
 echo "  ✓ DB check constraint rejected non-positive play_order (<= 0)"
 
-if psql_run -c "INSERT INTO segment (id, \"channelId\", play_order, type, duration_seconds, audio_url, status) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', 9999, 'jingle', 10, 'jingles/id.mp3', 'bogus');" 2>/dev/null; then
+if psql_run -c "INSERT INTO segment (id, \"channel_id\", play_order, type, duration_seconds, audio_url, status) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', 9999, 'jingle', 10, 'jingles/id.mp3', 'bogus');" 2>/dev/null; then
   fail "DB allowed invalid segment status 'bogus'"
 fi
 echo "  ✓ DB check constraint rejected invalid segment status"
 
-if psql_run -c "INSERT INTO segment (id, \"channelId\", play_order, type, duration_seconds, audio_url, title, artist) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', 9998, 'music', 120, 'music/track.mp3', NULL, 'Artist');" 2>/dev/null; then
+if psql_run -c "INSERT INTO segment (id, \"channel_id\", play_order, type, duration_seconds, audio_url, title, artist) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', 9998, 'music', 120, 'music/track.mp3', NULL, 'Artist');" 2>/dev/null; then
   fail "DB allowed music segment with NULL title"
 fi
-if psql_run -c "INSERT INTO segment (id, \"channelId\", play_order, type, duration_seconds, audio_url, title, artist) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', 9997, 'music', 120, 'music/track.mp3', 'Title', NULL);" 2>/dev/null; then
+if psql_run -c "INSERT INTO segment (id, \"channel_id\", play_order, type, duration_seconds, audio_url, title, artist) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', 9997, 'music', 120, 'music/track.mp3', 'Title', NULL);" 2>/dev/null; then
   fail "DB allowed music segment with NULL artist"
 fi
 echo "  ✓ DB check constraint rejected music segment with missing title/artist"
 
-if psql_run -c "INSERT INTO segment (id, \"channelId\", play_order, type, duration_seconds, audio_url, cluster_id) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', 9996, 'talk', 60, 'talk/track.mp3', NULL);" 2>/dev/null; then
+if psql_run -c "INSERT INTO segment (id, \"channel_id\", play_order, type, duration_seconds, audio_url, cluster_id) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', 9996, 'talk', 60, 'talk/track.mp3', NULL);" 2>/dev/null; then
   fail "DB allowed talk segment with NULL cluster_id"
 fi
 echo "  ✓ DB check constraint rejected talk segment with missing cluster_id"

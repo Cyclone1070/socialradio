@@ -10,8 +10,14 @@ services:
     command: ["/scripts/docker-test.sh"]
     env_file: ../../.env
     environment:
+      # Tier 1 never touches a real provider. The suite container inherits the
+      # project .env through env_file, so the provider credentials are blanked
+      # here (list entries override env_file): an accidental in-container
+      # provider call fails instead of billing.
+      - LLM_API_KEY=
+      - LLM_BASE_URL=
       - TARGET_URL=http://app:3000
-      - STORAGE_ENDPOINT=http://minio:9000
+      - STORAGE_ENDPOINT=http://seaweedfs:9000
       - TEST_SUITE=${TEST_SUITE:-all}
     extra_hosts:
       - "host.docker.internal:host-gateway"

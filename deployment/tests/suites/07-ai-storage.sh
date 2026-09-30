@@ -7,7 +7,7 @@ TOKEN=$(get_admin_token)
 ensure_base_fixtures
 
 echo ""
-echo "=== Section 7: Live AI Talk Generation & MinIO Blob Storage ==="
+echo "=== Section 7: Live AI Talk Generation & SeaweedFS Blob Storage ==="
 
 # Clean all extraneous posts & comments so only mock fixture data exists in DB
 psql_run -c "
@@ -25,7 +25,7 @@ echo "47. POST /channels (Create dedicated AI radio channel)"
 assert_status POST "$BASE_URL/channels" 201 \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name":"AI Talk & MinIO Verification Radio","visibility":"public"}'
+  -d '{"name":"AI Talk & SeaweedFS Verification Radio","visibility":"public"}'
 AI_CHAN_ID=$(echo "$BODY" | jq -r '.id')
 [ -n "$AI_CHAN_ID" ] && [ "$AI_CHAN_ID" != "null" ] || fail "failed to extract AI_CHAN_ID"
 echo "  ✓ AI radio channel created: $AI_CHAN_ID"
@@ -54,7 +54,7 @@ MAX_WAIT=60
 i=0
 TALK_STATUS=""
 while [ $i -lt $MAX_WAIT ]; do
-  TALK_STATUS=$(psql_run -t -A -c "SELECT \"status\" FROM segment WHERE \"channelId\" = '$AI_CHAN_ID' AND \"type\" = 'talk' ORDER BY \"play_order\" ASC LIMIT 1;" 2>/dev/null || echo "")
+  TALK_STATUS=$(psql_run -t -A -c "SELECT \"status\" FROM segment WHERE \"channel_id\" = '$AI_CHAN_ID' AND \"type\" = 'talk' ORDER BY \"play_order\" ASC LIMIT 1;" 2>/dev/null || echo "")
   if [ "$TALK_STATUS" = "ready" ]; then
     break
   fi
@@ -67,9 +67,9 @@ if [ "$TALK_STATUS" != "ready" ]; then
 fi
 echo "  ✓ TalkSegment generated in background and status in DB is 'ready' after ~${i}s"
 
-TALK_AUDIO_URL=$(psql_run -t -A -c "SELECT \"audio_url\" FROM segment WHERE \"channelId\" = '$AI_CHAN_ID' AND \"type\" = 'talk' ORDER BY \"play_order\" ASC LIMIT 1;")
-TALK_DURATION=$(psql_run -t -A -c "SELECT \"duration_seconds\" FROM segment WHERE \"channelId\" = '$AI_CHAN_ID' AND \"type\" = 'talk' ORDER BY \"play_order\" ASC LIMIT 1;")
-TALK_SCRIPT=$(psql_run -t -A -c "SELECT \"script\" FROM segment WHERE \"channelId\" = '$AI_CHAN_ID' AND \"type\" = 'talk' ORDER BY \"play_order\" ASC LIMIT 1;")
+TALK_AUDIO_URL=$(psql_run -t -A -c "SELECT \"audio_url\" FROM segment WHERE \"channel_id\" = '$AI_CHAN_ID' AND \"type\" = 'talk' ORDER BY \"play_order\" ASC LIMIT 1;")
+TALK_DURATION=$(psql_run -t -A -c "SELECT \"duration_seconds\" FROM segment WHERE \"channel_id\" = '$AI_CHAN_ID' AND \"type\" = 'talk' ORDER BY \"play_order\" ASC LIMIT 1;")
+TALK_SCRIPT=$(psql_run -t -A -c "SELECT \"script\" FROM segment WHERE \"channel_id\" = '$AI_CHAN_ID' AND \"type\" = 'talk' ORDER BY \"play_order\" ASC LIMIT 1;")
 
 echo "  ✓ Generated Talk Audio URL: $TALK_AUDIO_URL"
 echo "  ✓ Generated Talk Duration: ${TALK_DURATION}s"
@@ -83,18 +83,18 @@ if ! echo "$TALK_SCRIPT" | jq -e 'type == "array" and length >= 3' >/dev/null 2>
 fi
 echo "  ✓ TalkSegment script contains multi-turn dialogue"
 
-echo "50. MinIO Blob Storage Verification: verify generated MP3 object exists and is non-empty (>10KB)"
-MINIO_ENDPOINT="$MINIO_URL/$BUCKET/$TALK_AUDIO_URL"
-req GET "$MINIO_ENDPOINT"
-echo "  Status from MinIO: $STATUS"
+echo "50. SeaweedFS Blob Storage Verification: verify generated MP3 object exists and is non-empty (>10KB)"
+STORAGE_BLOB_URL="$STORAGE_URL/$BUCKET/$TALK_AUDIO_URL"
+req GET "$STORAGE_BLOB_URL"
+echo "  Status from SeaweedFS: $STATUS"
 if [ "$STATUS" != "200" ]; then
-  fail "failed to fetch audio blob from MinIO ($MINIO_ENDPOINT), HTTP status $STATUS"
+  fail "failed to fetch audio blob from SeaweedFS ($STORAGE_BLOB_URL), HTTP status $STATUS"
 fi
 
-BLOB_SIZE=$(curl -sI "$MINIO_ENDPOINT" | grep -i "content-length" | awk '{print $2}' | tr -d '\r')
-echo "  ✓ MinIO audio blob Content-Length: ${BLOB_SIZE} bytes"
+BLOB_SIZE=$(curl -sI "$STORAGE_BLOB_URL" | grep -i "content-length" | awk '{print $2}' | tr -d '\r')
+echo "  ✓ SeaweedFS audio blob Content-Length: ${BLOB_SIZE} bytes"
 if [ -n "$BLOB_SIZE" ] && [ "$BLOB_SIZE" -gt 10000 ] 2>/dev/null; then
-  echo "  ✓ Audio blob is non-empty and verified in MinIO object storage (>10KB)"
+  echo "  ✓ Audio blob is non-empty and verified in SeaweedFS object storage (>10KB)"
 else
-  fail "Audio blob in MinIO is suspiciously small or empty (size: $BLOB_SIZE)"
+  fail "Audio blob in SeaweedFS is suspiciously small or empty (size: $BLOB_SIZE)"
 fi
