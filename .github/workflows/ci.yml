@@ -22,9 +22,36 @@ jobs:
           npm ci || npm ci  # retry once: install downloads (registry/CDN) can time out transiently
           npm run gate
 
+      - name: Tier 1 mock payloads typecheck (must match the fetcher's types)
+        run: npx tsc --noEmit -p deployment/mocks/tsconfig.json
+
       - name: reddit-fetcher unit tests
         working-directory: reddit-fetcher
         run: |
           npm ci || npm ci
           npx tsc --noEmit
           npx jest
+
+  # Tier 1 e2e: the whole suite against mocks. No provider keys, no reddit, and
+  # the browserless image is never pulled. The one external call left is the free
+  # TTS library, which is why it lives in this tier rather than the paid one.
+  # Tier 2 (contract probes against a real provider) is deliberately absent: it
+  # is the only tier that spends money and talks to the internet.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tier 1 environment (dummy values, no real credentials)
+        run: |
+          cat > .env <<'EOF'
+          ADMIN_EMAIL=user@socialradio.com
+          ADMIN_PASSWORD=user1234
+          JWT_SECRET=ci-only-secret
+          INTERNAL_SERVICE_SECRET=ci-only-internal
+          EOF
+
+      - name: Tier 1 e2e suite (docker, mocks only)
+        working-directory: deployment/tests
+        run: sh run-docker-test.sh all
