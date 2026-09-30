@@ -31,11 +31,13 @@ services:
   # SeaweedFS replaced MinIO: the MinIO open-source project is archived (Docker
   # Hub repo deleted, binaries return 410 Gone). The S3 API still listens on
   # 9000 so the app config, the suites and STORAGE_PUBLIC_URL are unchanged.
-  # The credentials in seaweedfs-s3.json must match STORAGE_ACCESS_KEY and
-  # STORAGE_SECRET_KEY below. The "anonymous" identity grants Read and Write
-  # without a signature, mirroring the public GetObject/PutObject bucket policy
-  # the app installs at boot: media is served straight from STORAGE_PUBLIC_URL,
-  # and the e2e fixtures upload with an unsigned PUT.
+  # seaweedfs-s3.json carries two things. The "app" identity holds the
+  # credentials below - SeaweedFS has no env-var equivalent, so this file is the
+  # only place to declare them. The "anonymous" identity grants Write only: it
+  # exists for the e2e fixtures, which upload with an unsigned PUT. Anonymous
+  # reads are deliberately NOT granted here, because the app installs its own
+  # public GetObject policy at boot - granting Read as well would let a broken
+  # policy go unnoticed.
   seaweedfs:
     image: chrislusf/seaweedfs:latest
     ports:

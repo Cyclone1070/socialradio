@@ -2,7 +2,9 @@
   "identities": [
     {
       "name": "anonymous",
-      "actions": ["Read", "Write"]
+      "actions": [
+        "Write"
+      ]
     },
     {
       "name": "app",
@@ -12,7 +14,13 @@
           "secretKey": "minioadmin"
         }
       ],
-      "actions": ["Admin", "Read", "List", "Tagging", "Write"]
+      "actions": [
+        "Admin",
+        "Read",
+        "List",
+        "Tagging",
+        "Write"
+      ]
     }
   ]
 }
