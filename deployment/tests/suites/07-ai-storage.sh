@@ -83,6 +83,21 @@ if ! echo "$TALK_SCRIPT" | jq -e 'type == "array" and length >= 3' >/dev/null 2>
 fi
 echo "  ✓ TalkSegment script contains multi-turn dialogue"
 
+# The script must be the mock's dialogue. A fabricated fallback has exactly five
+# turns too, so a turn count alone cannot tell the two apart.
+if ! echo "$TALK_SCRIPT" | grep -q "landlord just stopped replying"; then
+  fail "talk script is not the mock's dialogue - something invented it: $TALK_SCRIPT"
+fi
+echo "  ✓ talk script came from the LLM mock, not from invented content"
+
+# The aired post must be recorded through the app's own code path. The suites used
+# to insert these rows by hand, which is how a broken insert stayed hidden.
+PROGRESS_ROWS=$(psql_run -t -A -c "SELECT COUNT(*) FROM channel_post_progress WHERE \"channel_id\" = '$AI_CHAN_ID';")
+if [ "$PROGRESS_ROWS" = "0" ]; then
+  fail "no channel_post_progress row: the aired post was never recorded"
+fi
+echo "  ✓ aired post recorded in channel_post_progress ($PROGRESS_ROWS row(s))"
+
 echo "50. SeaweedFS Blob Storage Verification: verify generated MP3 object exists and is non-empty (>10KB)"
 STORAGE_BLOB_URL="$STORAGE_URL/$BUCKET/$TALK_AUDIO_URL"
 req GET "$STORAGE_BLOB_URL"

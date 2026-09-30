@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@mikro-orm/nestjs';
 import { RequestContext } from '@mikro-orm/core';
+import { APICallError, RetryError } from 'ai';
 import { EntityRepository, EntityManager } from '@mikro-orm/postgresql';
 import { Channel, SubredditRef, PostRef } from './entities/channel.entity';
 import {
@@ -181,13 +182,29 @@ export class QueueService {
         process.stderr.write(
           `[QueueService] voice generation failed: ${err instanceof Error ? err.stack || err.message : String(err)}\n`,
         );
-        this.logger.error(
-          {
-            channelId,
-            clusterId: talkCluster.id,
-            err: err instanceof Error ? err : new Error(String(err)),
-          },
-          'voice generation failed, trying next available topic',
+        const failureContext = {
+          channelId,
+          clusterId: talkCluster.id,
+          err: err instanceof Error ? err : new Error(String(err)),
+        };
+
+        if (isRetryableLlmFailure(err)) {
+          this.logger.warn(
+            failureContext,
+            'voice generation failed, will retry when the queue runs low again',
+          );
+        } else {
+          this.logger.error(
+            failureContext,
+            'voice generation failed and will keep failing until the provider configuration is fixed (model retired, key rejected, provider refusing)',
+          );
+        }
+
+        // Filler covers the gap, so the post must go back into the pool: retry is
+        // demand driven and needs something left to retry when the filler runs low.
+        await this.releasePostLease(
+          channelId,
+          talkCluster.posts.map((p) => p.id),
         );
         // Continue loop to try the next available unplayed topic cluster
       }
@@ -457,20 +474,61 @@ export class QueueService {
     channelId: string,
     postId: string,
   ): Promise<void> {
-    try {
-      const conn = this.em.getConnection?.();
-      if (conn?.execute) {
-        await conn.execute(
-          'INSERT INTO "channel_post_progress" ("channelId", "postId") VALUES (?, ?) ON CONFLICT DO NOTHING',
-          [channelId, postId],
-        );
-      }
-    } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      this.logger.debug(
-        { channelId, postId, errMsg },
-        'markPostCompletedForChannel error ignored',
-      );
+    await this.setPostConsumed(channelId, postId, true);
+  }
+
+  /**
+   * Puts a post back into the pool when its talk was never produced. Without
+   * this a dead provider burns the pool one cluster at a time, and the
+   * demand-driven retry has nothing left to work with.
+   */
+  private async releasePostLease(
+    channelId: string,
+    postIds: string[],
+  ): Promise<void> {
+    for (const postId of postIds) {
+      await this.setPostConsumed(channelId, postId, false);
     }
   }
+
+  /**
+   * The pivot table belongs to the ORM, which knows its column names. Writing
+   * this insert by hand is how it silently broke when the foreign keys were
+   * renamed to snake_case - a repository mock accepts any string, and the catch
+   * that swallowed the error logged at debug.
+   */
+  private async setPostConsumed(
+    channelId: string,
+    postId: string,
+    consumed: boolean,
+  ): Promise<void> {
+    const channel = await this.channelRepo.findOne(
+      { id: channelId },
+      { populate: ['completedPosts'] },
+    );
+    if (!channel) return;
+
+    const alreadyRecorded = channel.completedPosts
+      .getItems()
+      .some((item) => item.id === postId);
+    if (alreadyRecorded === consumed) return;
+
+    const postRef = this.em.getReference<PostRef>('Post', postId);
+    if (consumed) {
+      channel.completedPosts.add(postRef);
+    } else {
+      channel.completedPosts.remove(postRef);
+    }
+    await this.em.flush();
+  }
+}
+
+/**
+ * The provider's own verdict rather than a guess: the SDK marks 429/5xx/network
+ * as retryable and refuses to retry 4xx, which is the difference between "busy,
+ * try again when the filler runs low" and "this configuration is wrong".
+ */
+function isRetryableLlmFailure(err: unknown): boolean {
+  const cause = err instanceof RetryError ? err.lastError : err;
+  return APICallError.isInstance(cause) && cause.isRetryable === true;
 }

@@ -139,6 +139,49 @@ Dave: Wrap.`;
       expect(result.turns[0].speaker).toBe('Dave');
     });
 
+    it('throws instead of inventing a script when Stage 1 keeps failing', async () => {
+      const posts: PostData[] = [
+        {
+          id: 'post-1',
+          subredditId: 'sub-1',
+          redditId: 'r1',
+          title: 'Post Title 1',
+          body: 'Post Body 1',
+          score: 10,
+        },
+      ];
+
+      mockLlmService.generateText.mockResolvedValue(
+        'Invalid outline without steps',
+      );
+
+      await expect(service.generateScript(posts, [])).rejects.toThrow(
+        /Stage 1/,
+      );
+      expect(mockLlmService.generateText).toHaveBeenCalledTimes(2);
+    });
+
+    it('throws instead of inventing a script when Stage 2 keeps failing', async () => {
+      const posts: PostData[] = [
+        {
+          id: 'post-1',
+          subredditId: 'sub-1',
+          redditId: 'r1',
+          title: 'Post Title 1',
+          body: 'Post Body 1',
+          score: 10,
+        },
+      ];
+
+      mockLlmService.generateText
+        .mockResolvedValueOnce(validOutlineMarkdown)
+        .mockResolvedValue('Dave: one turn is not a conversation');
+
+      await expect(service.generateScript(posts, [])).rejects.toThrow(
+        /Stage 2/,
+      );
+    });
+
     it('should retry Stage 1 when Stage 1 outline validation fails', async () => {
       const posts: PostData[] = [
         {

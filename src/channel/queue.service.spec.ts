@@ -143,10 +143,15 @@ describe('QueueService', () => {
         add: jest.fn((ref: { id: string }) => {
           completedItems.push(ref);
         }),
+        remove: jest.fn((ref: { id: string }) => {
+          const at = completedItems.findIndex((item) => item.id === ref.id);
+          if (at >= 0) completedItems.splice(at, 1);
+        }),
       },
     });
     mockChannelRepo.findOne.mockResolvedValue(channel);
     mockContentContract.getSubredditsByIds.mockResolvedValue(formatted);
+    return channel;
   }
 
   it('should be defined', () => {
@@ -410,9 +415,37 @@ describe('QueueService', () => {
 
       expect(mockScriptContract.generateScript).toHaveBeenCalled();
       expect(mockVoiceContract.synthesizeScript).toHaveBeenCalled();
-      expect(mockExecute).toHaveBeenCalledWith(
-        expect.stringContaining('ON CONFLICT DO NOTHING'),
-        ['chan-1', 'post-1'],
+
+      // Consumption goes through the ORM, which owns the pivot table's column
+      // names. Raw SQL here is what silently broke when the columns were renamed.
+      expect(mockEntityManager.flush).toHaveBeenCalled();
+      expect(mockExecute).not.toHaveBeenCalled();
+    });
+
+    it('releases the consumed post when generation fails, so the retry has a pool', async () => {
+      const channelId = 'chan-1';
+      const channel = setupChannelSubreddits([
+        { subredditId: 'sub-1', name: 'AskReddit', lastScrapedAt: new Date() },
+      ]);
+      mockContentContract.getPostsBySubredditIds.mockResolvedValue([
+        {
+          id: 'post-1',
+          subredditId: 'sub-1',
+          title: 'Topic Title',
+          selftext: 'Body',
+          ups: 100,
+        },
+      ]);
+      mockScriptContract.generateScript.mockRejectedValue(
+        new Error('LLM error on post 1'),
+      );
+
+      await service.bufferAhead(channelId);
+
+      // The post is aired nowhere, so it must go back into the pool: retry is
+      // demand driven, triggered when the filler that replaced it runs low.
+      expect(channel.completedPosts.remove).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'post-1' }),
       );
     });
 

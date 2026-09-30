@@ -659,4 +659,24 @@ describe('True Peer Decoupling Architecture Guardrails', () => {
       expect(offenders).toEqual(['Ghost -> channel/models/ghost.ts']);
     });
   });
+
+  describe('Rule 10: persistence goes through the ORM', () => {
+    it('production code must not execute raw SQL', () => {
+      const offenders: string[] = [];
+
+      for (const file of getAllProductionTsFiles(rootSrcDir)) {
+        const source = fs.readFileSync(file, 'utf-8');
+        source.split('\n').forEach((line, index) => {
+          // Raw SQL cannot be checked by a repository mock, and the column names
+          // it hardcodes are the first thing a rename breaks - silently, if the
+          // failure is swallowed. The ORM already knows the schema; use it.
+          if (/getConnection/.test(line) || /\.execute\(/.test(line)) {
+            offenders.push(`${path.relative(rootSrcDir, file)}:${index + 1}`);
+          }
+        });
+      }
+
+      expect(offenders).toEqual([]);
+    });
+  });
 });
