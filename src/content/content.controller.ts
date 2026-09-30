@@ -49,7 +49,7 @@ export class ContentController {
     const result = [];
     for (const sub of subreddits) {
       const count = await this.postRepo.count({
-        subreddit: sub.id,
+        subredditId: sub.id,
       });
       result.push({
         id: sub.id,

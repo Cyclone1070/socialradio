@@ -185,7 +185,7 @@ export class ScraperService {
           }
 
           const post = new Post(
-            subreddit,
+            subreddit.id,
             rawPost.id,
             rawPost.title,
             rawPost.selftext || '',
@@ -193,6 +193,8 @@ export class ScraperService {
             new Date(rawPost.created_utc * 1000),
           );
           this.em.persist(post);
+          // flush so the generated post id is available for its comments
+          await this.em.flush();
 
           for (const rawComment of rawComments) {
             const isOp = rawComment.author === rawPost.author;
@@ -205,7 +207,7 @@ export class ScraperService {
                 : null;
 
             const comment = new Comment(
-              post,
+              post.id,
               rawComment.id,
               rawComment.body || '',
               rawComment.score || 0,
@@ -290,7 +292,7 @@ export class ScraperService {
     const cutoff = new Date(Date.now() - SCRAPE_WINDOW_MS);
     const where: FilterQuery<Post> = { scrapedAt: { $lt: cutoff } };
     if (subredditId) {
-      where.subreddit = subredditId;
+      where.subredditId = subredditId;
     }
     const count = await this.postRepo.nativeDelete(where);
     this.logger.info(

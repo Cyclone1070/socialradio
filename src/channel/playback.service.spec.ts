@@ -154,7 +154,7 @@ describe('PlaybackService', () => {
         mockSegmentRepo.findOne.mockImplementation(
           (criteria: {
             id?: string;
-            channel?: string;
+            channelId?: string;
             playOrder?: { $gte?: number };
           }) => {
             if (criteria.id) return Promise.resolve(null);
@@ -170,7 +170,7 @@ describe('PlaybackService', () => {
 
         mockSegmentRepo.find = jest.fn().mockImplementation(
           (
-            criteria: { channel?: string; playOrder?: { $gte?: number } },
+            criteria: { channelId?: string; playOrder?: { $gte?: number } },
             options?: {
               orderBy?: { playOrder?: 'ASC' | 'DESC' };
               limit?: number;
@@ -260,7 +260,7 @@ describe('PlaybackService', () => {
           (
             criteria: {
               id?: string;
-              channel?: string;
+              channelId?: string;
               playOrder?: { $gte?: number };
             },
             options?: { orderBy?: { playOrder?: 'ASC' | 'DESC' } },
@@ -282,7 +282,7 @@ describe('PlaybackService', () => {
 
         mockSegmentRepo.find = jest.fn().mockImplementation(
           (
-            criteria: { channel?: string; playOrder?: { $gte?: number } },
+            criteria: { channelId?: string; playOrder?: { $gte?: number } },
             options?: {
               orderBy?: { playOrder?: 'ASC' | 'DESC' };
               limit?: number;
@@ -439,7 +439,7 @@ describe('PlaybackService', () => {
         mockSegmentRepo.findOne.mockResolvedValueOnce(segment);
         // Only 2 segments ahead (< 4)
         mockSegmentRepo.count.mockImplementation(
-          (criteria: { channel?: string; playOrder?: { $gt?: number } }) => {
+          (criteria: { channelId?: string; playOrder?: { $gt?: number } }) => {
             if (criteria.playOrder?.$gt !== undefined) {
               return Promise.resolve(2);
             }
@@ -451,7 +451,7 @@ describe('PlaybackService', () => {
         await service.getLiveManifest(channelId);
 
         expect(mockSegmentRepo.count).toHaveBeenCalledWith({
-          channel: channelId,
+          channelId,
           playOrder: { $gt: 1 },
         });
         expect(mockQueueService.bufferAhead).toHaveBeenCalledWith(channelId);
@@ -504,7 +504,7 @@ describe('PlaybackService', () => {
 
         expect(mockSegmentRepo.find).toHaveBeenCalledWith(
           {
-            channel: channelId,
+            channelId,
             playOrder: { $gte: 10 },
           },
           {
@@ -675,7 +675,7 @@ describe('PlaybackService', () => {
               mockSegmentRepo.findOne.mockImplementation(
                 (criteria: {
                   id?: string;
-                  channel?: string;
+                  channelId?: string;
                   playOrder?: { $gt?: number; $gte?: number };
                 }) => {
                   if (criteria.id) {
@@ -684,7 +684,7 @@ describe('PlaybackService', () => {
                     );
                   }
                   if (
-                    criteria.channel &&
+                    criteria.channelId &&
                     criteria.playOrder?.$gt !== undefined
                   ) {
                     const threshold = criteria.playOrder.$gt;
@@ -693,7 +693,7 @@ describe('PlaybackService', () => {
                     );
                   }
                   if (
-                    criteria.channel &&
+                    criteria.channelId &&
                     criteria.playOrder?.$gte !== undefined
                   ) {
                     const threshold = criteria.playOrder.$gte;
@@ -701,7 +701,7 @@ describe('PlaybackService', () => {
                       segments.find((s) => s.playOrder >= threshold) ?? null,
                     );
                   }
-                  if (criteria.channel) {
+                  if (criteria.channelId) {
                     return Promise.resolve(segments[0] ?? null);
                   }
                   return Promise.resolve(null);
@@ -720,7 +720,10 @@ describe('PlaybackService', () => {
               );
               mockSegmentRepo.find.mockImplementation(
                 (
-                  criteria: { channel?: string; playOrder?: { $gte?: number } },
+                  criteria: {
+                    channelId?: string;
+                    playOrder?: { $gte?: number };
+                  },
                   options?: {
                     orderBy?: { playOrder?: 'ASC' | 'DESC' };
                     limit?: number;
@@ -844,7 +847,7 @@ describe('PlaybackService', () => {
               mockSegmentRepo.findOne.mockImplementation(
                 (criteria: {
                   id?: string;
-                  channel?: string;
+                  channelId?: string;
                   playOrder?: { $gt?: number; $gte?: number };
                 }) => {
                   if (criteria.id) {
@@ -853,7 +856,7 @@ describe('PlaybackService', () => {
                     );
                   }
                   if (
-                    criteria.channel &&
+                    criteria.channelId &&
                     criteria.playOrder?.$gt !== undefined
                   ) {
                     const threshold = criteria.playOrder.$gt;
@@ -862,7 +865,7 @@ describe('PlaybackService', () => {
                     );
                   }
                   if (
-                    criteria.channel &&
+                    criteria.channelId &&
                     criteria.playOrder?.$gte !== undefined
                   ) {
                     const threshold = criteria.playOrder.$gte;
@@ -870,7 +873,7 @@ describe('PlaybackService', () => {
                       segments.find((s) => s.playOrder >= threshold) ?? null,
                     );
                   }
-                  if (criteria.channel) {
+                  if (criteria.channelId) {
                     return Promise.resolve(segments[0] ?? null);
                   }
                   return Promise.resolve(null);
@@ -891,7 +894,10 @@ describe('PlaybackService', () => {
 
               mockSegmentRepo.find.mockImplementation(
                 (
-                  criteria: { channel?: string; playOrder?: { $gte?: number } },
+                  criteria: {
+                    channelId?: string;
+                    playOrder?: { $gte?: number };
+                  },
                   options?: {
                     orderBy?: { playOrder?: 'ASC' | 'DESC' };
                     limit?: number;
@@ -1038,7 +1044,7 @@ describe('PlaybackService', () => {
             criteria: {
               id?: string;
               playOrder?: { $gte?: number; $gt?: number };
-              channel?: string;
+              channelId?: string;
             },
             options?: { orderBy?: { playOrder?: 'ASC' | 'DESC' } },
           ) => {
@@ -1130,7 +1136,7 @@ describe('PlaybackService', () => {
           (criteria: {
             id?: string;
             playOrder?: { $gte?: number; $gt?: number };
-            channel?: string;
+            channelId?: string;
           }) => {
             if (criteria.id === 'seg-bad') return Promise.resolve(badSeg);
             if (criteria.playOrder?.$gt === 1) return Promise.resolve(goodSeg);

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@mikro-orm/nestjs';
+import { RequestContext } from '@mikro-orm/core';
 import { EntityRepository, EntityManager } from '@mikro-orm/postgresql';
 import { Channel, SubredditRef, PostRef } from './entities/channel.entity';
 import {
@@ -65,13 +66,15 @@ export class QueueService {
       return existing;
     }
 
-    const promise = (async () => {
+    // Buffering runs detached from the request that triggered it, so it gets
+    // its own MikroORM context instead of relying on the caller's.
+    const promise = RequestContext.create(this.em, async () => {
       try {
         await this.doBufferAhead(channelId);
       } finally {
         this.inFlightBuffers.delete(channelId);
       }
-    })();
+    });
 
     this.inFlightBuffers.set(channelId, promise);
     return promise;
@@ -79,7 +82,7 @@ export class QueueService {
 
   private async doBufferAhead(channelId: string): Promise<void> {
     const lastItem = await this.segmentRepo.findOne(
-      { channel: channelId },
+      { channelId },
       { orderBy: { playOrder: 'DESC' } },
     );
     let nextPlayOrder = lastItem ? lastItem.playOrder + 1 : 1;
@@ -159,16 +162,12 @@ export class QueueService {
         process.stderr.write(
           `[QueueService] Voice track generated: ${voiceTrack.filePath}, persisting TalkSegment...\n`,
         );
-        const talkItem: TalkSegment = Object.assign(new TalkSegment(), {
-          channel: this.em.getReference(Channel, channelId),
-          channelId,
-          playOrder,
-          clusterId: talkCluster.id,
-          audioUrl: voiceTrack.filePath,
-          durationSeconds: voiceTrack.durationSeconds,
-          status: 'ready',
-          script: scriptObj.turns,
-        });
+        const talkItem = new TalkSegment(talkCluster.id, 'ready');
+        talkItem.channelId = channelId;
+        talkItem.playOrder = playOrder;
+        talkItem.audioUrl = voiceTrack.filePath;
+        talkItem.durationSeconds = voiceTrack.durationSeconds;
+        talkItem.script = scriptObj.turns;
         const nextOrder = await this.persistSegmentWithOrderRetry(
           talkItem,
           channelId,
@@ -242,7 +241,7 @@ export class QueueService {
           'playOrder collision detected, advancing to latest order',
         );
         const latest = await this.segmentRepo.findOne(
-          { channel: channelId },
+          { channelId },
           { orderBy: { playOrder: 'DESC' } },
         );
         item.playOrder = (latest?.playOrder ?? playOrder) + 1;
@@ -258,14 +257,14 @@ export class QueueService {
     minCount: number = 6,
   ): Promise<void> {
     const existingCount = await this.segmentRepo.count({
-      channel: channelId,
+      channelId,
     });
     if (existingCount >= minCount) {
       return;
     }
 
     const lastItem = await this.segmentRepo.findOne(
-      { channel: channelId },
+      { channelId },
       { orderBy: { playOrder: 'DESC' } },
     );
     let nextPlayOrder = lastItem ? lastItem.playOrder + 1 : 1;
@@ -282,13 +281,11 @@ export class QueueService {
         }
       } catch {
         // Fallback: create emergency static jingle segment if media pool is unavailable
-        const fallbackItem = Object.assign(new JingleSegment(), {
-          channel: this.em.getReference(Channel, channelId),
-          channelId,
-          playOrder: nextPlayOrder,
-          audioUrl: 'jingles/station-id.mp3',
-          durationSeconds: 10,
-        });
+        const fallbackItem = new JingleSegment();
+        fallbackItem.channelId = channelId;
+        fallbackItem.playOrder = nextPlayOrder;
+        fallbackItem.audioUrl = 'jingles/station-id.mp3';
+        fallbackItem.durationSeconds = 10;
         nextPlayOrder = await this.persistSegmentWithOrderRetry(
           fallbackItem,
           channelId,
@@ -310,15 +307,11 @@ export class QueueService {
     playOrder: number,
   ): Promise<number> {
     const music = await this.mediaService.getRandomMusic();
-    const musicItem = Object.assign(new MusicSegment(), {
-      channel: this.em.getReference(Channel, channelId),
-      channelId,
-      playOrder,
-      audioUrl: music.filePath,
-      durationSeconds: music.durationSeconds,
-      title: music.title,
-      artist: music.artist,
-    });
+    const musicItem = new MusicSegment(music.title, music.artist);
+    musicItem.channelId = channelId;
+    musicItem.playOrder = playOrder;
+    musicItem.audioUrl = music.filePath;
+    musicItem.durationSeconds = music.durationSeconds;
     return await this.persistSegmentWithOrderRetry(
       musicItem,
       channelId,
@@ -331,13 +324,11 @@ export class QueueService {
     playOrder: number,
   ): Promise<number> {
     const ad = await this.mediaService.getRandomAd();
-    const adItem = Object.assign(new AdSegment(), {
-      channel: this.em.getReference(Channel, channelId),
-      channelId,
-      playOrder,
-      audioUrl: ad.filePath,
-      durationSeconds: ad.durationSeconds,
-    });
+    const adItem = new AdSegment();
+    adItem.channelId = channelId;
+    adItem.playOrder = playOrder;
+    adItem.audioUrl = ad.filePath;
+    adItem.durationSeconds = ad.durationSeconds;
     return await this.persistSegmentWithOrderRetry(
       adItem,
       channelId,
@@ -350,13 +341,11 @@ export class QueueService {
     playOrder: number,
   ): Promise<number> {
     const jingle = await this.mediaService.getRandomJingle();
-    const jingleItem = Object.assign(new JingleSegment(), {
-      channel: this.em.getReference(Channel, channelId),
-      channelId,
-      playOrder,
-      audioUrl: jingle.filePath,
-      durationSeconds: jingle.durationSeconds,
-    });
+    const jingleItem = new JingleSegment();
+    jingleItem.channelId = channelId;
+    jingleItem.playOrder = playOrder;
+    jingleItem.audioUrl = jingle.filePath;
+    jingleItem.durationSeconds = jingle.durationSeconds;
     return await this.persistSegmentWithOrderRetry(
       jingleItem,
       channelId,

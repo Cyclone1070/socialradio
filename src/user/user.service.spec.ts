@@ -71,7 +71,7 @@ describe('UserService', () => {
 
       expect(mockUserRepo.findOne).toHaveBeenCalledWith({ email });
       expect(mockEntityManager.persist).toHaveBeenCalledWith(
-        expect.objectContaining({ email, passwordHash }),
+        expect.objectContaining({ email, _passwordHash: passwordHash }),
       );
       expect(mockEntityManager.flush).toHaveBeenCalled();
       expect(result.id).toBe('uuid');

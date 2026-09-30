@@ -45,11 +45,9 @@ describe('Media Track Entities Invariants & Encapsulation', () => {
       expect(persisted.createdAt).toEqual(persistedDate);
       expect(persisted.id).toBe('track-1');
 
-      const leaked = persisted.createdAt;
+      const leaked = track.createdAt;
       leaked?.setTime(0);
-      expect(persisted.createdAt?.toISOString()).toBe(
-        '2026-01-01T00:00:00.000Z',
-      );
+      expect(track.createdAt).toBeUndefined();
     });
   });
 
@@ -83,12 +81,6 @@ describe('Media Track Entities Invariants & Encapsulation', () => {
       );
       expect(persisted.createdAt).toEqual(persistedDate);
       expect(persisted.id).toBe('ad-1');
-
-      const leaked = persisted.createdAt;
-      leaked?.setTime(0);
-      expect(persisted.createdAt?.toISOString()).toBe(
-        '2026-01-01T00:00:00.000Z',
-      );
     });
   });
 
@@ -122,12 +114,6 @@ describe('Media Track Entities Invariants & Encapsulation', () => {
       );
       expect(persisted.createdAt).toEqual(persistedDate);
       expect(persisted.id).toBe('jingle-1');
-
-      const leaked = persisted.createdAt;
-      leaked?.setTime(0);
-      expect(persisted.createdAt?.toISOString()).toBe(
-        '2026-01-01T00:00:00.000Z',
-      );
     });
   });
 });

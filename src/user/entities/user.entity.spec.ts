@@ -30,7 +30,7 @@ describe('UserEntity Invariants & Encapsulation', () => {
 
   it('validates passwordHash', () => {
     const user = new User('test@example.com', 'hash123');
-    expect(user.passwordHash).toBe('hash123');
+    expect(user['_passwordHash']).toBe('hash123');
 
     expect(() => {
       user.passwordHash = '   ';

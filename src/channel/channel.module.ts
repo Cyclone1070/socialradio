@@ -3,10 +3,6 @@ import { MikroOrmModule } from '@mikro-orm/nestjs';
 import {
   ChannelSchema,
   SegmentSchema,
-  MusicSegmentSchema,
-  TalkSegmentSchema,
-  AdSegmentSchema,
-  JingleSegmentSchema,
 } from '../infrastructure/database/schemas/channel.schema';
 import { ChannelService } from './channel.service';
 import { PlaybackService } from './playback.service';
@@ -23,14 +19,7 @@ import { StorageModule } from '../infrastructure/storage/storage.module';
 
 @Module({
   imports: [
-    MikroOrmModule.forFeature([
-      ChannelSchema,
-      SegmentSchema,
-      MusicSegmentSchema,
-      TalkSegmentSchema,
-      AdSegmentSchema,
-      JingleSegmentSchema,
-    ]),
+    MikroOrmModule.forFeature([ChannelSchema, SegmentSchema]),
     UserModule,
     PassportModule,
     MediaModule,

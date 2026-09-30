@@ -2,8 +2,42 @@ import { ChannelSchema, SegmentSchema } from './channel.schema';
 import { MusicTrackSchema, AdTrackSchema, JingleSchema } from './media.schema';
 import { SubredditSchema } from './content.schema';
 import { UserSchema } from './user.schema';
+import * as allSchemas from './index';
 
 describe('EntitySchema Database Constraint Specifications', () => {
+  describe('Accessor coverage', () => {
+    it('routes every persisted scalar property through its entity accessors', () => {
+      const offenders: string[] = [];
+
+      for (const schema of Object.values(allSchemas)) {
+        const meta = schema.meta as {
+          className: string;
+          class: { prototype: object };
+          properties: Record<
+            string,
+            { kind?: unknown; accessor?: unknown } | undefined
+          >;
+        };
+
+        for (const [name, prop] of Object.entries(meta.properties)) {
+          if (!prop || prop.kind !== undefined || prop.accessor) {
+            continue;
+          }
+
+          const descriptor = Object.getOwnPropertyDescriptor(
+            meta.class.prototype,
+            name,
+          );
+          if (descriptor?.get && descriptor?.set) {
+            offenders.push(`${meta.className}.${name}`);
+          }
+        }
+      }
+
+      expect(offenders).toEqual([]);
+    });
+  });
+
   describe('ChannelSchema', () => {
     it('defines non-empty name, visibility enum, and positive play order checks', () => {
       const checkNames = (ChannelSchema.meta.checks ?? []).map((c) => c.name);
@@ -47,13 +81,13 @@ describe('EntitySchema Database Constraint Specifications', () => {
       expect(props.createdAt.accessor).toBe(true);
     });
 
-    it('enforces unique compound index on (channel, playOrder)', () => {
+    it('enforces unique compound index on (channelId, playOrder)', () => {
       const uniques = SegmentSchema.meta.uniques ?? [];
       const hasChannelPlayOrder = uniques.some((u) => {
         const props = Array.isArray(u.properties)
           ? u.properties
           : [u.properties];
-        return props.includes('channel') && props.includes('playOrder');
+        return props.includes('channelId') && props.includes('playOrder');
       });
       expect(hasChannelPlayOrder).toBe(true);
     });
@@ -115,6 +149,13 @@ describe('EntitySchema Database Constraint Specifications', () => {
       expect(UserSchema.meta.properties.role.accessor).toBe(true);
       expect(UserSchema.meta.properties.id.accessor).toBe(true);
       expect(UserSchema.meta.properties.createdAt.accessor).toBe(true);
+    });
+
+    it('maps the user password hash through its private field and hides it', () => {
+      const prop = UserSchema.meta.properties.passwordHash;
+      expect(prop.accessor).toBe('_passwordHash');
+      expect(prop).toMatchObject({ fieldName: 'password_hash' });
+      expect(prop.hidden).toBe(true);
     });
   });
 });

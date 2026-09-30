@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as ts from 'typescript';
 
 describe('True Peer Decoupling Architecture Guardrails', () => {
   const rootSrcDir = __dirname;
@@ -332,6 +333,214 @@ describe('True Peer Decoupling Architecture Guardrails', () => {
           }
         }
       }
+    });
+  });
+
+  describe('Rule 8: Entity Encapsulation Guardrails', () => {
+    let ls: ts.LanguageService;
+    let program: ts.Program;
+    let entityFiles: string[];
+
+    beforeAll(() => {
+      const configPath = ts.findConfigFile(
+        path.resolve(__dirname, '..'),
+        (f) => ts.sys.fileExists(f),
+        'tsconfig.json',
+      )!;
+      const configFile = ts.readConfigFile(configPath, (f) =>
+        ts.sys.readFile(f),
+      );
+      const parsed = ts.parseJsonConfigFileContent(
+        configFile.config,
+        ts.sys,
+        path.dirname(configPath),
+      );
+
+      const host: ts.LanguageServiceHost = {
+        getScriptFileNames: () => parsed.fileNames,
+        getScriptVersion: () => '1',
+        getScriptSnapshot: (f) =>
+          ts.sys.fileExists(f)
+            ? ts.ScriptSnapshot.fromString(ts.sys.readFile(f)!)
+            : undefined,
+        getCurrentDirectory: () => path.dirname(configPath),
+        getCompilationSettings: () => parsed.options,
+        getDefaultLibFileName: (opts) => ts.getDefaultLibFilePath(opts),
+        fileExists: (f) => ts.sys.fileExists(f),
+        readFile: (f) => ts.sys.readFile(f),
+        readDirectory: (dir, extensions, excludes, includes, depth) =>
+          ts.sys.readDirectory(dir, extensions, excludes, includes, depth),
+        directoryExists: (dir) => ts.sys.directoryExists?.(dir) ?? false,
+        getDirectories: (dir) => ts.sys.getDirectories(dir),
+      };
+
+      ls = ts.createLanguageService(host, ts.createDocumentRegistry());
+      program = ls.getProgram()!;
+
+      function findEntities(dir: string): string[] {
+        const res: string[] = [];
+        if (!fs.existsSync(dir)) return res;
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const full = path.join(dir, entry.name);
+          if (entry.isDirectory()) res.push(...findEntities(full));
+          else if (entry.name.endsWith('.entity.ts')) res.push(full);
+        }
+        return res;
+      }
+      entityFiles = findEntities(rootSrcDir);
+    }, 30000);
+
+    it('Public setters on domain entities must be exercised in production code or declared private set', () => {
+      const unusedSetters: string[] = [];
+
+      for (const entityFile of entityFiles) {
+        const sf = program.getSourceFile(entityFile);
+        if (!sf) continue;
+
+        sf.forEachChild((node) => {
+          if (ts.isClassDeclaration(node) && node.name) {
+            const className = node.name.text;
+            node.members.forEach((member) => {
+              if (ts.isSetAccessor(member)) {
+                const isPrivate = member.modifiers?.some(
+                  (m) =>
+                    m.kind === ts.SyntaxKind.PrivateKeyword ||
+                    m.kind === ts.SyntaxKind.ProtectedKeyword,
+                );
+                if (!isPrivate) {
+                  const name = member.name.getText(sf);
+                  const refs =
+                    ls.findReferences(entityFile, member.name.getStart(sf)) ||
+                    [];
+                  const allEntries = refs.flatMap((r) => r.references);
+                  const externalWrites = allEntries.filter(
+                    (e) =>
+                      !e.isDefinition &&
+                      !e.fileName.endsWith('.spec.ts') &&
+                      e.isWriteAccess,
+                  );
+                  if (externalWrites.length === 0) {
+                    unusedSetters.push(
+                      `${className}.${name} (${path.relative(rootSrcDir, entityFile)})`,
+                    );
+                  }
+                }
+              }
+            });
+          }
+        });
+      }
+
+      expect(unusedSetters).toEqual([]);
+    });
+
+    it('Entity Date and Array getters must prevent mutable reference leaks', () => {
+      const mutableLeaks: string[] = [];
+
+      for (const entityFile of entityFiles) {
+        const sf = program.getSourceFile(entityFile);
+        if (!sf) continue;
+
+        sf.forEachChild((node) => {
+          if (ts.isClassDeclaration(node) && node.name) {
+            const className = node.name.text;
+            node.members.forEach((member) => {
+              if (ts.isGetAccessor(member) && member.type) {
+                const returnTypeStr = member.type.getText(sf);
+                const name = member.name.getText(sf);
+                const bodyStr = member.body?.getText(sf) || '';
+
+                if (returnTypeStr.includes('Date')) {
+                  if (!bodyStr.includes('new Date(')) {
+                    mutableLeaks.push(
+                      `Date leak: ${className}.${name} returns Date directly without defensive clone (new Date(...))`,
+                    );
+                  }
+                }
+
+                if (
+                  returnTypeStr.includes('[]') ||
+                  returnTypeStr.startsWith('Array<')
+                ) {
+                  if (
+                    !returnTypeStr.includes('readonly') &&
+                    !bodyStr.includes('Object.freeze') &&
+                    !returnTypeStr.includes('Collection')
+                  ) {
+                    mutableLeaks.push(
+                      `Array leak: ${className}.${name} returns mutable array without readonly/Object.freeze or Collection`,
+                    );
+                  }
+                }
+              }
+            });
+          }
+        });
+      }
+
+      expect(mutableLeaks).toEqual([]);
+    });
+  });
+
+  describe('Rule 13: MikroORM module registration matches injected repositories', () => {
+    it('registers exactly the schemas that repositories are injected for', () => {
+      const files = getAllProductionTsFiles(rootSrcDir);
+      const registered = new Map<string, string>();
+      const injected = new Map<string, string>();
+
+      for (const file of files) {
+        const relative = path.relative(rootSrcDir, file);
+        const source = fs.readFileSync(file, 'utf-8');
+
+        for (const match of source.matchAll(
+          /MikroOrmModule\.forFeature\(\s*\[([^\]]*)\]/g,
+        )) {
+          for (const name of match[1]
+            .split(',')
+            .map((entry) => entry.trim())
+            .filter(Boolean)) {
+            if (!registered.has(name)) registered.set(name, relative);
+          }
+        }
+
+        for (const match of source.matchAll(
+          /@InjectRepository\(\s*([A-Za-z0-9_]+)\s*\)/g,
+        )) {
+          if (!injected.has(match[1])) injected.set(match[1], relative);
+        }
+      }
+
+      const registeredWithoutRepository = [...registered]
+        .filter(([name]) => !injected.has(name))
+        .map(([name, file]) => `${name} (${file})`);
+      const repositoryWithoutRegistration = [...injected]
+        .filter(([name]) => !registered.has(name))
+        .map(([name, file]) => `${name} (${file})`);
+
+      expect({
+        registeredWithoutRepository,
+        repositoryWithoutRegistration,
+      }).toEqual({
+        registeredWithoutRepository: [],
+        repositoryWithoutRegistration: [],
+      });
+    });
+  });
+
+  describe('Rule 14: no casts that bypass the type system', () => {
+    it('production code must not use `as unknown as` double casts', () => {
+      const offenders: string[] = [];
+
+      for (const file of getAllProductionTsFiles(rootSrcDir)) {
+        const source = fs.readFileSync(file, 'utf-8');
+        source.split('\n').forEach((line, index) => {
+          if (line.includes('as unknown as')) {
+            offenders.push(`${path.relative(rootSrcDir, file)}:${index + 1}`);
+          }
+        });
+      }
+
+      expect(offenders).toEqual([]);
     });
   });
 });

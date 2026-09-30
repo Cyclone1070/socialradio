@@ -9,13 +9,13 @@ export class User {
 
   constructor(
     email?: string,
-    passwordHash?: string,
+    _passwordHash?: string,
     role?: 'user' | 'admin',
     id?: string,
     createdAt?: Date,
   ) {
     if (email !== undefined) this.email = email;
-    if (passwordHash !== undefined) this.passwordHash = passwordHash;
+    if (_passwordHash !== undefined) this.passwordHash = _passwordHash;
     if (role !== undefined) this.role = role;
     if (id !== undefined) this._id = id;
     if (createdAt !== undefined) this._createdAt = createdAt;
@@ -42,10 +42,6 @@ export class User {
       throw new Error('invalid email format');
     }
     this._email = trimmed;
-  }
-
-  get passwordHash(): string {
-    return this._passwordHash;
   }
 
   set passwordHash(value: string) {

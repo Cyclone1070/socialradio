@@ -27,14 +27,11 @@ export class ContentService implements ContentContract {
   ) {}
 
   async getPostData(postId: string): Promise<PostData | null> {
-    const post = await this.postRepo.findOne(
-      { id: postId },
-      { populate: ['subreddit'] },
-    );
+    const post = await this.postRepo.findOne({ id: postId });
     if (!post) return null;
     return {
       id: post.id,
-      subredditId: post.subreddit?.id || post.subredditId,
+      subredditId: post.subredditId,
       redditId: post.redditId,
       title: post.title,
       body: post.body,
@@ -44,13 +41,12 @@ export class ContentService implements ContentContract {
 
   async getPostsBySubredditIds(subredditIds: string[]): Promise<PostData[]> {
     if (subredditIds.length === 0) return [];
-    const posts = await this.postRepo.find(
-      { subreddit: { $in: subredditIds } },
-      { populate: ['subreddit'] },
-    );
+    const posts = await this.postRepo.find({
+      subredditId: { $in: subredditIds },
+    });
     return posts.map((post) => ({
       id: post.id,
-      subredditId: post.subreddit?.id || post.subredditId,
+      subredditId: post.subredditId,
       redditId: post.redditId,
       title: post.title,
       body: post.body,
@@ -60,13 +56,12 @@ export class ContentService implements ContentContract {
 
   async getCommentsByPostIds(postIds: string[]): Promise<CommentData[]> {
     if (postIds.length === 0) return [];
-    const comments = await this.commentRepo.find(
-      { post: { $in: postIds } },
-      { populate: ['post'] },
-    );
+    const comments = await this.commentRepo.find({
+      postId: { $in: postIds },
+    });
     return comments.map((c) => ({
       id: c.id,
-      postId: c.post?.id || c.postId,
+      postId: c.postId,
       redditId: c.redditId,
       body: c.body,
       score: c.score,

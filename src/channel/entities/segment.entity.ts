@@ -1,10 +1,8 @@
-import { Channel } from './channel.entity';
 import { ScriptTurn } from '../../domain/types/script.types';
 
 export abstract class Segment {
   private _id!: string;
   private _channelId!: string;
-  private _channel?: Channel;
   private _playOrder!: number;
   private _audioUrl!: string;
   private _durationSeconds!: number;
@@ -32,16 +30,12 @@ export abstract class Segment {
     return this._channelId;
   }
 
-  private set channelId(value: string) {
-    this._channelId = value;
-  }
-
-  get channel(): Channel | undefined {
-    return this._channel;
-  }
-
-  private set channel(value: Channel | undefined) {
-    this._channel = value;
+  set channelId(value: string) {
+    const trimmed = value?.trim();
+    if (!trimmed) {
+      throw new Error('channelId cannot be empty');
+    }
+    this._channelId = trimmed;
   }
 
   get playOrder(): number {

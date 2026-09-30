@@ -61,7 +61,7 @@ export class PlaybackService {
 
     // Cold Start & Emergency filler: if channel queue is empty, insert instant pre-recorded filler (takes ~2ms),
     // and fire background bufferAhead asynchronously (NEVER blocks the HTTP request path!)
-    const segmentCount = await this.segmentRepo.count({ channel: channelId });
+    const segmentCount = await this.segmentRepo.count({ channelId });
     if (segmentCount === 0) {
       await this.queueService.ensureInstantFiller(channelId, 6);
       this.queueService.bufferAhead(channelId).catch((err) => {
@@ -93,7 +93,7 @@ export class PlaybackService {
           // In-flight channel where playheadStartedAt or currentSegmentId was cleared/lost: resume from currentPlayOrder
           anchorSegment = await this.segmentRepo.findOne(
             {
-              channel: channelId,
+              channelId,
               playOrder: { $gte: channel.currentPlayOrder },
             },
             { orderBy: { playOrder: 'ASC' } },
@@ -105,14 +105,14 @@ export class PlaybackService {
         } else if (!channel.playheadStartedAt) {
           // Truly brand new channel starting broadcast for the very first time: start at track 1 (ASC)
           anchorSegment = await this.segmentRepo.findOne(
-            { channel: channelId },
+            { channelId },
             { orderBy: { playOrder: 'ASC' } },
           );
         }
         if (!anchorSegment) {
           // Both pointers missing on an active station: anchor to live runway edge
           const latestBatch = await this.segmentRepo.find(
-            { channel: channelId },
+            { channelId },
             { orderBy: { playOrder: 'DESC' }, limit: 6 },
           );
           if (latestBatch.length > 0) {
@@ -175,7 +175,7 @@ export class PlaybackService {
         if (channel.currentPlayOrder) {
           currentSegment = await this.segmentRepo.findOne(
             {
-              channel: channelId,
+              channelId,
               playOrder: { $gte: channel.currentPlayOrder },
             },
             { orderBy: { playOrder: 'ASC' } },
@@ -183,7 +183,7 @@ export class PlaybackService {
         }
         if (!currentSegment) {
           const latestBatch = await this.segmentRepo.find(
-            { channel: channelId },
+            { channelId },
             { orderBy: { playOrder: 'DESC' }, limit: 6 },
           );
           if (latestBatch.length > 0) {
@@ -217,7 +217,7 @@ export class PlaybackService {
             );
             const nextSegment: Segment | null = await this.segmentRepo.findOne(
               {
-                channel: channelId,
+                channelId,
                 playOrder: { $gt: currentSegment.playOrder },
               },
               { orderBy: { playOrder: 'ASC' } },
@@ -238,7 +238,7 @@ export class PlaybackService {
           if (elapsed >= duration) {
             const nextSegment: Segment | null = await this.segmentRepo.findOne(
               {
-                channel: channelId,
+                channelId,
                 playOrder: { $gt: currentSegment.playOrder },
               },
               { orderBy: { playOrder: 'ASC' } },
@@ -263,7 +263,7 @@ export class PlaybackService {
 
       if (currentSegment) {
         const remainingCount = await this.segmentRepo.count({
-          channel: channelId,
+          channelId,
           playOrder: { $gt: currentSegment.playOrder },
         });
         if (remainingCount < 4) {
@@ -298,7 +298,7 @@ export class PlaybackService {
     let windowSegments = currentSegment
       ? await this.segmentRepo.find(
           {
-            channel: channelId,
+            channelId,
             playOrder: { $gte: currentSegment.playOrder },
           },
           {
@@ -312,12 +312,12 @@ export class PlaybackService {
       await this.queueService.ensureInstantFiller(channelId, 6);
       const minOrder = channel.currentPlayOrder ?? 1;
       windowSegments = await this.segmentRepo.find(
-        { channel: channelId, playOrder: { $gte: minOrder } },
+        { channelId, playOrder: { $gte: minOrder } },
         { orderBy: { playOrder: 'ASC' }, limit: 6 },
       );
       if (windowSegments.length === 0) {
         windowSegments = await this.segmentRepo.find(
-          { channel: channelId },
+          { channelId },
           { orderBy: { playOrder: 'ASC' }, limit: 6 },
         );
       }
@@ -398,7 +398,7 @@ export class PlaybackService {
     if (cutoffPlayOrder <= 0) return;
 
     await this.segmentRepo.nativeDelete({
-      channel: channelId,
+      channelId,
       playOrder: { $lt: cutoffPlayOrder },
     });
   }

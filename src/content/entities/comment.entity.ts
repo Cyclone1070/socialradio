@@ -1,9 +1,6 @@
-import { Post } from './post.entity';
-
 export class Comment {
   private _id!: string;
   private _postId!: string;
-  private _post?: Post;
   private _redditId!: string;
   private _body!: string;
   private _score!: number;
@@ -12,7 +9,7 @@ export class Comment {
   private _redditCreatedAt!: Date;
 
   constructor(
-    post?: Post,
+    postId?: string,
     redditId?: string,
     body?: string,
     score?: number,
@@ -21,11 +18,8 @@ export class Comment {
     redditCreatedAt?: Date,
     id?: string,
   ) {
-    if (post !== undefined) {
-      this._post = post;
-      if (post.id) {
-        this._postId = post.id;
-      }
+    if (postId !== undefined) {
+      this.postId = postId;
     }
     if (redditId !== undefined) this._redditId = redditId;
     if (body !== undefined) this._body = body;
@@ -48,19 +42,12 @@ export class Comment {
     return this._postId;
   }
 
-  private set postId(value: string) {
-    this._postId = value;
-  }
-
-  get post(): Post | undefined {
-    return this._post;
-  }
-
-  private set post(value: Post | undefined) {
-    this._post = value;
-    if (value?.id) {
-      this._postId = value.id;
+  set postId(value: string) {
+    const trimmed = value?.trim();
+    if (!trimmed) {
+      throw new Error('postId cannot be empty');
     }
+    this._postId = trimmed;
   }
 
   get redditId(): string {
@@ -83,7 +70,7 @@ export class Comment {
     return this._score;
   }
 
-  set score(value: number) {
+  private set score(value: number) {
     this._score = value;
   }
 

@@ -52,15 +52,15 @@ export const ChannelSchema = new EntitySchema<Channel>({
       kind: 'm:n',
       entity: () => Subreddit,
       pivotTable: 'channel_subreddit',
-      joinColumn: 'channelId',
-      inverseJoinColumn: 'subredditId',
+      joinColumn: 'channel_id',
+      inverseJoinColumn: 'subreddit_id',
     },
     completedPosts: {
       kind: 'm:n',
       entity: () => Post,
       pivotTable: 'channel_post_progress',
-      joinColumn: 'channelId',
-      inverseJoinColumn: 'postId',
+      joinColumn: 'channel_id',
+      inverseJoinColumn: 'post_id',
     },
   },
   indexes: [{ properties: ['currentSegmentId'] }, { properties: ['ownerId'] }],
@@ -89,15 +89,15 @@ export const SegmentSchema = new EntitySchema<Segment>({
       defaultRaw: 'gen_random_uuid()',
       accessor: true,
     },
-    channel: {
+    channelId: {
       kind: 'm:1',
       entity: () => Channel,
-      joinColumn: 'channelId',
+      joinColumn: 'channel_id',
+      mapToPk: true,
       deleteRule: 'cascade',
     },
-    channelId: { type: 'string', persist: false },
     playOrder: { type: 'integer', accessor: true },
-    audioUrl: { type: 'string' },
+    audioUrl: { type: 'string', accessor: true },
     durationSeconds: { type: 'float', accessor: true },
     type: { type: 'string' },
     createdAt: {
@@ -106,8 +106,8 @@ export const SegmentSchema = new EntitySchema<Segment>({
       accessor: true,
     },
   },
-  uniques: [{ properties: ['channel', 'playOrder'] }],
-  indexes: [{ properties: ['channel'] }],
+  uniques: [{ properties: ['channelId', 'playOrder'] }],
+  indexes: [{ properties: ['channelId'] }],
   checks: [
     { name: 'segment_play_order_positive', expression: 'play_order >= 1' },
     {
@@ -152,7 +152,7 @@ export const TalkSegmentSchema = new EntitySchema<TalkSegment, Segment>({
   properties: {
     clusterId: { type: 'string', accessor: true },
     status: { type: 'string', default: 'generating', accessor: true },
-    script: { type: 'json', nullable: true },
+    script: { type: 'json', nullable: true, accessor: true },
   },
 });
 

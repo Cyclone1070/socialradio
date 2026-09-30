@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MikroOrmModule } from '@mikro-orm/nestjs';
-import { JwtModule } from '@nestjs/jwt';
+import { JwtModule, JwtSignOptions } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { UserSchema } from '../infrastructure/database/schemas/user.schema';
@@ -21,10 +21,10 @@ import { JwtAuthGuard, RolesGuard } from '../infrastructure/auth';
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('JWT_SECRET', 'super_secret_key'),
         signOptions: {
-          expiresIn: config.get<string>(
+          expiresIn: config.get<JwtSignOptions['expiresIn']>(
             'JWT_EXPIRES_IN',
             '1d',
-          ) as unknown as number,
+          ),
         },
       }),
       inject: [ConfigService],

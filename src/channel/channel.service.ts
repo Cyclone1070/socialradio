@@ -79,10 +79,10 @@ export class ChannelService {
       return;
     }
 
-    const subRef = this.em.getReference(
+    const subRef: SubredditRef = this.em.getReference(
       SubredditSchema,
       subreddit.id,
-    ) as unknown as SubredditRef;
+    );
     channel.subreddits.add(subRef);
     await this.em.flush();
   }

@@ -12,7 +12,12 @@ export const UserSchema = new EntitySchema<User>({
       accessor: true,
     },
     email: { type: 'string', unique: true, accessor: true },
-    passwordHash: { type: 'string', accessor: true },
+    passwordHash: {
+      type: 'string',
+      accessor: '_passwordHash',
+      fieldName: 'password_hash',
+      hidden: true,
+    },
     role: { type: 'string', default: 'user', accessor: true },
     createdAt: {
       type: 'Date',

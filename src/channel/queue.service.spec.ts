@@ -1,6 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@mikro-orm/nestjs';
-import { EntityManager } from '@mikro-orm/postgresql';
+import { EntityManager, MikroORM } from '@mikro-orm/postgresql';
+import { RequestContext } from '@mikro-orm/core';
+import config from '../infrastructure/database/mikro-orm.config';
 import { QueueService } from './queue.service';
 import { Channel } from './entities/channel.entity';
 import {
@@ -28,12 +30,15 @@ describe('QueueService', () => {
   };
 
   const mockExecute = jest.fn();
+  const mockFork = jest.fn();
   const mockEntityManager = {
     persist: jest.fn().mockReturnThis(),
     flush: jest.fn(),
+    fork: mockFork,
     getReference: jest.fn((_cls, id: string) => ({ id }) as unknown as Channel),
     getConnection: jest.fn(() => ({ execute: mockExecute })),
   };
+  mockFork.mockReturnValue(mockEntityManager);
 
   const mockContentContract = {
     getPostData: jest.fn(),
@@ -508,6 +513,58 @@ describe('QueueService', () => {
       ]);
 
       expect(mockScriptContract.generateScript).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('background request context', () => {
+    let orm: MikroORM;
+
+    beforeAll(async () => {
+      orm = await MikroORM.init({ ...config, connect: false });
+    });
+
+    afterAll(async () => {
+      await orm.close(true);
+    });
+
+    it('runs outside a request inside its own MikroORM context', async () => {
+      const contexts: Array<unknown> = [];
+      const backgroundRepo = {
+        count: jest.fn(),
+        find: jest.fn(),
+        findOne: jest.fn(() => {
+          contexts.push(RequestContext.getEntityManager());
+          return Promise.reject(new Error('stop-after-first-query'));
+        }),
+      };
+
+      const backgroundModule = await Test.createTestingModule({
+        providers: [
+          QueueService,
+          {
+            provide: getRepositoryToken(ChannelSchema),
+            useValue: backgroundRepo,
+          },
+          {
+            provide: getRepositoryToken(SegmentSchema),
+            useValue: backgroundRepo,
+          },
+          { provide: EntityManager, useValue: orm.em },
+          { provide: MediaContract, useValue: mockMediaService },
+          { provide: ContentContract, useValue: mockContentContract },
+          { provide: ScriptContract, useValue: mockScriptContract },
+          { provide: VoiceContract, useValue: mockVoiceContract },
+        ],
+      }).compile();
+
+      const background = backgroundModule.get<QueueService>(QueueService);
+
+      await expect(background.bufferAhead('chan-context')).rejects.toThrow(
+        'stop-after-first-query',
+      );
+
+      expect(contexts.length).toBeGreaterThan(0);
+      expect(contexts[0]).toBeDefined();
     });
   });
 });

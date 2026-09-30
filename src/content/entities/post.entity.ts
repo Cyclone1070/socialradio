@@ -1,21 +1,19 @@
 import { Collection } from '@mikro-orm/core';
-import { Subreddit } from './subreddit.entity';
 import { Comment } from './comment.entity';
 
 export class Post {
   private _id!: string;
   private _subredditId!: string;
-  private _subreddit?: Subreddit;
   private _redditId!: string;
   private _title!: string;
   private _body!: string;
-  private _score!: number;
+  private _score: number = 0;
   private _redditCreatedAt!: Date;
   private _scrapedAt!: Date;
   private _comments = new Collection<Comment>(this);
 
   constructor(
-    subreddit?: Subreddit,
+    subredditId?: string,
     redditId?: string,
     title?: string,
     body?: string,
@@ -24,11 +22,8 @@ export class Post {
     scrapedAt?: Date,
     id?: string,
   ) {
-    if (subreddit !== undefined) {
-      this._subreddit = subreddit;
-      if (subreddit.id) {
-        this._subredditId = subreddit.id;
-      }
+    if (subredditId !== undefined) {
+      this.subredditId = subredditId;
     }
     if (redditId !== undefined) this._redditId = redditId;
     if (title !== undefined) this._title = title;
@@ -51,19 +46,12 @@ export class Post {
     return this._subredditId;
   }
 
-  private set subredditId(value: string) {
-    this._subredditId = value;
-  }
-
-  get subreddit(): Subreddit | undefined {
-    return this._subreddit;
-  }
-
-  private set subreddit(value: Subreddit | undefined) {
-    this._subreddit = value;
-    if (value?.id) {
-      this._subredditId = value.id;
+  set subredditId(value: string) {
+    const trimmed = value?.trim();
+    if (!trimmed) {
+      throw new Error('subredditId cannot be empty');
     }
+    this._subredditId = trimmed;
   }
 
   get redditId(): string {

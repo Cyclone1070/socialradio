@@ -522,8 +522,8 @@
           "enumItems": [],
           "mappedType": "uuid"
         },
-        "subredditId": {
-          "name": "subredditId",
+        "subreddit_id": {
+          "name": "subreddit_id",
           "type": "uuid",
           "unsigned": false,
           "autoincrement": false,
@@ -597,7 +597,7 @@
           "length": null,
           "precision": null,
           "scale": null,
-          "default": null,
+          "default": "0",
           "comment": null,
           "enumItems": [],
           "mappedType": "integer"
@@ -649,9 +649,9 @@
           "unique": true
         },
         {
-          "keyName": "post_subredditId_index",
+          "keyName": "post_subreddit_id_index",
           "columnNames": [
-            "subredditId"
+            "subreddit_id"
           ],
           "composite": false,
           "constraint": false,
@@ -681,10 +681,10 @@
       ],
       "checks": [],
       "foreignKeys": {
-        "post_subredditId_foreign": {
-          "constraintName": "post_subredditId_foreign",
+        "post_subreddit_id_foreign": {
+          "constraintName": "post_subreddit_id_foreign",
           "columnNames": [
-            "subredditId"
+            "subreddit_id"
           ],
           "localTableName": "public.post",
           "referencedColumnNames": [
@@ -715,8 +715,8 @@
           "enumItems": [],
           "mappedType": "uuid"
         },
-        "postId": {
-          "name": "postId",
+        "post_id": {
+          "name": "post_id",
           "type": "uuid",
           "unsigned": false,
           "autoincrement": false,
@@ -842,9 +842,9 @@
           "unique": true
         },
         {
-          "keyName": "comment_postId_index",
+          "keyName": "comment_post_id_index",
           "columnNames": [
-            "postId"
+            "post_id"
           ],
           "composite": false,
           "constraint": false,
@@ -864,10 +864,10 @@
       ],
       "checks": [],
       "foreignKeys": {
-        "comment_postId_foreign": {
-          "constraintName": "comment_postId_foreign",
+        "comment_post_id_foreign": {
+          "constraintName": "comment_post_id_foreign",
           "columnNames": [
-            "postId"
+            "post_id"
           ],
           "localTableName": "public.comment",
           "referencedColumnNames": [
@@ -1244,8 +1244,8 @@
           "enumItems": [],
           "mappedType": "uuid"
         },
-        "channelId": {
-          "name": "channelId",
+        "channel_id": {
+          "name": "channel_id",
           "type": "uuid",
           "unsigned": false,
           "autoincrement": false,
@@ -1440,9 +1440,9 @@
           "unique": false
         },
         {
-          "keyName": "segment_channelId_index",
+          "keyName": "segment_channel_id_index",
           "columnNames": [
-            "channelId"
+            "channel_id"
           ],
           "composite": false,
           "constraint": false,
@@ -1450,9 +1450,9 @@
           "unique": false
         },
         {
-          "keyName": "segment_channelId_play_order_unique",
+          "keyName": "segment_channel_id_play_order_unique",
           "columnNames": [
-            "channelId",
+            "channel_id",
             "play_order"
           ],
           "composite": true,
@@ -1504,10 +1504,10 @@
         }
       ],
       "foreignKeys": {
-        "segment_channelId_foreign": {
-          "constraintName": "segment_channelId_foreign",
+        "segment_channel_id_foreign": {
+          "constraintName": "segment_channel_id_foreign",
           "columnNames": [
-            "channelId"
+            "channel_id"
           ],
           "localTableName": "public.segment",
           "referencedColumnNames": [
@@ -1522,8 +1522,8 @@
     },
     {
       "columns": {
-        "channelId": {
-          "name": "channelId",
+        "channel_id": {
+          "name": "channel_id",
           "type": "uuid",
           "unsigned": false,
           "autoincrement": false,
@@ -1538,8 +1538,8 @@
           "enumItems": [],
           "mappedType": "uuid"
         },
-        "subredditId": {
-          "name": "subredditId",
+        "subreddit_id": {
+          "name": "subreddit_id",
           "type": "uuid",
           "unsigned": false,
           "autoincrement": false,
@@ -1561,8 +1561,8 @@
         {
           "keyName": "channel_subreddit_pkey",
           "columnNames": [
-            "channelId",
-            "subredditId"
+            "channel_id",
+            "subreddit_id"
           ],
           "composite": true,
           "constraint": true,
@@ -1572,10 +1572,10 @@
       ],
       "checks": [],
       "foreignKeys": {
-        "channel_subreddit_channelId_foreign": {
-          "constraintName": "channel_subreddit_channelId_foreign",
+        "channel_subreddit_channel_id_foreign": {
+          "constraintName": "channel_subreddit_channel_id_foreign",
           "columnNames": [
-            "channelId"
+            "channel_id"
           ],
           "localTableName": "public.channel_subreddit",
           "referencedColumnNames": [
@@ -1585,10 +1585,10 @@
           "deleteRule": "cascade",
           "updateRule": "cascade"
         },
-        "channel_subreddit_subredditId_foreign": {
-          "constraintName": "channel_subreddit_subredditId_foreign",
+        "channel_subreddit_subreddit_id_foreign": {
+          "constraintName": "channel_subreddit_subreddit_id_foreign",
           "columnNames": [
-            "subredditId"
+            "subreddit_id"
           ],
           "localTableName": "public.channel_subreddit",
           "referencedColumnNames": [
@@ -1603,8 +1603,8 @@
     },
     {
       "columns": {
-        "channelId": {
-          "name": "channelId",
+        "channel_id": {
+          "name": "channel_id",
           "type": "uuid",
           "unsigned": false,
           "autoincrement": false,
@@ -1619,8 +1619,8 @@
           "enumItems": [],
           "mappedType": "uuid"
         },
-        "postId": {
-          "name": "postId",
+        "post_id": {
+          "name": "post_id",
           "type": "uuid",
           "unsigned": false,
           "autoincrement": false,
@@ -1642,8 +1642,8 @@
         {
           "keyName": "channel_post_progress_pkey",
           "columnNames": [
-            "channelId",
-            "postId"
+            "channel_id",
+            "post_id"
           ],
           "composite": true,
           "constraint": true,
@@ -1653,10 +1653,10 @@
       ],
       "checks": [],
       "foreignKeys": {
-        "channel_post_progress_channelId_foreign": {
-          "constraintName": "channel_post_progress_channelId_foreign",
+        "channel_post_progress_channel_id_foreign": {
+          "constraintName": "channel_post_progress_channel_id_foreign",
           "columnNames": [
-            "channelId"
+            "channel_id"
           ],
           "localTableName": "public.channel_post_progress",
           "referencedColumnNames": [
@@ -1666,10 +1666,10 @@
           "deleteRule": "cascade",
           "updateRule": "cascade"
         },
-        "channel_post_progress_postId_foreign": {
-          "constraintName": "channel_post_progress_postId_foreign",
+        "channel_post_progress_post_id_foreign": {
+          "constraintName": "channel_post_progress_post_id_foreign",
           "columnNames": [
-            "postId"
+            "post_id"
           ],
           "localTableName": "public.channel_post_progress",
           "referencedColumnNames": [

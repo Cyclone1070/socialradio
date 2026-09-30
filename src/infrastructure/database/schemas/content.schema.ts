@@ -41,13 +41,13 @@ export const PostSchema = new EntitySchema<Post>({
       defaultRaw: 'gen_random_uuid()',
       accessor: true,
     },
-    subreddit: {
+    subredditId: {
       kind: 'm:1',
       entity: () => Subreddit,
-      joinColumn: 'subredditId',
+      joinColumn: 'subreddit_id',
+      mapToPk: true,
       deleteRule: 'cascade',
     },
-    subredditId: { type: 'string', persist: false },
     redditId: { type: 'string', unique: true, accessor: true },
     title: { type: 'text', accessor: true },
     body: { type: 'text', accessor: true },
@@ -61,10 +61,10 @@ export const PostSchema = new EntitySchema<Post>({
     comments: {
       kind: '1:m',
       entity: () => Comment,
-      mappedBy: 'post',
+      mappedBy: 'postId',
     },
   },
-  indexes: [{ properties: ['subreddit'] }, { properties: ['scrapedAt'] }],
+  indexes: [{ properties: ['subredditId'] }, { properties: ['scrapedAt'] }],
 });
 
 export const CommentSchema = new EntitySchema<Comment>({
@@ -77,13 +77,13 @@ export const CommentSchema = new EntitySchema<Comment>({
       defaultRaw: 'gen_random_uuid()',
       accessor: true,
     },
-    post: {
+    postId: {
       kind: 'm:1',
       entity: () => Post,
-      joinColumn: 'postId',
+      joinColumn: 'post_id',
+      mapToPk: true,
       deleteRule: 'cascade',
     },
-    postId: { type: 'string', persist: false },
     redditId: { type: 'string', unique: true, accessor: true },
     body: { type: 'text', accessor: true },
     score: { type: 'integer', accessor: true },
@@ -91,5 +91,5 @@ export const CommentSchema = new EntitySchema<Comment>({
     isOp: { type: 'boolean', default: false, accessor: true },
     redditCreatedAt: { type: 'Date', accessor: true },
   },
-  indexes: [{ properties: ['post'] }],
+  indexes: [{ properties: ['postId'] }],
 });

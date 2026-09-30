@@ -94,10 +94,10 @@ describe('ContentController', () => {
 
       expect(mockSubredditRepo.findAll).toHaveBeenCalled();
       expect(mockPostRepo.count).toHaveBeenNthCalledWith(1, {
-        subreddit: 'sub-1',
+        subredditId: 'sub-1',
       });
       expect(mockPostRepo.count).toHaveBeenNthCalledWith(2, {
-        subreddit: 'sub-2',
+        subredditId: 'sub-2',
       });
       expect(result).toHaveLength(2);
       expect(result[0]).toEqual({

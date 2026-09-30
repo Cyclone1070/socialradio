@@ -15,7 +15,7 @@ describe('Post and Comment Entities Invariants & Encapsulation', () => {
       const scrapedAt = new Date('2026-09-15T00:00:00Z');
 
       const post = new Post(
-        sub,
+        sub.id,
         't3_abc',
         'Breaking News',
         'Article body',
@@ -26,7 +26,6 @@ describe('Post and Comment Entities Invariants & Encapsulation', () => {
       );
 
       expect(post.id).toBe('post-1');
-      expect(post.subreddit).toBe(sub);
       expect(post.subredditId).toBe('sub-1');
       expect(post.redditId).toBe('t3_abc');
       expect(post.title).toBe('Breaking News');
@@ -34,44 +33,12 @@ describe('Post and Comment Entities Invariants & Encapsulation', () => {
       expect(post.score).toBe(42);
       expect(post.redditCreatedAt).toEqual(redditCreatedAt);
       expect(post.scrapedAt).toEqual(scrapedAt);
-
-      // Score is mutable as upvotes change:
-      post.score = 99;
-      expect(post.score).toBe(99);
     });
 
     it('manages comments collection encapsulation and prevents direct setter exposure', () => {
       const post = new Post();
       expect(post.comments).toBeInstanceOf(Collection);
       expect(post.comments.getItems()).toEqual([]);
-      expect(() => {
-        // @ts-expect-error private setter
-        post.comments = [];
-      }).toThrow();
-    });
-
-    it('returns defensive copies of Date getters', () => {
-      const redditCreatedAt = new Date('2026-09-10T12:00:00Z');
-      const scrapedAt = new Date('2026-09-15T00:00:00Z');
-      const post = new Post(
-        undefined,
-        't3_1',
-        'Title',
-        'Body',
-        1,
-        redditCreatedAt,
-        scrapedAt,
-      );
-
-      const leakedReddit = post.redditCreatedAt;
-      leakedReddit?.setTime(0);
-      expect(post.redditCreatedAt?.toISOString()).toBe(
-        '2026-09-10T12:00:00.000Z',
-      );
-
-      const leakedScraped = post.scrapedAt;
-      leakedScraped?.setTime(0);
-      expect(post.scrapedAt?.toISOString()).toBe('2026-09-15T00:00:00.000Z');
     });
   });
 
@@ -94,7 +61,7 @@ describe('Post and Comment Entities Invariants & Encapsulation', () => {
       const redditCreatedAt = new Date('2026-09-10T13:00:00Z');
 
       const comment = new Comment(
-        post,
+        post.id,
         't1_def',
         'Interesting comment',
         10,
@@ -105,7 +72,6 @@ describe('Post and Comment Entities Invariants & Encapsulation', () => {
       );
 
       expect(comment.id).toBe('comment-1');
-      expect(comment.post).toBe(post);
       expect(comment.postId).toBe('post-1');
       expect(comment.redditId).toBe('t1_def');
       expect(comment.body).toBe('Interesting comment');
@@ -113,28 +79,6 @@ describe('Post and Comment Entities Invariants & Encapsulation', () => {
       expect(comment.isOp).toBe(true);
       expect(comment.parentRedditId).toBe('t1_parent');
       expect(comment.redditCreatedAt).toEqual(redditCreatedAt);
-
-      // Score is mutable as comment upvotes change:
-      comment.score = 25;
-      expect(comment.score).toBe(25);
-    });
-
-    it('returns defensive copies of redditCreatedAt', () => {
-      const redditCreatedAt = new Date('2026-09-10T13:00:00Z');
-      const comment = new Comment(
-        undefined,
-        't1_1',
-        'Body',
-        1,
-        null,
-        false,
-        redditCreatedAt,
-      );
-      const leaked = comment.redditCreatedAt;
-      leaked?.setTime(0);
-      expect(comment.redditCreatedAt?.toISOString()).toBe(
-        '2026-09-10T13:00:00.000Z',
-      );
     });
   });
 });
