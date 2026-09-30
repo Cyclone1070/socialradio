@@ -19,7 +19,7 @@ import {
   existsResponseSchema,
   parseFetcherPayload,
   topPostsResponseSchema,
-} from '../../../src/content/reddit-fetcher.contract';
+} from '../../../src/content/dto/reddit-fetcher.dto';
 
 const base = process.env.REDDIT_FETCHER_URL;
 const SUBREDDIT = process.env.REDDIT_PROBE_SUBREDDIT ?? 'test';

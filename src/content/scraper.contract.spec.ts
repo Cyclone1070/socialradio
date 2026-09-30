@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@mikro-orm/nestjs';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { ScraperService } from './scraper.service';
-import { RedditFetcherContractError } from './reddit-fetcher.contract';
+import { RedditFetcherContractError } from './dto/reddit-fetcher.dto';
 import { RedditScraperService } from './reddit-scraper.service';
 import { Subreddit } from './entities/subreddit.entity';
 import { Post } from './entities/post.entity';

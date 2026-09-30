@@ -1,6 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { RedditFetcherContractError } from './reddit-fetcher.contract';
+import { RedditFetcherContractError } from './dto/reddit-fetcher.dto';
 import { RedditScraperService } from './reddit-scraper.service';
 
 /**

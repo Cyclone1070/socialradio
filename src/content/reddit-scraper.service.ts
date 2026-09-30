@@ -4,7 +4,7 @@ import {
   parseFetcherPayload,
   RedditFetcherContractError,
   topPostsResponseSchema,
-} from './reddit-fetcher.contract';
+} from './dto/reddit-fetcher.dto';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';

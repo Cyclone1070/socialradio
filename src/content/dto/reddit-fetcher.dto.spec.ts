@@ -2,7 +2,7 @@ import {
   parseFetcherPayload,
   RedditFetcherContractError,
   topPostsResponseSchema,
-} from './reddit-fetcher.contract';
+} from './reddit-fetcher.dto';
 
 const page = {
   posts: [
