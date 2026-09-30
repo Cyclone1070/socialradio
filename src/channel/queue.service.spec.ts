@@ -86,6 +86,10 @@ describe('QueueService', () => {
     service = module.get<QueueService>(QueueService);
     jest.clearAllMocks();
     mockEntityManager.persist.mockReturnThis();
+    // clearAllMocks() clears calls, not implementations, so an override from one
+    // test used to leak into the next. scrapeSubreddit is fired without being
+    // awaited, so it must always return a promise.
+    mockContentContract.scrapeSubreddit.mockResolvedValue(undefined);
 
     mockMediaService.getRandomJingle.mockResolvedValue({
       filePath: 'jingle.mp3',
@@ -479,6 +483,12 @@ describe('QueueService', () => {
 
     it('deduplicates concurrent bufferAhead calls on the same channel to prevent duplicate batch generation', async () => {
       const channelId = 'chan-1';
+      // Set explicitly: this test previously inherited these from earlier tests,
+      // which is why shuffled order made it fail. The scrape below is fired
+      // without being awaited, so it must still return a promise.
+      mockSegmentRepo.count.mockResolvedValue(0);
+      mockContentContract.scrapeSubreddit.mockResolvedValue(undefined);
+      mockContentContract.getCommentsByPostIds.mockResolvedValue([]);
       setupChannelSubreddits([
         {
           subredditId: 'sub-1',
