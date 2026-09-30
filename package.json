@@ -8,9 +8,12 @@
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\"",
-    "lint": "eslint \"src/**/*.ts\" --fix && tsc --noEmit",
+    "lint": "eslint \"src/**/*.ts\" --fix --cache && tsc --noEmit",
     "gate": "npm run format && npm run lint && npm test",
-    "test": "jest"
+    "test": "jest",
+    "migration:create": "mikro-orm migration:create",
+    "migration:up": "mikro-orm migration:up",
+    "migration:down": "mikro-orm migration:down"
   },
   "dependencies": {
     "@ai-sdk/deepseek": "^3.0.28",
