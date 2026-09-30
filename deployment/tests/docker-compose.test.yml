@@ -26,8 +26,25 @@ services:
     # during talk generation, long after boot. A health gate here only added a
     # way for the whole stack to fail to start.
 
+  # Migrations only need DATABASE_URL (already explicit in the base compose), but
+  # without this the container still inherits the developer's .env - and with it a
+  # real provider key that Tier 1 has no business carrying.
+  migration:
+    # !override replaces the base compose's env_file entry: compose appends
+    # env_file lists across files, so a plain override would still read the
+    # developer's .env, real provider keys included.
+    env_file: !override
+      - ../tests/tier1.env
+
   app:
+    env_file: !override
+      - ../tests/tier1.env
     environment:
+      # The suite authenticates against the app's internal guard, so this value
+      # must stay identical to the one in the tests service below. It is written
+      # out rather than interpolated from the shell: an environment variable on
+      # the developer's machine must not be able to change a Tier 1 outcome.
+      INTERNAL_SERVICE_SECRET: tier1-internal-secret
       LLM_BASE_URL: http://mocks:4010
       LLM_API_KEY: mock-key
       LLM_MODEL: mock-model
@@ -46,14 +63,11 @@ services:
       dockerfile: Dockerfile
     entrypoint: ["/bin/sh"]
     command: ["/scripts/docker-test.sh"]
-    env_file: ../../.env
+    env_file: !override
+      - ../tests/tier1.env
     environment:
-      # Tier 1 never touches a real provider. The suite container inherits the
-      # project .env through env_file, so the provider credentials are blanked
-      # here (list entries override env_file): an accidental in-container
-      # provider call fails instead of billing.
-      - LLM_API_KEY=
-      - LLM_BASE_URL=
+      - INTERNAL_SERVICE_SECRET=tier1-internal-secret
+      # tier1.env holds dummy values only, so there is nothing here to blank out.
       - TARGET_URL=http://app:3000
       - STORAGE_ENDPOINT=http://seaweedfs:9000
       - TEST_SUITE=${TEST_SUITE:-all}
