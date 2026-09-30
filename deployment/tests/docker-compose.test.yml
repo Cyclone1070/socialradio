@@ -1,4 +1,17 @@
 services:
+  # Tier 1 scraping: the app talks to this mock instead of the real fetcher, so
+  # nothing reaches reddit and no browser is needed.
+  fetcher-mock:
+    image: node:24-alpine
+    command: ["node", "/mocks/fetcher-server.mts"]
+    volumes:
+      - ../mocks:/mocks:ro
+
+  # The real browserless image is a large pull and Tier 1 never renders a page,
+  # so it is stubbed out: the app's depends_on is satisfied without downloading it.
+  browserless:
+    image: node:24-alpine
+    command: ["node", "-e", "setInterval(() => {}, 1 << 30)"]
   # Tier 1 mock for the script-generation provider. The app's LLM_* point here,
   # so the whole suite runs with no provider key and no internet for the LLM.
   # Everything above the wire stays real: LlmService, the AI SDK, the parsers.
@@ -18,8 +31,11 @@ services:
       LLM_BASE_URL: http://mocks:4010
       LLM_API_KEY: mock-key
       LLM_MODEL: mock-model
+      REDDIT_FETCHER_URL: http://fetcher-mock:4011
     depends_on:
       mocks:
+        condition: service_started
+      fetcher-mock:
         condition: service_started
   # All SQL runs from inside the suite via the single psql_run helper
   # (docker-test.sh) — the seed service below was removed when the suite
