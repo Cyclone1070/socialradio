@@ -196,7 +196,7 @@ export class ScraperService {
           // flush so the generated post id is available for its comments
           await this.em.flush();
 
-          for (const rawComment of rawComments) {
+          const comments = rawComments.map((rawComment) => {
             const isOp = rawComment.author === rawPost.author;
             const parentIdStr = String(rawComment.parent_id || '');
             const parentRedditId =
@@ -206,7 +206,7 @@ export class ScraperService {
                 ? parentIdStr.replace(/^t1_/, '')
                 : null;
 
-            const comment = new Comment(
+            return new Comment(
               post.id,
               rawComment.id,
               rawComment.body || '',
@@ -215,9 +215,23 @@ export class ScraperService {
               isOp,
               new Date((rawComment.created_utc || 0) * 1000),
             );
-            this.em.persist(comment);
-          }
-          await this.em.flush();
+          });
+
+          // A post is re-fetched whenever an earlier run died before finishing,
+          // and two scrapes can overlap on the same subreddit, so this write has
+          // to be idempotent rather than merely new-row-shaped: a plain insert
+          // trips the unique index on comment.reddit_id and takes the whole
+          // scrape, and the request that triggered it, down with it.
+          //
+          // On conflict only the fields a re-scrape legitimately changes are
+          // refreshed. post_id is deliberately absent: a comment id is unique
+          // site-wide, so merging it would silently move a comment onto whichever
+          // post reported that id last.
+          await this.em.upsertMany(Comment, comments, {
+            onConflictFields: ['redditId'],
+            onConflictAction: 'merge',
+            onConflictMergeFields: ['score', 'body'],
+          });
 
           savedCount++;
         }

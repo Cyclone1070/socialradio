@@ -5,6 +5,7 @@ import { ScraperService } from './scraper.service';
 import { RedditFetcherContractError } from './dto/reddit-fetcher.dto';
 import { RedditScraperService } from './reddit-scraper.service';
 import { Subreddit } from './entities/subreddit.entity';
+import { Comment } from './entities/comment.entity';
 import { Post } from './entities/post.entity';
 import {
   CommentSchema,
@@ -33,7 +34,20 @@ describe('ScraperService and the fetcher contract', () => {
     find: jest.fn(),
     count: jest.fn(),
   };
-  const em = { persist: jest.fn(), flush: jest.fn(), find: jest.fn() };
+  type CommentUpsertOptions = {
+    onConflictFields: string[];
+    onConflictAction: string;
+    onConflictMergeFields: string[];
+  };
+
+  const em = {
+    persist: jest.fn(),
+    flush: jest.fn(),
+    find: jest.fn(),
+    upsertMany: jest
+      .fn<Promise<Comment[]>, [unknown, Comment[], CommentUpsertOptions]>()
+      .mockResolvedValue([]),
+  };
   const reddit = {
     fetchTopPosts: jest.fn(),
     fetchPostComments: jest.fn(),
@@ -89,6 +103,46 @@ describe('ScraperService and the fetcher contract', () => {
     expect(postRepo.findOne).not.toHaveBeenCalled();
     expect(em.persist).not.toHaveBeenCalledWith(expect.any(Post));
     expect(subredditRepo.nativeDelete).not.toHaveBeenCalled();
+  });
+
+  it('writes comments idempotently, refreshing only what a re-scrape may change', async () => {
+    reddit.fetchTopPosts.mockResolvedValue({
+      posts: [
+        {
+          id: 'p1',
+          title: 'T',
+          selftext: '',
+          author: 'op',
+          score: 5,
+          created_utc: 1_790_000_000,
+        },
+      ],
+      after: null,
+      isInvalid: false,
+    });
+    reddit.fetchPostComments.mockResolvedValue([
+      {
+        id: 'c1',
+        body: 'word '.repeat(2600).trim(),
+        author: 'someone',
+        score: 7,
+        parent_id: 't3_p1',
+        created_utc: 1_790_000_000,
+      },
+    ]);
+
+    await service.scrapeSubreddit('askreddit', true);
+
+    expect(em.upsertMany).toHaveBeenCalledTimes(1);
+    const [entity, rows, options] = em.upsertMany.mock.calls[0];
+    expect(entity).toBe(Comment);
+    expect(rows).toHaveLength(1);
+    expect(options.onConflictFields).toEqual(['redditId']);
+    expect(options.onConflictAction).toBe('merge');
+    expect(options.onConflictMergeFields).toEqual(['score', 'body']);
+    // A comment id is unique site-wide, so merging post_id would move a stored
+    // comment onto whichever post reported that id last.
+    expect(options.onConflictMergeFields).not.toContain('postId');
   });
 
   it('still deletes the row when the fetcher reports the subreddit as invalid', async () => {

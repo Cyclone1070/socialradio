@@ -30,6 +30,7 @@ describe('ScraperService', () => {
   const mockEntityManager = {
     persist: jest.fn().mockReturnThis(),
     flush: jest.fn(),
+    upsertMany: jest.fn().mockResolvedValue([]),
   };
 
   const mockRedditScraper = {

@@ -103,6 +103,38 @@ done
 [ "$GONE" = 0 ] || fail "dead sub still subscribed after 135s (scrape chain did not trigger when active pool < 20)"
 echo "  ✓ dead sub gone (chain isInvalid -> delete -> cascade) after ~$((i * 3))s"
 
+echo "46. Comment id already stored: a re-scrape refreshes it instead of failing"
+# AskReddit's posts are cleared so the next scrape re-fetches them, which is what
+# makes the fetcher serve a comment id that already exists in the database.
+# The seeded row sits on a different post: a re-scrape must refresh its score and
+# leave its post alone, never move it to the post the fetcher reported it under.
+psql_run -c "
+  DELETE FROM comment WHERE \"post_id\" IN (SELECT p.id FROM post p JOIN subreddit s ON s.id = p.\"subreddit_id\" WHERE lower(s.name) = 'askreddit');
+  DELETE FROM post WHERE \"subreddit_id\" IN (SELECT id FROM subreddit WHERE lower(name) = 'askreddit');
+  UPDATE subreddit SET last_scraped_at = NULL, scrape_cooldown_until = NULL WHERE lower(name) = 'askreddit';
+  INSERT INTO comment (\"id\", \"post_id\", \"reddit_id\", \"body\", \"score\", \"parent_reddit_id\", \"is_op\", \"reddit_created_at\")
+  SELECT gen_random_uuid(), p.\"id\", 'mockpost1_c1', 'stale body from an earlier scrape', 1, NULL, false, now()
+  FROM post p WHERE p.\"reddit_id\" = 'r_post_e2e_1';
+" >/dev/null || fail "comment collision fixture failed"
+
+assert_status GET "$BASE_URL/admin/channels/$CHAN_ID/topics" 200 \
+  -H "Authorization: Bearer $TOKEN"
+
+i=0
+REFRESHED=1
+ROW=""
+while [ $i -lt 40 ]; do
+  ROW=$(psql_run -t -A -c "SELECT c.\"score\" || '|' || p.\"reddit_id\" || '|' || (SELECT COUNT(*) FROM comment WHERE \"reddit_id\" = 'mockpost1_c1') FROM comment c JOIN post p ON p.\"id\" = c.\"post_id\" WHERE c.\"reddit_id\" = 'mockpost1_c1';")
+  if [ "$ROW" = "120|r_post_e2e_1|1" ]; then
+    REFRESHED=0
+    break
+  fi
+  i=$((i+1))
+  sleep 3
+done
+[ "$REFRESHED" = 0 ] || fail "re-scrape did not refresh the stored comment (got '$ROW', wanted 120|r_post_e2e_1|1)"
+echo "  ✓ stored comment refreshed to score 120, still on r_post_e2e_1, one row (~$((i * 3))s)"
+
 # Clean up Section 6 scraped posts and subreddits so only mock data exists for AI generation
 psql_run -c "
   DELETE FROM channel_subreddit WHERE \"channel_id\" = '$CHAN_ID';
