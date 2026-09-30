@@ -45,14 +45,19 @@ jobs:
 
       - name: Tier 1 environment (dummy values, no real credentials)
         run: |
-          # The admin address matters: the suite signs in as its own regular user
-          # (user@socialradio.com / UserPass123!, seeded by seed-base.sql), so the
-          # seeded admin must not occupy that address or the login comes back 401.
+          # Two traps, both learned the hard way:
+          # 1. The admin address must not be user@socialradio.com - the suite signs
+          #    in as that address with its own password (seed-base.sql), and since
+          #    POST /auth/login answers 201 the mismatch surfaces as a 401.
+          # 2. INTERNAL_SERVICE_SECRET must not appear here. The app reads it from
+          #    the compose interpolation ${INTERNAL_SERVICE_SECRET:-secret}, which
+          #    sees the shell and the compose project directory, not this file, so
+          #    writing it here reaches only the suite container and makes it send a
+          #    token the app rejects. Both sides default to 'secret' instead.
           cat > .env <<'EOF'
           ADMIN_EMAIL=admin@socialradio.com
           ADMIN_PASSWORD=AdminPass123!
           JWT_SECRET=ci-only-secret
-          INTERNAL_SERVICE_SECRET=ci-only-internal
           EOF
 
       - name: Tier 1 e2e suite (docker, mocks only)
