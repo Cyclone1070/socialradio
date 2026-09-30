@@ -543,4 +543,120 @@ describe('True Peer Decoupling Architecture Guardrails', () => {
       expect(offenders).toEqual([]);
     });
   });
+
+  describe('Rule 9: entity class placement', () => {
+    const schemasDir = path.join(
+      rootSrcDir,
+      'infrastructure',
+      'database',
+      'schemas',
+    );
+
+    // Rules 3, 6 and 8 only inspect files named *.entity.ts inside an entities
+    // directory, so a class placed anywhere else is invisible to them. This rule
+    // closes that hole from the other side: start from the classes the schemas
+    // actually persist and require each one to sit where those rules can see it.
+    function schemaEntityClasses(): string[] {
+      const names = new Set<string>();
+
+      for (const file of getAllProductionTsFiles(schemasDir)) {
+        const source = ts.createSourceFile(
+          file,
+          fs.readFileSync(file, 'utf-8'),
+          ts.ScriptTarget.Latest,
+          true,
+        );
+
+        const visit = (node: ts.Node): void => {
+          if (
+            ts.isPropertyAssignment(node) &&
+            ts.isIdentifier(node.name) &&
+            node.name.text === 'class' &&
+            ts.isIdentifier(node.initializer)
+          ) {
+            names.add(node.initializer.text);
+          }
+          ts.forEachChild(node, visit);
+        };
+
+        visit(source);
+      }
+
+      return [...names].sort();
+    }
+
+    function classDeclarations(): Map<string, string[]> {
+      const declared = new Map<string, string[]>();
+
+      for (const file of getAllProductionTsFiles(rootSrcDir)) {
+        const relative = path
+          .relative(rootSrcDir, file)
+          .split(path.sep)
+          .join('/');
+        const source = ts.createSourceFile(
+          file,
+          fs.readFileSync(file, 'utf-8'),
+          ts.ScriptTarget.Latest,
+          true,
+        );
+
+        const visit = (node: ts.Node): void => {
+          if (ts.isClassDeclaration(node) && node.name) {
+            declared.set(node.name.text, [
+              ...(declared.get(node.name.text) ?? []),
+              relative,
+            ]);
+          }
+          ts.forEachChild(node, visit);
+        };
+
+        visit(source);
+      }
+
+      return declared;
+    }
+
+    function misplacedEntityClasses(
+      referenced: string[],
+      declared: Map<string, string[]>,
+    ): string[] {
+      const offenders: string[] = [];
+
+      for (const name of referenced) {
+        const files = declared.get(name);
+        if (!files || files.length === 0) {
+          offenders.push(`${name} -> not declared in any production file`);
+          continue;
+        }
+
+        const inEntitiesDir = files.some((file) =>
+          /^[a-z-]+\/entities\/[a-z0-9-]+\.entity\.ts$/.test(file),
+        );
+        if (!inEntitiesDir) {
+          offenders.push(`${name} -> ${files.join(', ')}`);
+        }
+      }
+
+      return offenders;
+    }
+
+    it('declares every schema entity class inside its slice entities directory', () => {
+      const referenced = schemaEntityClasses();
+
+      // If the scan matched nothing the rule would pass for the wrong reason.
+      expect(referenced.length).toBeGreaterThanOrEqual(9);
+      expect(misplacedEntityClasses(referenced, classDeclarations())).toEqual(
+        [],
+      );
+    });
+
+    it('reports a class declared outside the entities directory', () => {
+      const offenders = misplacedEntityClasses(
+        ['Ghost'],
+        new Map([['Ghost', ['channel/models/ghost.ts']]]),
+      );
+
+      expect(offenders).toEqual(['Ghost -> channel/models/ghost.ts']);
+    });
+  });
 });

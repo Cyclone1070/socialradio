@@ -1,5 +1,4 @@
 import { MikroORM } from '@mikro-orm/postgresql';
-import { ReferenceKind } from '@mikro-orm/core';
 import config from './mikro-orm.config';
 import * as schemas from './schemas';
 import { Channel } from '../../channel/entities/channel.entity';
@@ -146,38 +145,76 @@ describe('Database mapping round trips', () => {
     expect(track.durationSeconds).toBe(12);
   });
 
-  it('maps every relationship column with the snake_case convention', () => {
-    const offenders: string[] = [];
+  it('maps every column with the snake_case convention', () => {
+    const entities = Object.values(orm.getMetadata().getAll()).map((meta) => ({
+      className: meta.className,
+      props: meta.props.map((prop) => ({
+        name: prop.name,
+        fieldNames: prop.fieldNames,
+        joinColumns: prop.joinColumns,
+        inverseJoinColumns: prop.inverseJoinColumns,
+      })),
+    }));
 
-    for (const meta of Object.values(orm.getMetadata().getAll())) {
-      for (const prop of meta.props) {
-        if (prop.name.includes('__inverse')) {
-          continue;
-        }
+    // A metadata set that came back empty would make this pass for the wrong reason.
+    expect(entities.length).toBeGreaterThanOrEqual(9);
+    expect(columnCasingOffenders(entities)).toEqual([]);
+  });
 
-        const relationKinds: string[] = [
-          ReferenceKind.MANY_TO_ONE,
-          ReferenceKind.ONE_TO_ONE,
-          ReferenceKind.ONE_TO_MANY,
-          ReferenceKind.MANY_TO_MANY,
-        ];
-        if (!relationKinds.includes(prop.kind)) {
-          continue;
-        }
+  it('reports a camelCase column, so the convention is really enforced', () => {
+    const offenders = columnCasingOffenders([
+      {
+        className: 'Ghost',
+        props: [{ name: 'redditId', fieldNames: ['redditId'] }],
+      },
+      {
+        className: 'Fine',
+        props: [{ name: 'redditId', fieldNames: ['reddit_id'] }],
+      },
+    ]);
 
-        const columns =
-          prop.kind === ReferenceKind.MANY_TO_MANY
-            ? [...(prop.joinColumns ?? []), ...(prop.inverseJoinColumns ?? [])]
-            : (prop.fieldNames ?? []);
+    expect(offenders).toEqual(['Ghost.redditId -> redditId']);
+  });
+});
 
-        for (const column of columns) {
-          if (!/^[a-z][a-z0-9_]*$/.test(column)) {
-            offenders.push(`${meta.className}.${prop.name} -> ${column}`);
-          }
+/**
+ * Every persisted column is snake_case, whatever kind of property produced it:
+ * a scalar column, a foreign key, or one side of a pivot table. Scalar columns
+ * are the ones that drift, because a relationship usually names its join column
+ * explicitly while a scalar silently takes the naming strategy's default.
+ */
+type EntityShape = {
+  className: string;
+  props: {
+    name: string;
+    fieldNames?: string[];
+    joinColumns?: string[];
+    inverseJoinColumns?: string[];
+  }[];
+};
+
+function columnCasingOffenders(entities: EntityShape[]): string[] {
+  const offenders: string[] = [];
+
+  for (const entity of entities) {
+    for (const prop of entity.props) {
+      if (prop.name.includes('__inverse')) {
+        continue;
+      }
+
+      const columns = [
+        ...(prop.fieldNames ?? []),
+        ...(prop.joinColumns ?? []),
+        ...(prop.inverseJoinColumns ?? []),
+      ];
+
+      for (const column of columns) {
+        if (!/^[a-z][a-z0-9_]*$/.test(column)) {
+          offenders.push(`${entity.className}.${prop.name} -> ${column}`);
         }
       }
     }
+  }
 
-    expect(offenders).toEqual([]);
-  });
-});
+  return offenders;
+}

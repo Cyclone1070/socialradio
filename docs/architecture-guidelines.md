@@ -10,12 +10,12 @@ This document provides decision rules for file placement, code organization, str
    - Modules are organized strictly by **Domain**, not by technical or functional concern (e.g. `channel/` domain contains `playback.service.ts` and `queue.service.ts`; `user/` domain contains auth and registration; `content/` domain contains scraping and feed storage).
    - Each domain feature is an isolated, independent slice.
    - Slices MUST NOT import concrete files (entities, services, helpers) directly from peer feature slices.
-   - Cross-slice entity references use scalar string IDs (`<name>Id: string`) instead of TypeORM relation decorators.
+   - Cross-slice entity references use scalar string IDs (`<name>Id: string`) instead of ORM relation objects.
 
 2. **Domain Package (`src/domain/`)**
    - `src/domain/` is a shared type-and-contract package.
    - Contains ONLY pure TypeScript interfaces (`*Data`) and abstract class tokens (`*Contract`).
-   - ZERO concrete logic, ZERO TypeORM `@Entity` decorators, ZERO NestJS decorators.
+   - ZERO concrete logic, ZERO ORM decorators such as `@Entity` and `@Column`, ZERO NestJS decorators.
    - Put a type or contract here ONLY if it is consumed by 2 or more feature slices (anti-dumping guardrail).
 
 3. **Architecture Guardrails (Enforced via `src/architecture.spec.ts`)**
@@ -47,7 +47,7 @@ This document provides decision rules for file placement, code organization, str
 | :--- | :--- | :--- | :--- |
 | **HTTP Controller** | `src/<feature>/` | `<name>.controller.ts` | `[Name]Controller` |
 | **HTTP Request/Response DTO** | `src/<feature>/dto/` | `<name>.dto.ts` | `[Name]Dto` |
-| **TypeORM Database Model** | `src/<feature>/entities/` | `<entity>.entity.ts` | `[Name]` (Entity class) |
+| **Database entity (MikroORM `EntitySchema`)** | `src/<feature>/entities/` | `<entity>.entity.ts` | `[Name]` (POCO entity class) |
 | **Feature Service** | `src/<feature>/` | `<service>.service.ts` | `[Name]Service` |
 | **Feature-Internal Interface/Helper** | `src/<feature>/interfaces/` or `src/<feature>/utils/` | `<name>.interface.ts` or `<name>.util.ts` | `[Name]` |
 | **Cross-Slice Service Contract** | `src/domain/contracts/` | `index.ts` | `export abstract class [Feature]Contract` |
