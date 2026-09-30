@@ -45,9 +45,12 @@ jobs:
 
       - name: Tier 1 environment (dummy values, no real credentials)
         run: |
+          # The admin address matters: the suite signs in as its own regular user
+          # (user@socialradio.com / UserPass123!, seeded by seed-base.sql), so the
+          # seeded admin must not occupy that address or the login comes back 401.
           cat > .env <<'EOF'
-          ADMIN_EMAIL=user@socialradio.com
-          ADMIN_PASSWORD=user1234
+          ADMIN_EMAIL=admin@socialradio.com
+          ADMIN_PASSWORD=AdminPass123!
           JWT_SECRET=ci-only-secret
           INTERNAL_SERVICE_SECRET=ci-only-internal
           EOF
