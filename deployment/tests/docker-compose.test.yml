@@ -1,4 +1,26 @@
 services:
+  # Tier 1 mock for the script-generation provider. The app's LLM_* point here,
+  # so the whole suite runs with no provider key and no internet for the LLM.
+  # Everything above the wire stays real: LlmService, the AI SDK, the parsers.
+  mocks:
+    image: node:24-alpine
+    command: ["node", "/mocks/llm-server.mts"]
+    volumes:
+      - ../mocks:/mocks:ro
+    environment:
+      - LLM_MODEL=mock-model
+    # No healthcheck: the mock answers within a second and the app only calls it
+    # during talk generation, long after boot. A health gate here only added a
+    # way for the whole stack to fail to start.
+
+  app:
+    environment:
+      LLM_BASE_URL: http://mocks:4010
+      LLM_API_KEY: mock-key
+      LLM_MODEL: mock-model
+    depends_on:
+      mocks:
+        condition: service_started
   # All SQL runs from inside the suite via the single psql_run helper
   # (docker-test.sh) — the seed service below was removed when the suite
   # gained psql access (one pattern, not two).
