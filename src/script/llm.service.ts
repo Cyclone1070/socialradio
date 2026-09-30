@@ -37,10 +37,14 @@ export class LlmService {
     systemPrompt: string,
     userPrompt: string,
   ): Promise<string> {
+    const failure: { error?: unknown } = {};
     const result = streamText({
       model: this.getLanguageModel(),
       system: systemPrompt,
       prompt: userPrompt,
+      onError: ({ error }) => {
+        failure.error = error;
+      },
       timeout: {
         firstChunkMs: 30000,
         chunkMs: 15000,
@@ -52,6 +56,16 @@ export class LlmService {
     for await (const chunk of result.textStream) {
       fullText += chunk;
     }
+
+    // The AI SDK reports provider failures through onError and still ends the
+    // stream. Without this, a retired model returns an empty string, which
+    // reaches the pipeline as a zero-character script.
+    if (failure.error) {
+      throw failure.error instanceof Error
+        ? failure.error
+        : new Error('LLM provider stream failed');
+    }
+
     return fullText;
   }
 }

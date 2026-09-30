@@ -17,13 +17,18 @@ describe('LlmService', () => {
 
   const mockStreamText = aiModule.streamText as jest.Mock<any>;
 
+  // Named so it can be re-installed in beforeEach: several tests override it,
+  // and jest.clearAllMocks() does not clear implementations, so an override
+  // would otherwise leak into every test that follows.
+  const defaultConfigGet = (key: string): string | null => {
+    if (key === 'LLM_API_KEY') return 'test-key';
+    if (key === 'LLM_BASE_URL') return 'https://opencode.ai/zen/v1';
+    if (key === 'LLM_MODEL') return 'deepseek-chat';
+    return null;
+  };
+
   const mockConfigService = {
-    get: jest.fn((key: string): string | null => {
-      if (key === 'LLM_API_KEY') return 'test-key';
-      if (key === 'LLM_BASE_URL') return 'https://opencode.ai/zen/v1';
-      if (key === 'LLM_MODEL') return 'deepseek-chat';
-      return null;
-    }),
+    get: jest.fn(defaultConfigGet),
   };
 
   beforeEach(async () => {
@@ -36,6 +41,7 @@ describe('LlmService', () => {
 
     service = module.get<LlmService>(LlmService);
     jest.clearAllMocks();
+    mockConfigService.get.mockImplementation(defaultConfigGet);
   });
 
   it('should be defined', () => {
@@ -99,6 +105,26 @@ describe('LlmService', () => {
 
     await expect(service.generateText('sys', 'user')).rejects.toThrow(
       'LLM model name is not configured (set LLM_MODEL)',
+    );
+  });
+
+  it('should surface a provider error instead of returning an empty script', async () => {
+    // The AI SDK does not throw from streamText: it reports the failure through
+    // onError and ends the stream. That is how a retired model silently became
+    // a zero-character script during playback.
+    mockStreamText.mockImplementation(
+      (options: { onError?: (event: { error: unknown }) => void }) => {
+        options.onError?.({ error: new Error('Model is unavailable') });
+        return {
+          textStream: (function* generate() {
+            yield '';
+          })(),
+        };
+      },
+    );
+
+    await expect(service.generateText('sys', 'user')).rejects.toThrow(
+      'Model is unavailable',
     );
   });
 });
