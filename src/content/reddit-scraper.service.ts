@@ -1,3 +1,10 @@
+import {
+  commentsResponseSchema,
+  existsResponseSchema,
+  parseFetcherPayload,
+  RedditFetcherContractError,
+  topPostsResponseSchema,
+} from './reddit-fetcher.contract';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
@@ -73,19 +80,28 @@ export class RedditScraperService {
     const limit = opts.limit ?? 100;
     const query = `limit=${limit}${opts.after ? `&after=${opts.after}` : ''}`;
     const body = await this.getJson(`/top-posts/${subredditName}?${query}`);
-    return body as {
-      posts: RedditPostData[];
-      after: string | null;
-      isInvalid: boolean;
-    };
+    return parseFetcherPayload(
+      topPostsResponseSchema,
+      body,
+      `/top-posts/${subredditName}`,
+    );
   }
 
   async exists(subredditName: string): Promise<boolean> {
     try {
       const body = await this.getJson(`/exists/${subredditName}`);
-      const { valid } = body as { valid: boolean };
+      const { valid } = parseFetcherPayload(
+        existsResponseSchema,
+        body,
+        `/exists/${subredditName}`,
+      );
       return valid;
     } catch (err) {
+      // A malformed payload must not read as "this subreddit is gone": callers
+      // delete rows on a false answer.
+      if (err instanceof RedditFetcherContractError) {
+        throw err;
+      }
       this.logger.warn(
         {
           subredditName,
@@ -104,7 +120,11 @@ export class RedditScraperService {
     const body = await this.getJson(
       `/comments/${subredditName}/${postRedditId}`,
     );
-    const { comments } = body as { comments: RedditCommentData[] };
+    const { comments } = parseFetcherPayload(
+      commentsResponseSchema,
+      body,
+      `/comments/${subredditName}/${postRedditId}`,
+    );
     return comments;
   }
 }
