@@ -16,7 +16,7 @@ import {
 import { RedditScraperService } from './reddit-scraper.service';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
 import { isUniqueViolation } from '../infrastructure/database/errors';
-import { ClaimStore, ScrapeLease } from './scrape-lease';
+import { ClaimLease, ClaimStore } from '../infrastructure/lease/claim-lease';
 
 type FetchedPage = Awaited<ReturnType<RedditScraperService['fetchTopPosts']>>;
 type FetchedPost = FetchedPage['posts'][number];
@@ -28,7 +28,14 @@ export interface ScrapeSubredditResult {
   scrapedPostsCount: number;
 }
 
-export { CLAIM_LEASE_MS, CLAIM_TICK_MS, RUN_CAP_MS } from './scrape-lease';
+// A run renews its claim on this beat. Three missed beats mean the run is gone -
+// crashed, or wedged hard enough that nothing ticks - and the claim may be taken.
+export const CLAIM_TICK_MS = 30 * 1000;
+export const CLAIM_LEASE_MS = 3 * CLAIM_TICK_MS;
+
+// Hard ceiling on one run. On reaching it the run stops itself AND stops renewing,
+// so a run that would never finish frees its subreddit instead of holding it.
+export const RUN_CAP_MS = 30 * 60 * 1000;
 
 // Cooldown applied after a scrape that yielded 0 new posts
 const SCRAPE_COOLDOWN_MS = 2 * 60 * 60 * 1000;
@@ -73,7 +80,11 @@ export class ScraperService {
     // Claim it in one statement: whoever's UPDATE matches a row owns the run, so
     // two runs cannot both start. A claim is free, or stale by more than the lease
     // window - which is how a run that died without releasing gets taken over.
-    const lease = await ScrapeLease.take(this.claimStore(), subreddit.id);
+    const lease = await ClaimLease.take(this.claimStore(), subreddit.id, {
+      capMs: RUN_CAP_MS,
+      tickMs: CLAIM_TICK_MS,
+      leaseMs: CLAIM_LEASE_MS,
+    });
     if (!lease) {
       this.logger.warn(
         { scrapeId, sub: subredditName },
@@ -88,7 +99,7 @@ export class ScraperService {
           ? 'scrape reached its time cap - stopping after the current post'
           : 'claim taken by another run - stopping',
       );
-    });
+    }, CLAIM_TICK_MS);
 
     try {
       let savedCount = 0;

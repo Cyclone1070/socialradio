@@ -18,6 +18,8 @@ export class Channel {
   private _currentPlayOrder: number | null = null;
   private _playheadStartedAt: Date | null = null;
   private _lastActiveAt: Date | null = null;
+  private _bufferClaimId: string | null = null;
+  private _bufferClaimedAt: Date | null = null;
   private _subreddits = new Collection<SubredditRef>(this);
   private _completedPosts = new Collection<PostRef>(this);
   private _createdAt!: Date;
@@ -151,6 +153,31 @@ export class Channel {
       this._lastActiveAt = new Date(value.getTime());
     } else {
       this._lastActiveAt = null;
+    }
+  }
+
+  get bufferClaimId(): string | null {
+    return this._bufferClaimId;
+  }
+
+  set bufferClaimId(value: string | null) {
+    this._bufferClaimId = value;
+  }
+
+  get bufferClaimedAt(): Date | null {
+    return this._bufferClaimedAt
+      ? new Date(this._bufferClaimedAt.getTime())
+      : null;
+  }
+
+  set bufferClaimedAt(value: Date | null) {
+    if (value !== null) {
+      if (!(value instanceof Date) || isNaN(value.getTime())) {
+        throw new Error('bufferClaimedAt must be a valid Date or null');
+      }
+      this._bufferClaimedAt = new Date(value.getTime());
+    } else {
+      this._bufferClaimedAt = null;
     }
   }
 

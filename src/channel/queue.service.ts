@@ -29,9 +29,18 @@ import { ScriptData, ScriptRejection } from '../domain/types/script.types';
 import { TalkData } from '../domain/types/audio.types';
 import { SubredditData } from '../domain/types/subreddit.types';
 import { randomUUID } from 'crypto';
+import { ClaimLease, ClaimStore } from '../infrastructure/lease/claim-lease';
 
 const SCRAPE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7-day scrape window
 const ACTIVE_SUB_POOL_TARGET = 20; // Maximum active subreddits with available posts per channel
+
+// Buffering a station costs a script generation plus a speech synthesis per turn, so
+// one instance at a time does it. The beat keeps the claim alive while the batch runs;
+// the cap stops a batch that is alive but wedged from renewing for ever, so the
+// station frees itself instead of waiting for a restart.
+const BUFFER_CLAIM_TICK_MS = 30 * 1000;
+const BUFFER_CLAIM_LEASE_MS = 3 * BUFFER_CLAIM_TICK_MS;
+const BUFFER_CAP_MS = 10 * 60 * 1000;
 
 /**
  * QueueService manages channel segment generation and queue replenishment.
@@ -68,10 +77,42 @@ export class QueueService {
     }
 
     // Buffering runs detached from the request that triggered it, so it gets
-    // its own MikroORM context instead of relying on the caller's.
+    // its own MikroORM context instead of relying on the caller's. The map is filled
+    // before the first await, so two requests arriving in the same tick share one
+    // batch; the claim inside is what stops a second *instance* doing the same work.
     const promise = RequestContext.create(this.em, async () => {
       try {
-        await this.doBufferAhead(channelId);
+        // One batch per station, not one per process. The claim lives on the channel
+        // row, so a second instance stands aside instead of paying for the same
+        // script and the same speech again.
+        const lease = await ClaimLease.take(
+          this.bufferClaimStore(),
+          channelId,
+          {
+            capMs: BUFFER_CAP_MS,
+            tickMs: BUFFER_CLAIM_TICK_MS,
+            leaseMs: BUFFER_CLAIM_LEASE_MS,
+          },
+        );
+        if (!lease) {
+          this.logger.debug(
+            { channelId },
+            'another instance is buffering this station, standing aside',
+          );
+          return;
+        }
+
+        try {
+          lease.start((reason) => {
+            this.logger.warn(
+              { channelId, reason },
+              'buffering lost its claim, letting the batch wind down',
+            );
+          });
+          await this.doBufferAhead(channelId, lease);
+        } finally {
+          await lease.stop();
+        }
       } finally {
         this.inFlightBuffers.delete(channelId);
       }
@@ -81,7 +122,42 @@ export class QueueService {
     return promise;
   }
 
-  private async doBufferAhead(channelId: string): Promise<void> {
+  /**
+   * The claim is decided by one conditional write, and that is the only thing making
+   * it safe between processes: it matches a station whose claim is free or older than
+   * the lease, so exactly one instance can win it and a crashed one stops renewing.
+   */
+  private bufferClaimStore(): ClaimStore {
+    return {
+      take: (channelId, token, staleBefore) =>
+        this.channelRepo.nativeUpdate(
+          {
+            id: channelId,
+            $or: [
+              { bufferClaimId: null },
+              { bufferClaimedAt: { $lt: staleBefore } },
+            ],
+          },
+          { bufferClaimId: token, bufferClaimedAt: new Date() },
+        ),
+      renew: (channelId, token, at) =>
+        this.channelRepo.nativeUpdate(
+          { id: channelId, bufferClaimId: token },
+          { bufferClaimedAt: at },
+        ),
+      release: async (channelId, token) => {
+        await this.channelRepo.nativeUpdate(
+          { id: channelId, bufferClaimId: token },
+          { bufferClaimId: null, bufferClaimedAt: null },
+        );
+      },
+    };
+  }
+
+  private async doBufferAhead(
+    channelId: string,
+    lease: ClaimLease,
+  ): Promise<void> {
     const lastItem = await this.segmentRepo.findOne(
       { channelId },
       { orderBy: { playOrder: 'DESC' } },
@@ -90,21 +166,28 @@ export class QueueService {
 
     const talkCount = this.getRandomCount();
     for (let i = 0; i < talkCount; i++) {
-      const next = await this.appendTalk(channelId, nextPlayOrder);
+      // A claim that has gone means another instance owns this station now, so the
+      // batch winds down instead of appending a second copy of the same runway.
+      if (lease.shouldStop) return;
+      const next = await this.appendTalk(channelId, nextPlayOrder, lease);
+      if (lease.shouldStop) return;
       nextPlayOrder =
         next ?? (await this.appendFiller(channelId, nextPlayOrder));
     }
 
     const musicCount = this.getRandomCount();
     for (let i = 0; i < musicCount; i++) {
+      if (lease.shouldStop) return;
       nextPlayOrder = await this.appendMusic(channelId, nextPlayOrder);
     }
 
     const adCount = this.getRandomCount();
     for (let i = 0; i < adCount; i++) {
+      if (lease.shouldStop) return;
       nextPlayOrder = await this.appendAd(channelId, nextPlayOrder);
     }
 
+    if (lease.shouldStop) return;
     await this.appendJingle(channelId, nextPlayOrder++);
   }
 
@@ -115,6 +198,7 @@ export class QueueService {
   private async appendTalk(
     channelId: string,
     playOrder: number,
+    lease: ClaimLease,
   ): Promise<number | null> {
     process.stderr.write(
       `[QueueService] appendTalk called for channel ${channelId}, playOrder ${playOrder}\n`,
@@ -123,6 +207,7 @@ export class QueueService {
     let rejectedTopics = 0;
 
     while (true) {
+      if (lease.shouldStop) return null;
       // A rejection retires content for good, so one wake-up may not walk the pool
       // burning topics because the model keeps answering with something unusable.
       // Filler covers the gap; the next demand-driven wake-up picks up the rest.
@@ -168,7 +253,12 @@ export class QueueService {
         process.stderr.write(
           `[QueueService] Starting generateTalkVoiceTrack...\n`,
         );
-        const outcome = await this.generateTalkVoiceTrack(talkCluster.posts);
+        const outcome = await this.generateTalkVoiceTrack(
+          talkCluster.posts,
+          lease,
+        );
+        // The claim went while the posts were being read: not our station any more.
+        if (outcome === null) return null;
         if (isScriptRejection(outcome)) {
           rejectedTopics++;
           this.logger.warn(
@@ -241,9 +331,13 @@ export class QueueService {
 
   private async generateTalkVoiceTrack(
     posts: PostData[],
+    lease: ClaimLease,
   ): Promise<
-    { voiceTrack: TalkData; scriptObj: ScriptData } | ScriptRejection
+    { voiceTrack: TalkData; scriptObj: ScriptData } | ScriptRejection | null
   > {
+    // Nothing below is free, and the claim decides whether this instance is still
+    // the one that should be paying. Null means stop the batch.
+    if (lease.shouldStop) return null;
     const comments = await this.contentContract.getCommentsByPostIds(
       posts.map((p) => p.id),
     );
@@ -261,6 +355,9 @@ export class QueueService {
           }
         : rawScript;
 
+    // The script is written; the speech is the next thing that costs money, so the
+    // claim is checked once more before spending it.
+    if (lease.shouldStop) return null;
     const voiceTrack = await this.voiceContract.synthesizeScript(
       scriptObj,
       filePath,

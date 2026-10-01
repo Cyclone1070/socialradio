@@ -19,8 +19,18 @@ import {
 describe('QueueService', () => {
   let service: QueueService;
 
+  type BufferClaimCriteria = {
+    id?: string;
+    bufferClaimId?: string | null;
+    $or?: unknown[];
+  };
+
   const mockChannelRepo = {
     findOne: jest.fn(),
+    nativeUpdate: jest.fn<
+      Promise<number>,
+      [BufferClaimCriteria, Record<string, unknown>]
+    >(),
   };
 
   const mockSegmentRepo = {
@@ -86,6 +96,8 @@ describe('QueueService', () => {
     service = module.get<QueueService>(QueueService);
     jest.clearAllMocks();
     mockEntityManager.persist.mockReturnThis();
+    // A buffer claim is free unless a test says another instance holds it.
+    mockChannelRepo.nativeUpdate.mockResolvedValue(1);
     // clearAllMocks() clears calls, not implementations, so an override from one
     // test used to leak into the next. scrapeSubreddit is fired without being
     // awaited, so it must always return a promise.
@@ -720,6 +732,9 @@ describe('QueueService', () => {
       const backgroundRepo = {
         count: jest.fn(),
         find: jest.fn(),
+        // The batch claims the station before it reads anything, so the mock that
+        // stands in for the repositories has to answer that claim as well.
+        nativeUpdate: jest.fn().mockResolvedValue(1),
         findOne: jest.fn(() => {
           contexts.push(RequestContext.getEntityManager());
           return Promise.reject(new Error('stop-after-first-query'));
@@ -753,6 +768,153 @@ describe('QueueService', () => {
 
       expect(contexts.length).toBeGreaterThan(0);
       expect(contexts[0]).toBeDefined();
+    });
+  });
+  describe('buffering across instances', () => {
+    const deferred = <T>() => {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((r) => {
+        resolve = r;
+      });
+      return { promise, resolve };
+    };
+    const takeCall = () => mockChannelRepo.nativeUpdate.mock.calls[0];
+    const renewCall = () => mockChannelRepo.nativeUpdate.mock.calls[1];
+    const releaseCall = () =>
+      mockChannelRepo.nativeUpdate.mock.calls[
+        mockChannelRepo.nativeUpdate.mock.calls.length - 1
+      ];
+
+    const parkOnPosts = () => {
+      const parked = deferred<unknown[]>();
+      mockContentContract.getPostsBySubredditIds.mockReturnValueOnce(
+        parked.promise,
+      );
+      return parked;
+    };
+
+    const aCluster = [
+      { id: 'post-1', subredditId: 'sub-1', title: 'Alpha', score: 10 },
+      { id: 'post-2', subredditId: 'sub-1', title: 'Alpha again', score: 9 },
+    ];
+
+    it('does not buffer a channel another instance is already buffering', async () => {
+      // The atomic take matched no rows: someone else holds a live claim.
+      mockChannelRepo.nativeUpdate.mockResolvedValueOnce(0);
+
+      await service.bufferAhead('chan-taken');
+
+      // None of the paid work happened: no posts read, no script, no audio.
+      expect(mockContentContract.getPostsBySubredditIds).not.toHaveBeenCalled();
+      expect(mockScriptContract.generateScript).not.toHaveBeenCalled();
+      expect(mockVoiceContract.synthesizeScript).not.toHaveBeenCalled();
+      expect(mockEntityManager.persist).not.toHaveBeenCalled();
+    });
+
+    it('claims the channel before buffering and releases it afterwards', async () => {
+      mockChannelRepo.findOne.mockResolvedValue(null);
+
+      await service.bufferAhead('chan-free');
+
+      expect(mockChannelRepo.nativeUpdate).toHaveBeenCalledTimes(2);
+      const [takeCriteria, takeValues] = takeCall();
+      // Free or stale, decided by the database in one write, which is the only
+      // thing that makes this safe between processes.
+      expect(takeCriteria).toMatchObject({ id: 'chan-free' });
+      expect(takeValues).toHaveProperty('bufferClaimId');
+      expect(takeValues).toHaveProperty('bufferClaimedAt');
+
+      const [releaseCriteria, releaseValues] = releaseCall();
+      // Scoped by our own token: another instance's claim must survive us.
+      expect(releaseCriteria).toMatchObject({
+        id: 'chan-free',
+        bufferClaimId: takeValues.bufferClaimId,
+      });
+      expect(releaseValues).toMatchObject({
+        bufferClaimId: null,
+        bufferClaimedAt: null,
+      });
+    });
+
+    it('may take a claim whose previous owner went quiet', async () => {
+      mockChannelRepo.findOne.mockResolvedValue(null);
+
+      await service.bufferAhead('chan-stale');
+
+      const [takeCriteria] = takeCall();
+      expect(takeCriteria.$or).toHaveLength(2);
+      const stale = takeCriteria.$or?.[1] as {
+        bufferClaimedAt: { $lt: Date };
+      };
+      const ageSeconds =
+        (Date.now() - stale.bufferClaimedAt.$lt.getTime()) / 1000;
+      // Three missed beats: a crashed instance frees its station.
+      expect(ageSeconds).toBeGreaterThanOrEqual(60);
+      expect(ageSeconds).toBeLessThanOrEqual(120);
+    });
+
+    it('releases the claim even when buffering blows up', async () => {
+      mockChannelRepo.findOne.mockRejectedValueOnce(
+        new Error('database went away'),
+      );
+
+      await expect(service.bufferAhead('chan-boom')).rejects.toThrow(
+        'database went away',
+      );
+
+      expect(mockChannelRepo.nativeUpdate).toHaveBeenCalledTimes(2);
+      const [releaseCriteria] = releaseCall();
+      expect(releaseCriteria).toMatchObject({ id: 'chan-boom' });
+    });
+
+    it('keeps its claim alive while a slow batch runs', async () => {
+      jest.useFakeTimers();
+      try {
+        const parked = parkOnPosts();
+        const running = service.bufferAhead('chan-slow');
+
+        await jest.advanceTimersByTimeAsync(30_000);
+
+        const [renewCriteria, renewValues] = renewCall();
+        expect(renewCriteria).toMatchObject({
+          id: 'chan-slow',
+          bufferClaimId: takeCall()[1].bufferClaimId,
+        });
+        expect(renewValues).toHaveProperty('bufferClaimedAt');
+
+        parked.resolve([]);
+        await running;
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('stops before the next paid step when its claim is gone', async () => {
+      jest.useFakeTimers();
+      try {
+        setupChannelSubreddits([
+          { subredditId: 'sub-1', name: 'news', lastScrapedAt: new Date() },
+        ]);
+        mockSegmentRepo.count.mockResolvedValueOnce(0);
+        mockSegmentRepo.findOne.mockResolvedValueOnce(null);
+        const parked = parkOnPosts();
+        mockContentContract.getCommentsByPostIds.mockResolvedValue([]);
+        // Take wins, the beat then finds another instance holds the station.
+        mockChannelRepo.nativeUpdate
+          .mockResolvedValueOnce(1)
+          .mockResolvedValueOnce(0);
+
+        const running = service.bufferAhead('chan-lost');
+        await jest.advanceTimersByTimeAsync(30_000);
+        parked.resolve(aCluster);
+        await running;
+
+        // The script is the first thing that costs money, so it is never asked for.
+        expect(mockScriptContract.generateScript).not.toHaveBeenCalled();
+        expect(mockVoiceContract.synthesizeScript).not.toHaveBeenCalled();
+      } finally {
+        jest.useRealTimers();
+      }
     });
   });
 });

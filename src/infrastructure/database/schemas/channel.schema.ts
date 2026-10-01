@@ -43,6 +43,8 @@ export const ChannelSchema = new EntitySchema<Channel>({
     currentPlayOrder: { type: 'integer', nullable: true, accessor: true },
     playheadStartedAt: { type: 'Date', nullable: true, accessor: true },
     lastActiveAt: { type: 'Date', nullable: true, accessor: true },
+    bufferClaimId: { type: 'string', nullable: true, accessor: true },
+    bufferClaimedAt: { type: 'Date', nullable: true, accessor: true },
     createdAt: {
       type: 'Date',
       defaultRaw: 'now()',

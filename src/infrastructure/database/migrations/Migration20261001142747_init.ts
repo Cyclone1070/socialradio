@@ -1,6 +1,6 @@
 import { Migration } from '@mikro-orm/migrations';
 
-export class Migration20261001110715_init extends Migration {
+export class Migration20261001142747_init extends Migration {
   override async up(): Promise<void> {
     this.addSql(
       `create table "ad_track" ("id" uuid not null default gen_random_uuid(), "advertiser" varchar(255) not null, "file_path" varchar(255) not null, "duration_seconds" real not null, "created_at" timestamptz not null default now(), constraint "ad_track_pkey" primary key ("id"), constraint ad_track_duration_positive check (duration_seconds > 0));`,
@@ -61,7 +61,7 @@ export class Migration20261001110715_init extends Migration {
     );
 
     this.addSql(
-      `create table "channel" ("id" uuid not null default gen_random_uuid(), "name" varchar(255) not null, "visibility" varchar(255) not null default 'public', "owner_id" uuid null, "current_segment_id" uuid null, "current_play_order" int null, "playhead_started_at" timestamptz null, "last_active_at" timestamptz null, "created_at" timestamptz not null default now(), constraint "channel_pkey" primary key ("id"), constraint channel_name_not_empty check (length(trim(name)) > 0), constraint channel_visibility_check check (visibility in ('public', 'private')), constraint channel_play_order_positive check (current_play_order is null or current_play_order >= 1));`,
+      `create table "channel" ("id" uuid not null default gen_random_uuid(), "name" varchar(255) not null, "visibility" varchar(255) not null default 'public', "owner_id" uuid null, "current_segment_id" uuid null, "current_play_order" int null, "playhead_started_at" timestamptz null, "last_active_at" timestamptz null, "buffer_claim_id" varchar(255) null, "buffer_claimed_at" timestamptz null, "created_at" timestamptz not null default now(), constraint "channel_pkey" primary key ("id"), constraint channel_name_not_empty check (length(trim(name)) > 0), constraint channel_visibility_check check (visibility in ('public', 'private')), constraint channel_play_order_positive check (current_play_order is null or current_play_order >= 1));`,
     );
     this.addSql(
       `create index "channel_current_segment_id_index" on "channel" ("current_segment_id");`,
