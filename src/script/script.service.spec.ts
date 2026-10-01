@@ -139,6 +139,62 @@ Dave: Wrap.`;
       expect(result.turns[0].speaker).toBe('Dave');
     });
 
+    it('tells Stage 1 what was wrong and shows the rejected outline', async () => {
+      const posts: PostData[] = [
+        {
+          id: 'post-1',
+          subredditId: 'sub-1',
+          redditId: 'r1',
+          title: 'Post Title 1',
+          body: 'Post Body 1',
+          score: 10,
+        },
+      ];
+
+      mockLlmService.generateText
+        .mockResolvedValueOnce('Invalid outline without steps')
+        .mockResolvedValueOnce(validOutlineMarkdown)
+        .mockResolvedValueOnce(validDialogueText);
+
+      const result = await service.generateScript(posts, []);
+
+      expect(result.turns.length).toBe(9);
+      // The retry must carry the failure, not re-roll the same prompt.
+      const repairPrompt = String(
+        (mockLlmService.generateText.mock.calls[1] as string[])[1],
+      );
+      expect(repairPrompt).toContain('Invalid outline without steps');
+      expect(repairPrompt).toContain('STEP');
+    });
+
+    it('tells Stage 2 what was wrong and shows the rejected dialogue', async () => {
+      const posts: PostData[] = [
+        {
+          id: 'post-1',
+          subredditId: 'sub-1',
+          redditId: 'r1',
+          title: 'Post Title 1',
+          body: 'Post Body 1',
+          score: 10,
+        },
+      ];
+
+      mockLlmService.generateText
+        .mockResolvedValueOnce(validOutlineMarkdown)
+        .mockResolvedValueOnce(
+          'Dave: Hello.\nUnknownSpeaker: Oops.\nDave: Bye.',
+        )
+        .mockResolvedValueOnce(validDialogueText);
+
+      const result = await service.generateScript(posts, []);
+
+      expect(result.turns.length).toBe(9);
+      const repairPrompt = String(
+        (mockLlmService.generateText.mock.calls[2] as string[])[1],
+      );
+      expect(repairPrompt).toContain('UnknownSpeaker');
+    });
+
     it('throws instead of inventing a script when Stage 1 keeps failing', async () => {
       const posts: PostData[] = [
         {
@@ -155,9 +211,12 @@ Dave: Wrap.`;
         'Invalid outline without steps',
       );
 
-      await expect(service.generateScript(posts, [])).rejects.toThrow(
-        /Stage 1/,
-      );
+      // Exhaustion is content, not infrastructure: it comes back as a value so
+      // the caller can retire the topic instead of retrying it forever.
+      const outcome = await service.generateScript(posts, []);
+      expect(outcome).toMatchObject({ rejected: true });
+      const rejected = outcome as { reason?: string; turns?: unknown };
+      expect(String(rejected.reason)).toContain('Stage 1');
       expect(mockLlmService.generateText).toHaveBeenCalledTimes(2);
     });
 
@@ -177,9 +236,10 @@ Dave: Wrap.`;
         .mockResolvedValueOnce(validOutlineMarkdown)
         .mockResolvedValue('Dave: one turn is not a conversation');
 
-      await expect(service.generateScript(posts, [])).rejects.toThrow(
-        /Stage 2/,
-      );
+      const outcome = await service.generateScript(posts, []);
+      expect(outcome).toMatchObject({ rejected: true });
+      const rejected = outcome as { reason?: string; turns?: unknown };
+      expect(String(rejected.reason)).toContain('Stage 2');
     });
 
     it('should retry Stage 1 when Stage 1 outline validation fails', async () => {

@@ -1,5 +1,5 @@
 import { PostData, CommentData } from '../types/post.types';
-import { ScriptData } from '../types/script.types';
+import { ScriptData, ScriptOutcome } from '../types/script.types';
 import { TalkData, MusicData, AdData, JingleData } from '../types/audio.types';
 import { SubredditData } from '../types/subreddit.types';
 
@@ -7,7 +7,7 @@ export abstract class ScriptContract {
   abstract generateScript(
     posts: PostData[],
     comments: CommentData[],
-  ): Promise<ScriptData | string>;
+  ): Promise<ScriptOutcome>;
 }
 
 export abstract class VoiceContract {

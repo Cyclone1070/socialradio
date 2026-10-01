@@ -449,6 +449,149 @@ describe('QueueService', () => {
       );
     });
 
+    it('retires a content-rejected topic and moves to the next one', async () => {
+      const channelId = 'chan-1';
+      jest.spyOn(service, 'getRandomCount').mockReturnValue(1);
+      const channel = setupChannelSubreddits([
+        {
+          subredditId: 'sub-1',
+          name: 'AskReddit',
+          lastScrapedAt: new Date(),
+        },
+      ]);
+      mockContentContract.getPostsBySubredditIds.mockResolvedValue([
+        {
+          id: 'post-1',
+          subredditId: 'sub-1',
+          title: 'Topic Title 1',
+          selftext: 'Body 1',
+          ups: 200,
+        },
+        {
+          id: 'post-2',
+          subredditId: 'sub-1',
+          title: 'Cooking Pasta Recipe',
+          selftext: 'Body 2',
+          ups: 100,
+        },
+      ]);
+      mockScriptContract.generateScript
+        .mockResolvedValueOnce({
+          rejected: true,
+          reason: 'missing STEP 4 header',
+        })
+        .mockResolvedValueOnce('Valid script for post 2');
+
+      await service.bufferAhead(channelId);
+
+      // The model rejected this content, so it is spent: keeping the lease stops
+      // the station re-chewing it one wake-up at a time.
+      expect(mockScriptContract.generateScript).toHaveBeenCalledTimes(2);
+      expect(mockVoiceContract.synthesizeScript).toHaveBeenCalledTimes(1);
+      expect(channel.completedPosts.remove).not.toHaveBeenCalled();
+      jest.restoreAllMocks();
+    });
+
+    it('stops the walk on an infrastructure failure so filler can play', async () => {
+      const channelId = 'chan-1';
+      jest.spyOn(service, 'getRandomCount').mockReturnValue(1);
+      const channel = setupChannelSubreddits([
+        {
+          subredditId: 'sub-1',
+          name: 'AskReddit',
+          lastScrapedAt: new Date(),
+        },
+      ]);
+      mockContentContract.getPostsBySubredditIds.mockResolvedValue([
+        {
+          id: 'post-1',
+          subredditId: 'sub-1',
+          title: 'Topic Title 1',
+          selftext: 'Body 1',
+          ups: 200,
+        },
+        {
+          id: 'post-2',
+          subredditId: 'sub-1',
+          title: 'Cooking Pasta Recipe',
+          selftext: 'Body 2',
+          ups: 100,
+        },
+      ]);
+      // Neither the LLM nor TTS can be blamed on the content: every remaining
+      // topic would fail the same way, so the cycle gives up and lets the queue
+      // append filler instead of grinding through the whole pool.
+      mockScriptContract.generateScript.mockRejectedValue(
+        new Error('LLM provider stream failed'),
+      );
+
+      await service.bufferAhead(channelId);
+
+      expect(mockScriptContract.generateScript).toHaveBeenCalledTimes(1);
+      expect(mockVoiceContract.synthesizeScript).not.toHaveBeenCalled();
+      expect(channel.completedPosts.remove).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'post-1' }),
+      );
+      jest.restoreAllMocks();
+    });
+
+    it('stops after two rejected topics instead of walking the pool', async () => {
+      const channelId = 'chan-1';
+      jest.spyOn(service, 'getRandomCount').mockReturnValue(1);
+      const channel = setupChannelSubreddits([
+        { subredditId: 'sub-1', name: 'AskReddit', lastScrapedAt: new Date() },
+      ]);
+      mockContentContract.getPostsBySubredditIds.mockResolvedValue([
+        {
+          id: 'post-1',
+          subredditId: 'sub-1',
+          title: 'Landlord Kept My Deposit',
+          selftext: 'Body 1',
+          ups: 500,
+        },
+        {
+          id: 'post-2',
+          subredditId: 'sub-1',
+          title: 'Best Hiking Trails Near Denver',
+          selftext: 'Body 2',
+          ups: 400,
+        },
+        {
+          id: 'post-3',
+          subredditId: 'sub-1',
+          title: 'Learning Guitar At 40',
+          selftext: 'Body 3',
+          ups: 300,
+        },
+        {
+          id: 'post-4',
+          subredditId: 'sub-1',
+          title: 'Marathon Training In Winter',
+          selftext: 'Body 4',
+          ups: 200,
+        },
+        {
+          id: 'post-5',
+          subredditId: 'sub-1',
+          title: 'Cheapest Way To Move Cross Country',
+          selftext: 'Body 5',
+          ups: 100,
+        },
+      ]);
+      mockScriptContract.generateScript.mockResolvedValue({
+        rejected: true,
+        reason: 'the model would not write this one',
+      });
+
+      await service.bufferAhead(channelId);
+
+      // A provider answering quickly with garbage must not be able to walk the
+      // pool: every rejection retires content for good.
+      expect(mockScriptContract.generateScript).toHaveBeenCalledTimes(2);
+      expect(channel.completedPosts.add).toHaveBeenCalledTimes(2);
+      jest.restoreAllMocks();
+    });
+
     it('retries next available topic when first topic fails voice generation', async () => {
       const channelId = 'chan-1';
       setupChannelSubreddits([
@@ -475,9 +618,11 @@ describe('QueueService', () => {
         },
       ]);
 
-      // First LLM call fails, second succeeds
       mockScriptContract.generateScript
-        .mockRejectedValueOnce(new Error('LLM error on post 1'))
+        .mockResolvedValueOnce({
+          rejected: true,
+          reason: 'dialogue rejected: only 3 turns',
+        })
         .mockResolvedValueOnce('Valid script for post 2');
 
       await service.bufferAhead(channelId);

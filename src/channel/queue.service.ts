@@ -25,7 +25,7 @@ import {
   MediaContract,
 } from '../domain/contracts';
 import { PostData } from '../domain/types/post.types';
-import { ScriptData } from '../domain/types/script.types';
+import { ScriptData, ScriptRejection } from '../domain/types/script.types';
 import { TalkData } from '../domain/types/audio.types';
 import { SubredditData } from '../domain/types/subreddit.types';
 import { randomUUID } from 'crypto';
@@ -120,8 +120,19 @@ export class QueueService {
       `[QueueService] appendTalk called for channel ${channelId}, playOrder ${playOrder}\n`,
     );
     const triedPostIds = new Set<string>();
+    let rejectedTopics = 0;
 
     while (true) {
+      // A rejection retires content for good, so one wake-up may not walk the pool
+      // burning topics because the model keeps answering with something unusable.
+      // Filler covers the gap; the next demand-driven wake-up picks up the rest.
+      if (rejectedTopics >= MAX_REJECTED_TOPICS_PER_WAKE_UP) {
+        this.logger.warn(
+          { channelId, rejectedTopics },
+          'too many topics rejected in one wake-up, letting filler cover the gap',
+        );
+        return null;
+      }
       process.stderr.write(
         `[QueueService] Looking for pending topic segment...\n`,
       );
@@ -157,9 +168,23 @@ export class QueueService {
         process.stderr.write(
           `[QueueService] Starting generateTalkVoiceTrack...\n`,
         );
-        const { voiceTrack, scriptObj } = await this.generateTalkVoiceTrack(
-          talkCluster.posts,
-        );
+        const outcome = await this.generateTalkVoiceTrack(talkCluster.posts);
+        if (isScriptRejection(outcome)) {
+          rejectedTopics++;
+          this.logger.warn(
+            {
+              channelId,
+              clusterId: talkCluster.id,
+              reason: outcome.reason,
+            },
+            'the model rejected this topic, retiring it and trying the next one',
+          );
+          // The lease stays: this content is spent rather than postponed, which
+          // also shrinks the pool honestly so scrapes top the channel up instead
+          // of the station re-chewing the same poisoned post every wake-up.
+          continue;
+        }
+        const { voiceTrack, scriptObj } = outcome;
         process.stderr.write(
           `[QueueService] Voice track generated: ${voiceTrack.filePath}, persisting TalkSegment...\n`,
         );
@@ -200,24 +225,32 @@ export class QueueService {
           );
         }
 
-        // Filler covers the gap, so the post must go back into the pool: retry is
-        // demand driven and needs something left to retry when the filler runs low.
+        // The post goes back into the pool: retry is demand driven and needs
+        // something left to retry when the filler runs low.
         await this.releasePostLease(
           channelId,
           talkCluster.posts.map((p) => p.id),
         );
-        // Continue loop to try the next available unplayed topic cluster
+        // Infrastructure, not content: every remaining topic would fail the same
+        // way, so stop and let the caller append filler instead of grinding
+        // through the pool one futile attempt at a time.
+        return null;
       }
     }
   }
 
   private async generateTalkVoiceTrack(
     posts: PostData[],
-  ): Promise<{ voiceTrack: TalkData; scriptObj: ScriptData }> {
+  ): Promise<
+    { voiceTrack: TalkData; scriptObj: ScriptData } | ScriptRejection
+  > {
     const comments = await this.contentContract.getCommentsByPostIds(
       posts.map((p) => p.id),
     );
     const rawScript = await this.scriptContract.generateScript(posts, comments);
+    if (isScriptRejection(rawScript)) {
+      return rawScript;
+    }
 
     const filePath = `audio/talk-${randomUUID()}.mp3`;
     const scriptObj: ScriptData =
@@ -521,6 +554,25 @@ export class QueueService {
     }
     await this.em.flush();
   }
+}
+
+/**
+ * How many topics a single wake-up may have refused before it hands the slot to
+ * filler. Each attempt is already bounded by the provider's own timeouts and an
+ * outage stops the walk outright, so this count is what stops a fast but unusable
+ * model from retiring half the pool in one go.
+ */
+const MAX_REJECTED_TOPICS_PER_WAKE_UP = 2;
+
+/**
+ * A refusal by the model, which says nothing about the next topic. Takes any
+ * value because the caller may hold either a raw script outcome or the voice
+ * track's own result.
+ */
+function isScriptRejection(outcome: unknown): outcome is ScriptRejection {
+  return (
+    typeof outcome === 'object' && outcome !== null && 'rejected' in outcome
+  );
 }
 
 /**
