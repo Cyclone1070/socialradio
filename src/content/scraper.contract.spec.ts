@@ -24,7 +24,7 @@ describe('ScraperService and the fetcher contract', () => {
   const subredditRepo = {
     findOne: jest.fn(),
     nativeDelete: jest.fn(),
-    nativeUpdate: jest.fn(),
+    nativeUpdate: jest.fn().mockResolvedValue(1),
     find: jest.fn(),
     count: jest.fn(),
   };
@@ -47,7 +47,11 @@ describe('ScraperService and the fetcher contract', () => {
     upsertMany: jest
       .fn<Promise<Comment[]>, [unknown, Comment[], CommentUpsertOptions]>()
       .mockResolvedValue([]),
+    transactional: jest.fn(),
   };
+  em.transactional.mockImplementation(
+    async (cb: (tx: typeof em) => Promise<unknown>) => cb(em),
+  );
   const reddit = {
     fetchTopPosts: jest.fn(),
     fetchPostComments: jest.fn(),

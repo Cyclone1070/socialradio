@@ -17,6 +17,7 @@ export const SubredditSchema = new EntitySchema<Subreddit>({
     lastScrapedAt: { type: 'Date', nullable: true, accessor: true },
     scrapeStartedAt: { type: 'Date', nullable: true, accessor: true },
     scrapeCooldownUntil: { type: 'Date', nullable: true, accessor: true },
+    scrapeClaimId: { type: 'string', nullable: true, accessor: true },
     createdAt: {
       type: 'Date',
       defaultRaw: 'now()',

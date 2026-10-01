@@ -1,6 +1,6 @@
 import { Migration } from '@mikro-orm/migrations';
 
-export class Migration20260930055428_init extends Migration {
+export class Migration20261001110715_init extends Migration {
   override async up(): Promise<void> {
     this.addSql(
       `create table "ad_track" ("id" uuid not null default gen_random_uuid(), "advertiser" varchar(255) not null, "file_path" varchar(255) not null, "duration_seconds" real not null, "created_at" timestamptz not null default now(), constraint "ad_track_pkey" primary key ("id"), constraint ad_track_duration_positive check (duration_seconds > 0));`,
@@ -24,7 +24,7 @@ export class Migration20260930055428_init extends Migration {
     );
 
     this.addSql(
-      `create table "subreddit" ("id" uuid not null default gen_random_uuid(), "name" varchar(255) not null, "last_scraped_at" timestamptz null, "scrape_started_at" timestamptz null, "scrape_cooldown_until" timestamptz null, "created_at" timestamptz not null default now(), constraint "subreddit_pkey" primary key ("id"), constraint subreddit_name_not_empty check (length(trim(name)) > 0));`,
+      `create table "subreddit" ("id" uuid not null default gen_random_uuid(), "name" varchar(255) not null, "last_scraped_at" timestamptz null, "scrape_started_at" timestamptz null, "scrape_cooldown_until" timestamptz null, "scrape_claim_id" varchar(255) null, "created_at" timestamptz not null default now(), constraint "subreddit_pkey" primary key ("id"), constraint subreddit_name_not_empty check (length(trim(name)) > 0));`,
     );
     this.addSql(
       `alter table "subreddit" add constraint "subreddit_name_unique" unique ("name");`,
@@ -121,65 +121,5 @@ export class Migration20260930055428_init extends Migration {
     this.addSql(
       `alter table "channel_post_progress" add constraint "channel_post_progress_post_id_foreign" foreign key ("post_id") references "post" ("id") on update cascade on delete cascade;`,
     );
-  }
-
-  override async down(): Promise<void> {
-    this.addSql(
-      `alter table "post" drop constraint "post_subreddit_id_foreign";`,
-    );
-
-    this.addSql(
-      `alter table "channel_subreddit" drop constraint "channel_subreddit_subreddit_id_foreign";`,
-    );
-
-    this.addSql(
-      `alter table "comment" drop constraint "comment_post_id_foreign";`,
-    );
-
-    this.addSql(
-      `alter table "channel_post_progress" drop constraint "channel_post_progress_post_id_foreign";`,
-    );
-
-    this.addSql(
-      `alter table "channel" drop constraint "channel_owner_id_foreign";`,
-    );
-
-    this.addSql(
-      `alter table "segment" drop constraint "segment_channel_id_foreign";`,
-    );
-
-    this.addSql(
-      `alter table "channel_subreddit" drop constraint "channel_subreddit_channel_id_foreign";`,
-    );
-
-    this.addSql(
-      `alter table "channel_post_progress" drop constraint "channel_post_progress_channel_id_foreign";`,
-    );
-
-    this.addSql(
-      `alter table "channel" drop constraint "channel_current_segment_id_foreign";`,
-    );
-
-    this.addSql(`drop table if exists "ad_track" cascade;`);
-
-    this.addSql(`drop table if exists "jingle" cascade;`);
-
-    this.addSql(`drop table if exists "music_track" cascade;`);
-
-    this.addSql(`drop table if exists "subreddit" cascade;`);
-
-    this.addSql(`drop table if exists "post" cascade;`);
-
-    this.addSql(`drop table if exists "comment" cascade;`);
-
-    this.addSql(`drop table if exists "user" cascade;`);
-
-    this.addSql(`drop table if exists "channel" cascade;`);
-
-    this.addSql(`drop table if exists "segment" cascade;`);
-
-    this.addSql(`drop table if exists "channel_subreddit" cascade;`);
-
-    this.addSql(`drop table if exists "channel_post_progress" cascade;`);
   }
 }

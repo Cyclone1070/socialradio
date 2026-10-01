@@ -4,6 +4,7 @@ export class Subreddit {
   private _lastScrapedAt: Date | null = null;
   private _scrapeStartedAt: Date | null = null;
   private _scrapeCooldownUntil: Date | null = null;
+  private _scrapeClaimId: string | null = null;
   private _createdAt!: Date;
 
   constructor(name?: string, id?: string, createdAt?: Date) {
@@ -85,6 +86,17 @@ export class Subreddit {
     } else {
       this._scrapeCooldownUntil = null;
     }
+  }
+
+  get scrapeClaimId(): string | null {
+    return this._scrapeClaimId;
+  }
+
+  set scrapeClaimId(value: string | null) {
+    if (value !== null && (typeof value !== 'string' || !value.trim())) {
+      throw new Error('scrapeClaimId must be a non-empty string or null');
+    }
+    this._scrapeClaimId = value === null ? null : value.trim();
   }
 
   get createdAt(): Date {

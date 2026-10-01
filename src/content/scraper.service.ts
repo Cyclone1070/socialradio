@@ -15,13 +15,20 @@ import {
 } from '../infrastructure/database/schemas/content.schema';
 import { RedditScraperService } from './reddit-scraper.service';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
+import { isUniqueViolation } from '../infrastructure/database/errors';
+import { ClaimStore, ScrapeLease } from './scrape-lease';
+
+type FetchedPage = Awaited<ReturnType<RedditScraperService['fetchTopPosts']>>;
+type FetchedPost = FetchedPage['posts'][number];
+type FetchedComment = Awaited<
+  ReturnType<RedditScraperService['fetchPostComments']>
+>[number];
 
 export interface ScrapeSubredditResult {
   scrapedPostsCount: number;
 }
 
-// TTL for an in-flight scrape claim: claims older than this are abandoned
-const CLAIM_TTL_MS = 30 * 60 * 1000;
+export { CLAIM_LEASE_MS, CLAIM_TICK_MS, RUN_CAP_MS } from './scrape-lease';
 
 // Cooldown applied after a scrape that yielded 0 new posts
 const SCRAPE_COOLDOWN_MS = 2 * 60 * 60 * 1000;
@@ -53,8 +60,6 @@ export class ScraperService {
     const scrapeId = randomUUID();
     const startMs = Date.now();
 
-    // Claim the subreddit to dedupe concurrent scrapes (multi-instance safe).
-    // Stale claims older than 30min are considered abandoned (TTL reclaim).
     let subreddit = await this.subredditRepo.findOne({ name: subredditName });
     const blocked = this.isScrapeBlocked(subreddit, force);
     if (blocked) {
@@ -70,10 +75,25 @@ export class ScraperService {
       subreddit.name = subredditName;
       await this.em.persist(subreddit).flush();
     }
-    subreddit.scrapeStartedAt = new Date();
-    await this.em.flush();
-
-    let deleted = false;
+    // Claim it in one statement: whoever's UPDATE matches a row owns the run, so
+    // two runs cannot both start. A claim is free, or stale by more than the lease
+    // window - which is how a run that died without releasing gets taken over.
+    const lease = await ScrapeLease.take(this.claimStore(), subreddit.id);
+    if (!lease) {
+      this.logger.warn(
+        { scrapeId, sub: subredditName },
+        'scrape skipped: another run holds the claim',
+      );
+      return { scrapedPostsCount: 0 };
+    }
+    lease.start((reason) => {
+      this.logger.warn(
+        { scrapeId, sub: subredditName, stopReason: reason },
+        reason === 'time-cap'
+          ? 'scrape reached its time cap - stopping after the current post'
+          : 'claim taken by another run - stopping',
+      );
+    });
 
     try {
       let savedCount = 0;
@@ -107,7 +127,6 @@ export class ScraperService {
         pageCount++;
         const { posts: rawPosts, isInvalid, after } = page;
         if (isInvalid) {
-          deleted = true;
           stopReason = 'is-invalid';
           this.logger.warn(
             { scrapeId, sub: subredditName, stopReason },
@@ -129,6 +148,10 @@ export class ScraperService {
         );
 
         for (const rawPost of rawPosts) {
+          if (lease.shouldStop) {
+            stopReason = lease.stopReason ?? 'claim-lost';
+            break;
+          }
           if (savedCount >= 20) {
             stopReason = 'saved-20';
             break;
@@ -184,55 +207,12 @@ export class ScraperService {
             continue;
           }
 
-          const post = new Post(
+          const stored = await this.storePostWithComments(
             subreddit.id,
-            rawPost.id,
-            rawPost.title,
-            rawPost.selftext || '',
-            rawPost.score,
-            new Date(rawPost.created_utc * 1000),
+            rawPost,
+            rawComments,
           );
-          this.em.persist(post);
-          // flush so the generated post id is available for its comments
-          await this.em.flush();
-
-          const comments = rawComments.map((rawComment) => {
-            const isOp = rawComment.author === rawPost.author;
-            const parentIdStr = String(rawComment.parent_id || '');
-            const parentRedditId =
-              parentIdStr &&
-              parentIdStr !== rawPost.id &&
-              !parentIdStr.startsWith('t3_')
-                ? parentIdStr.replace(/^t1_/, '')
-                : null;
-
-            return new Comment(
-              post.id,
-              rawComment.id,
-              rawComment.body || '',
-              rawComment.score || 0,
-              parentRedditId,
-              isOp,
-              new Date((rawComment.created_utc || 0) * 1000),
-            );
-          });
-
-          // A post is re-fetched whenever an earlier run died before finishing,
-          // and two scrapes can overlap on the same subreddit, so this write has
-          // to be idempotent rather than merely new-row-shaped: a plain insert
-          // trips the unique index on comment.reddit_id and takes the whole
-          // scrape, and the request that triggered it, down with it.
-          //
-          // On conflict only the fields a re-scrape legitimately changes are
-          // refreshed. post_id is deliberately absent: a comment id is unique
-          // site-wide, so merging it would silently move a comment onto whichever
-          // post reported that id last.
-          await this.em.upsertMany(Comment, comments, {
-            onConflictFields: ['redditId'],
-            onConflictAction: 'merge',
-            onConflictMergeFields: ['score', 'body'],
-          });
-
+          if (!stored) continue;
           savedCount++;
         }
 
@@ -275,11 +255,125 @@ export class ScraperService {
 
       return { scrapedPostsCount: savedCount };
     } finally {
-      if (!deleted) {
-        subreddit.scrapeStartedAt = null;
-        await this.em.flush();
-      }
+      // Ownership-scoped: if another run has already taken over, this clears
+      // nothing and that run keeps its claim. A deleted row makes it a no-op.
+      await lease.stop();
     }
+  }
+
+  /**
+   * A post and its comments are one unit. A post stored without them is worthless
+   * material, and since every later scrape skips a post it already has, it would
+   * stay empty forever - so both rows commit together or neither does.
+   *
+   * Returns false when another run stored the same post first: losing that race
+   * should cost one post, not the whole walk.
+   */
+  private async storePostWithComments(
+    subredditId: string,
+    rawPost: FetchedPost,
+    rawComments: FetchedComment[],
+  ): Promise<boolean> {
+    try {
+      await this.em.transactional(async (em) => {
+        const post = new Post(
+          subredditId,
+          rawPost.id,
+          rawPost.title,
+          rawPost.selftext || '',
+          rawPost.score,
+          new Date(rawPost.created_utc * 1000),
+        );
+        em.persist(post);
+        // Flushed inside the transaction: the comments need the generated id,
+        // and nothing is visible to anyone else until the unit commits.
+        await em.flush();
+
+        const comments = rawComments.map((rawComment) => {
+          const isOp = rawComment.author === rawPost.author;
+          const parentIdStr = String(rawComment.parent_id || '');
+          const parentRedditId =
+            parentIdStr &&
+            parentIdStr !== rawPost.id &&
+            !parentIdStr.startsWith('t3_')
+              ? parentIdStr.replace(/^t1_/, '')
+              : null;
+
+          return new Comment(
+            post.id,
+            rawComment.id,
+            rawComment.body || '',
+            rawComment.score || 0,
+            parentRedditId,
+            isOp,
+            new Date((rawComment.created_utc || 0) * 1000),
+          );
+        });
+
+        // Idempotent rather than merely new-row-shaped: a re-fetch after a dead
+        // browser, or two runs overlapping, would otherwise trip the unique index
+        // on comment.reddit_id and take the whole walk down with it. On conflict
+        // only the fields a re-scrape legitimately changes are refreshed -
+        // post_id is deliberately absent, since a comment id is unique site-wide
+        // and merging it would move a comment onto whichever post reported it last.
+        await em.upsertMany(Comment, comments, {
+          onConflictFields: ['redditId'],
+          onConflictAction: 'merge',
+          onConflictMergeFields: ['score', 'body'],
+        });
+      });
+      return true;
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        this.logger.debug(
+          { subredditId, postId: rawPost.id },
+          'another run stored this post first - skipping it',
+        );
+        return false;
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * The lease's three statements, expressed as repo calls so the lease itself knows
+   * nothing about the ORM. A renewal failure is logged here, where the logger lives,
+   * and then rethrown: the lease decides what a missed beat means.
+   */
+  private claimStore(): ClaimStore {
+    return {
+      take: (subredditId, token, staleBefore) =>
+        this.subredditRepo.nativeUpdate(
+          {
+            id: subredditId,
+            $or: [
+              { scrapeStartedAt: null },
+              { scrapeStartedAt: { $lt: staleBefore } },
+            ],
+          },
+          { scrapeStartedAt: new Date(), scrapeClaimId: token },
+        ),
+      renew: async (subredditId, token, at) => {
+        try {
+          return await this.subredditRepo.nativeUpdate(
+            { id: subredditId, scrapeClaimId: token },
+            { scrapeStartedAt: at },
+          );
+        } catch (err: unknown) {
+          this.logger.warn(
+            { err },
+            'claim renewal failed - retrying on the next beat',
+          );
+          throw err;
+        }
+      },
+      release: async (subredditId, token) => {
+        await this.subredditRepo.nativeUpdate(
+          { id: subredditId, scrapeClaimId: token },
+          { scrapeStartedAt: null, scrapeClaimId: null },
+        );
+      },
+    };
   }
 
   private isScrapeBlocked(
@@ -287,12 +381,6 @@ export class ScraperService {
     force: boolean,
   ): string | null {
     if (force || !subreddit) return null;
-    if (
-      subreddit.scrapeStartedAt &&
-      Date.now() - subreddit.scrapeStartedAt.getTime() < CLAIM_TTL_MS
-    ) {
-      return 'in-flight claim';
-    }
     if (
       subreddit.scrapeCooldownUntil &&
       subreddit.scrapeCooldownUntil.getTime() > Date.now()
