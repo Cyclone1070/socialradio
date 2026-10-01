@@ -39,6 +39,7 @@ describe('ScraperService', () => {
   const mockEntityManager = {
     persist: jest.fn().mockReturnThis(),
     flush: jest.fn(),
+    upsert: jest.fn().mockResolvedValue(undefined),
     upsertMany: jest.fn().mockResolvedValue([]),
     transactional: jest.fn(),
   };
@@ -388,6 +389,44 @@ describe('ScraperService', () => {
       } finally {
         jest.useRealTimers();
       }
+    });
+
+    it('adopts the row another run created for a brand-new subreddit', async () => {
+      // Nobody has this subreddit yet, and by the time we look again another run's
+      // row is there - which is exactly what losing the insert race leaves behind.
+      const winner = Object.assign(new Subreddit(), {
+        id: 'sub-winner',
+        name: 'brandnew',
+        lastScrapedAt: null,
+      });
+      jest.spyOn(service, 'cleanupOldData').mockResolvedValue(undefined);
+      mockSubredditRepo.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(winner);
+      mockRedditScraper.fetchTopPosts.mockResolvedValue({
+        posts: [],
+        after: null,
+        isInvalid: false,
+      });
+
+      const result = await service.scrapeSubreddit('BrandNew');
+
+      expect(result).toEqual({ scrapedPostsCount: 0 });
+      // Looked up by the name the row is actually stored under: the setter lowercases
+      // and trims, so searching for the raw input would miss an existing row and try
+      // to create it a second time.
+      expect(mockSubredditRepo.findOne).toHaveBeenNthCalledWith(1, {
+        name: 'brandnew',
+      });
+      // The write tolerates losing the race instead of throwing, so the run carries on.
+      expect(mockEntityManager.upsert).toHaveBeenCalledWith(
+        Subreddit,
+        { name: 'brandnew' },
+        { onConflictFields: ['name'], onConflictAction: 'ignore' },
+      );
+      // The claim goes to the row that exists, not to one this run invented.
+      const [criteria] = mockSubredditRepo.nativeUpdate.mock.calls[0];
+      expect(criteria).toMatchObject({ id: 'sub-winner' });
     });
 
     it("stops the walk when a page repeats the previous page's first post id (guard)", async () => {
@@ -849,8 +888,11 @@ describe('ScraperService', () => {
       expect(result).toEqual({ scrapedPostsCount: 1 });
       expect(cleanupSpy).toHaveBeenCalled();
       expect(mockRedditScraper.exists).not.toHaveBeenCalled();
+      // Searched by the name the row is stored under, not the raw input: the setter
+      // trims and lowercases, so looking up 'AskReddit' would miss the row written for
+      // 'askreddit' and then collide with it on insert.
       expect(mockSubredditRepo.findOne).toHaveBeenCalledWith({
-        name: subName,
+        name: subEntity.name,
       });
 
       expect(mockRedditScraper.fetchTopPosts).toHaveBeenCalledWith(subName, {

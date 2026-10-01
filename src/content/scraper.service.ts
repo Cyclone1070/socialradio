@@ -60,7 +60,7 @@ export class ScraperService {
     const scrapeId = randomUUID();
     const startMs = Date.now();
 
-    let subreddit = await this.subredditRepo.findOne({ name: subredditName });
+    const subreddit = await this.findOrCreateSubreddit(subredditName);
     const blocked = this.isScrapeBlocked(subreddit, force);
     if (blocked) {
       this.logger.warn(
@@ -70,11 +70,6 @@ export class ScraperService {
       return { scrapedPostsCount: 0 };
     }
     this.logger.info({ scrapeId, sub: subredditName }, 'scrape starting');
-    if (!subreddit) {
-      subreddit = new Subreddit();
-      subreddit.name = subredditName;
-      await this.em.persist(subreddit).flush();
-    }
     // Claim it in one statement: whoever's UPDATE matches a row owns the run, so
     // two runs cannot both start. A claim is free, or stale by more than the lease
     // window - which is how a run that died without releasing gets taken over.
@@ -333,6 +328,38 @@ export class ScraperService {
       }
       throw err;
     }
+  }
+
+  /**
+   * The row may not exist yet, and two runs can reach that moment together. So the
+   * write has to tolerate losing it: whoever arrives first creates the row, and the
+   * loser reads theirs back and carries on. What decides who actually walks is the
+   * claim taken next, not who won the insert.
+   *
+   * Lookups use the name the row is stored under - the setter trims and lowercases -
+   * because searching for the raw input would miss an existing row and then collide
+   * with it on insert.
+   */
+  private async findOrCreateSubreddit(name: string): Promise<Subreddit> {
+    const seed = new Subreddit();
+    seed.name = name;
+    const criteria = { name: seed.name };
+
+    const existing = await this.subredditRepo.findOne(criteria);
+    if (existing) return existing;
+
+    await this.em.upsert(Subreddit, criteria, {
+      onConflictFields: ['name'],
+      onConflictAction: 'ignore',
+    });
+
+    const row = await this.subredditRepo.findOne(criteria);
+    if (!row) {
+      throw new Error(
+        `subreddit ${seed.name} vanished between writing and reading it back`,
+      );
+    }
+    return row;
   }
 
   /**
