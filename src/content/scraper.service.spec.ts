@@ -11,6 +11,8 @@ import {
 import { RedditScraperService } from './reddit-scraper.service';
 import { Subreddit } from './entities/subreddit.entity';
 import { Post } from './entities/post.entity';
+import { Comment } from './entities/comment.entity';
+import { RedditFetcherContractError } from './dto/reddit-fetcher.dto';
 import {
   SubredditSchema,
   PostSchema,
@@ -36,11 +38,19 @@ describe('ScraperService', () => {
 
   const mockCommentRepo = {};
 
+  type CommentUpsertOptions = {
+    onConflictFields: string[];
+    onConflictAction: string;
+    onConflictMergeFields: string[];
+  };
+
   const mockEntityManager = {
     persist: jest.fn().mockReturnThis(),
     flush: jest.fn(),
     upsert: jest.fn().mockResolvedValue(undefined),
-    upsertMany: jest.fn().mockResolvedValue([]),
+    upsertMany: jest
+      .fn<Promise<Comment[]>, [unknown, Comment[], CommentUpsertOptions]>()
+      .mockResolvedValue([]),
     transactional: jest.fn(),
   };
   mockEntityManager.transactional.mockImplementation(
@@ -944,6 +954,82 @@ describe('ScraperService', () => {
         id: 'banned-uuid',
       });
       expect(mockRedditScraper.exists).not.toHaveBeenCalled();
+    });
+
+    it('treats a contract break like any other failed page: nothing saved, row kept', async () => {
+      jest.spyOn(service, 'cleanupOldData').mockResolvedValue(undefined);
+      mockSubredditRepo.findOne.mockResolvedValue(
+        Object.assign(new Subreddit(), {
+          id: 'sub-uuid',
+          name: 'askreddit',
+          lastScrapedAt: null,
+        }),
+      );
+      mockRedditScraper.fetchTopPosts.mockRejectedValue(
+        new RedditFetcherContractError(
+          '/top-posts/askreddit',
+          'posts.0.title: Invalid input: expected string, received undefined',
+        ),
+      );
+
+      await service.scrapeSubreddit('askreddit', true);
+
+      // A field renamed upstream must never read as "this subreddit is gone": that
+      // deletes the row, so a fetcher change would quietly evict real subreddits.
+      expect(mockEntityManager.persist).not.toHaveBeenCalledWith(
+        expect.any(Post),
+      );
+      expect(mockSubredditRepo.nativeDelete).not.toHaveBeenCalled();
+    });
+
+    it('merges a re-scrape onto a comment’s score and body only', async () => {
+      jest.spyOn(service, 'cleanupOldData').mockResolvedValue(undefined);
+      mockSubredditRepo.findOne.mockResolvedValue(
+        Object.assign(new Subreddit(), {
+          id: 'sub-uuid',
+          name: 'askreddit',
+          lastScrapedAt: null,
+        }),
+      );
+      mockPostRepo.findOne.mockResolvedValue(null);
+      mockRedditScraper.fetchTopPosts.mockResolvedValue({
+        posts: [
+          {
+            id: 'p1',
+            title: 'T',
+            selftext: '',
+            author: 'op',
+            score: 5,
+            created_utc: 1_790_000_000,
+          },
+        ],
+        after: null,
+        isInvalid: false,
+      });
+      mockRedditScraper.fetchPostComments.mockResolvedValue([
+        {
+          id: 'c1',
+          body: 'word '.repeat(2600).trim(),
+          author: 'someone',
+          score: 7,
+          parent_id: 't3_p1',
+          created_utc: 1_790_000_000,
+        },
+      ]);
+
+      await service.scrapeSubreddit('askreddit', true);
+
+      expect(mockEntityManager.upsertMany).toHaveBeenCalledTimes(1);
+      const [entity, rows, options] =
+        mockEntityManager.upsertMany.mock.calls[0];
+      expect(entity).toBe(Comment);
+      expect(rows).toHaveLength(1);
+      expect(options.onConflictFields).toEqual(['redditId']);
+      expect(options.onConflictAction).toBe('merge');
+      expect(options.onConflictMergeFields).toEqual(['score', 'body']);
+      // A comment id is unique site-wide, so merging post_id would move a stored
+      // comment onto whichever post reported that id last.
+      expect(options.onConflictMergeFields).not.toContain('postId');
     });
 
     it('dedupes a scrape whose claim is still live in the database', async () => {

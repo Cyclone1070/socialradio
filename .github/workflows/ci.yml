@@ -25,6 +25,13 @@ jobs:
       - name: Tier 1 mock payloads typecheck (must match the fetcher's types)
         run: npx tsc --noEmit -p deployment/mocks/tsconfig.json
 
+      - name: voice-service unit tests
+        working-directory: voice-service
+        run: |
+          npm ci || npm ci
+          npx tsc --noEmit
+          npx jest
+
       - name: reddit-fetcher unit tests
         working-directory: reddit-fetcher
         run: |
@@ -35,8 +42,20 @@ jobs:
   # Tier 1 e2e: the whole suite against mocks. No provider keys, no reddit, and
   # the browserless image is never pulled. The one external call left is the free
   # TTS library, which is why it lives in this tier rather than the paid one.
-  # Tier 2 (contract probes against a real provider) is deliberately absent: it
-  # is the only tier that spends money and talks to the internet.
+  #
+  # Decided, and not to be re-litigated:
+  # - These eight suites stay black box, driving the station the way a client does.
+  #   They are deliberately not ported into the in-process spec style, because that
+  #   is the only check here that does not share the code's assumptions.
+  # - The paid tier below runs on pull requests, nowhere else. No nightly and no
+  #   pre-release schedule: integration tests do not detect provider drift. Drift is
+  #   caught by provider deprecation announcements, by production failing early and
+  #   by production logs - none of which is a test, and none of which exists yet.
+  # - The voice boundary is a domain contract with a DI provider and the speech
+  #   library imported in exactly one file, so swapping engines means a second
+  #   provider rather than a change to callers. The unit gate replaces it to keep
+  #   tests offline; both docker runs use the real library, and suite 07 holds its
+  #   output to the duration the station recorded for it.
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -52,3 +71,33 @@ jobs:
           # The !override tag in docker-compose.test.yml needs compose v2.24+.
           docker compose version
           sh run-docker-test.sh all
+
+  # Tier 2: the app's own clients held against real providers, on pull requests
+  # only. Each probe skips, loudly and with exit 0, whatever it cannot reach -
+  # a fork PR has no secrets, reddit blocks datacenter IPs, a free pool rate-limits
+  # - because none of those is a contract break. A wrong answer exits 1.
+  contracts:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install (the probes drive the app's own services)
+        run: |
+          npm ci || npm ci
+
+      - name: Tier 2 contract probes (real providers where reachable)
+        working-directory: deployment/tests
+        env:
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          REDDIT_FETCHER_URL: ${{ secrets.REDDIT_FETCHER_URL }}
+          VOICE_SERVICE_URL: ${{ secrets.VOICE_SERVICE_URL }}
+        run: sh run-contract-tests.sh

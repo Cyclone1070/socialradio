@@ -1,0 +1,22 @@
+{
+  "note": "Recorded from the real speech engine by deployment/tests/tools/record-voice-fixtures.ts. seconds is measured with ffprobe, never derived by the decoder under test.",
+  "turns": [
+    {
+      "speaker": "Dave",
+      "voice": "en-US-GuyNeural",
+      "text": "Welcome back to the show.",
+      "file": "turn-en-US-GuyNeural.mp3",
+      "bytes": 14256,
+      "seconds": 2.376
+    },
+    {
+      "speaker": "Sarah",
+      "voice": "en-US-JennyNeural",
+      "text": "Glad to be here tonight.",
+      "file": "turn-en-US-JennyNeural.mp3",
+      "bytes": 13536,
+      "seconds": 2.256
+    }
+  ],
+  "totalSeconds": 4.632
+}

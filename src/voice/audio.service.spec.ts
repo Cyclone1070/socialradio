@@ -1,129 +1,134 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { PinoLogger } from 'nestjs-pino';
+import { ConfigService } from '@nestjs/config';
 import { AudioService } from './audio.service';
 import { StorageService } from '../infrastructure/storage/storage.service';
 
+/**
+ * The app no longer knows how speech is made. It sends the script to the voice
+ * service and stores what comes back, along with the length the service measured
+ * for that audio. Voices, concatenation and formats live on the other side of this
+ * boundary, which is what makes the engine swappable.
+ */
 describe('AudioService', () => {
   let service: AudioService;
+  let fetchMock: jest.SpyInstance;
+
+  const audio = Buffer.from([0xff, 0xf3, 0x64, 0xc4, 0x00, 0x01]);
 
   const mockStorageService = {
-    write: jest.fn().mockResolvedValue(undefined),
+    write: jest.fn<Promise<void>, [{ key: string; content: Buffer }]>(),
+  };
+
+  const mockConfigService = {
+    get: jest.fn((key: string) => {
+      if (key === 'VOICE_SERVICE_URL') return 'http://voice:3002';
+      return null;
+    }),
+  };
+
+  const script = {
+    postId: 'post-123',
+    turns: [
+      { speaker: 'Dave', text: 'Welcome to the show.' },
+      { speaker: 'Sarah', text: 'Glad to be here.' },
+    ],
+  };
+
+  const respondWith = (init: {
+    ok: boolean;
+    status?: number;
+    duration?: string | null;
+    body?: Buffer;
+  }): void => {
+    fetchMock.mockResolvedValue({
+      ok: init.ok,
+      status: init.status ?? 200,
+      headers: new Headers(
+        init.duration === undefined || init.duration === null
+          ? {}
+          : { 'x-duration-seconds': init.duration },
+      ),
+      arrayBuffer: () =>
+        Promise.resolve(new Uint8Array(init.body ?? audio).buffer),
+    });
   };
 
   beforeEach(async () => {
+    fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+    } as Response);
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AudioService,
         { provide: StorageService, useValue: mockStorageService },
+        { provide: ConfigService, useValue: mockConfigService },
       ],
     }).compile();
 
     service = module.get<AudioService>(AudioService);
     jest.clearAllMocks();
+    mockStorageService.write.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    fetchMock.mockRestore();
   });
 
   it('should be defined', () => {
     expect(service).toBeDefined();
   });
 
-  it('maps each show persona to its dedicated Neural voice model', () => {
-    expect(service.getVoiceForSpeaker('Dave')).toBe('en-US-GuyNeural');
-    expect(service.getVoiceForSpeaker('Sarah')).toBe('en-US-JennyNeural');
-    expect(service.getVoiceForSpeaker('Caller')).toBe('en-AU-NatashaNeural');
-    expect(service.getVoiceForSpeaker('UnknownSpeaker')).toBe(
-      'en-US-GuyNeural',
-    );
-  });
+  it('sends the script to the voice service and stores the audio it answers with', async () => {
+    respondWith({ ok: true, duration: '4.632' });
 
-  it('cleans bracketed and parenthetical stage directions from spoken text', () => {
-    const raw = '[laughs] That was wild (pauses) mate!';
-    expect(service.cleanSpokenText(raw)).toBe('That was wild mate!');
-  });
+    const result = await service.synthesizeScript(script, 'audio/talk-x.mp3');
 
-  it('synthesizes multi-speaker script turn-by-turn with persona voices and concatenates audio', async () => {
-    const fakeChunk1 = Buffer.from('chunk-dave-audio');
-    const fakeChunk2 = Buffer.from('chunk-caller-audio');
-    const fakeChunk3 = Buffer.from('chunk-sarah-audio');
-
-    const synthSpy = jest
-      .spyOn(service, 'synthesizeTurn')
-      .mockImplementation((_text, voice) => {
-        if (voice === 'en-US-GuyNeural') return Promise.resolve(fakeChunk1);
-        if (voice === 'en-AU-NatashaNeural') return Promise.resolve(fakeChunk2);
-        if (voice === 'en-US-JennyNeural') return Promise.resolve(fakeChunk3);
-        return Promise.resolve(fakeChunk1);
-      });
-
-    const script = {
-      postId: 'post-123',
-      turns: [
-        { speaker: 'Dave', text: '[laughs] Welcome Dave here.' },
-        { speaker: 'Caller', text: 'Hey [pauses] there.' },
-        { speaker: 'Sarah', text: 'Totally agree.' },
-      ],
-    };
-
-    const result = await service.synthesizeScript(
-      script,
-      'talk/segments/seg1.mp3',
-    );
-
-    // Verify 3 distinct TTS calls with correct persona voices
-    expect(synthSpy).toHaveBeenCalledTimes(3);
-    expect(synthSpy).toHaveBeenNthCalledWith(
-      1,
-      'Welcome Dave here.',
-      'en-US-GuyNeural',
-    );
-    expect(synthSpy).toHaveBeenNthCalledWith(
-      2,
-      'Hey there.',
-      'en-AU-NatashaNeural',
-    );
-    expect(synthSpy).toHaveBeenNthCalledWith(
-      3,
-      'Totally agree.',
-      'en-US-JennyNeural',
-    );
-
-    // Verify concatenated buffer was written to storage
-    const expectedCombined = Buffer.concat([
-      fakeChunk1,
-      fakeChunk2,
-      fakeChunk3,
-    ]);
-
-    expect(mockStorageService.write).toHaveBeenCalledWith({
-      key: 'talk/segments/seg1.mp3',
-      content: expectedCombined,
+    expect(fetchMock).toHaveBeenCalledWith('http://voice:3002/synthesize', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(script),
     });
-
+    expect(mockStorageService.write).toHaveBeenCalledTimes(1);
+    const [written] = mockStorageService.write.mock.calls[0];
+    expect(written.key).toBe('audio/talk-x.mp3');
+    expect(written.content).toEqual(audio);
     expect(result).toEqual({
-      filePath: 'talk/segments/seg1.mp3',
-      durationSeconds: expectedCombined.length / 6000,
+      filePath: 'audio/talk-x.mp3',
+      // The service measured this from the audio it produced; the app only records
+      // it, so the queue advances by the truth rather than by an estimate.
+      durationSeconds: 4.632,
       postIds: ['post-123'],
     });
   });
 
-  it('logs ONE TTS line with sizes + latency at info', async () => {
-    jest
-      .spyOn(service, 'synthesizeTurn')
-      .mockResolvedValue(Buffer.from('fake mp3 audio content'));
+  it('fails loudly when the voice service answers with an error', async () => {
+    respondWith({ ok: false, status: 502 });
 
-    const infoSpy = jest
-      .spyOn(PinoLogger.prototype, 'info')
-      .mockImplementation(() => {});
+    await expect(
+      service.synthesizeScript(script, 'audio/talk-x.mp3'),
+    ).rejects.toThrow(/502/);
+    expect(mockStorageService.write).not.toHaveBeenCalled();
+  });
 
-    await service.generateSpeech('Hello world', 'talk/test.mp3');
+  it('fails loudly rather than storing audio with an unusable length', async () => {
+    respondWith({ ok: true, duration: 'not-a-number' });
 
-    expect(infoSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        textChars: 'Hello world'.length,
-        bytes: Buffer.from('fake mp3 audio content').length,
-        outKey: 'talk/test.mp3',
-        ms: expect.any(Number) as number,
-      }),
-      expect.stringContaining('TTS'),
-    );
+    await expect(
+      service.synthesizeScript(script, 'audio/talk-x.mp3'),
+    ).rejects.toThrow(/duration/i);
+    expect(mockStorageService.write).not.toHaveBeenCalled();
+  });
+
+  it('refuses to guess an address when the voice service is not configured', async () => {
+    mockConfigService.get.mockReturnValueOnce(null);
+
+    await expect(
+      service.synthesizeScript(script, 'audio/talk-x.mp3'),
+    ).rejects.toThrow(/VOICE_SERVICE_URL/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

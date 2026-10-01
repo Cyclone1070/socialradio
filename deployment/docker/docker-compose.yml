@@ -69,6 +69,7 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/socialradio
       REDDIT_FETCHER_URL: http://fetcher:3001
+      VOICE_SERVICE_URL: http://voice-service:3002
       STORAGE_ENDPOINT: http://seaweedfs:9000
       STORAGE_BUCKET: socialradio-media
       STORAGE_ACCESS_KEY: minioadmin
@@ -102,6 +103,17 @@ services:
   # Dedicated Reddit scraping container: owns browserless config, per-subreddit
   # contexts, and the global 1–2s pacing queue. Single container by design —
   # it IS the pacing point (scale-out = more (browserless + fetcher) pairs).
+  # The speech service: owns the TTS engine, voice casting, turn concatenation and
+  # the measured length of the audio it produced. Swapping engines means replacing
+  # this container, not touching the app.
+  voice-service:
+    build:
+      context: ../../voice-service
+      dockerfile: Dockerfile
+    ports:
+      - "3002:3002"
+    environment:
+      LOG_LEVEL: info
   fetcher:
     build:
       context: ../../reddit-fetcher

@@ -1,6 +1,7 @@
 import { RedditScraperService } from './reddit-scraper.service';
 import { ConfigService } from '@nestjs/config';
 import { PinoLogger } from 'nestjs-pino';
+import { RedditFetcherContractError } from './dto/reddit-fetcher.dto';
 
 describe('RedditScraperService (HTTP client)', () => {
   let service: RedditScraperService;
@@ -112,6 +113,47 @@ describe('RedditScraperService (HTTP client)', () => {
           status: 502,
         }),
         expect.stringContaining('non-ok'),
+      );
+    });
+  });
+
+  describe('payload validation', () => {
+    it('rejects a top-posts payload whose required field was renamed', async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            posts: [
+              {
+                id: 'abc123',
+                titleText: 'renamed upstream',
+                author: 'someone',
+                score: 5,
+                created_utc: 1_790_000_000,
+              },
+            ],
+            after: null,
+            isInvalid: false,
+          }),
+      });
+
+      await expect(service.fetchTopPosts('askreddit')).rejects.toThrow(
+        RedditFetcherContractError,
+      );
+    });
+
+    it('does not report a malformed exists payload as "subreddit does not exist"', async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ valid: 'yes' }),
+      });
+
+      // Callers delete rows when this answers "gone", so a garbled payload has to
+      // throw rather than quietly answer false.
+      await expect(service.exists('askreddit')).rejects.toThrow(
+        RedditFetcherContractError,
       );
     });
   });

@@ -78,17 +78,57 @@ if [ -z "$TALK_AUDIO_URL" ] || [ "$TALK_AUDIO_URL" = "null" ]; then
   fail "TalkSegment audio_url is empty"
 fi
 
+# The stored talk track has to be real audio, and the duration the station recorded
+# for it has to match. That number drives the playhead and the HLS timeline, so a
+# wrong one is a stream claiming a length its audio does not have. The unit gate
+# cannot check this: it replaces the speech library, so only this tier ever decodes
+# what the station really produced.
+TALK_FILE="/tmp/talk-segment.mp3"
+if ! curl -s -f "$STORAGE_URL/$BUCKET/$TALK_AUDIO_URL" -o "$TALK_FILE"; then
+  fail "talk audio $TALK_AUDIO_URL could not be downloaded from storage"
+fi
+
+TALK_FORMAT=$(file "$TALK_FILE")
+case "$TALK_FORMAT" in
+  *MPEG* | *Audio*) ;;
+  *) fail "stored talk audio is not audio: $TALK_FORMAT" ;;
+esac
+echo "  ✓ talk audio in storage is real audio: $TALK_FORMAT"
+
+TALK_ACTUAL=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$TALK_FILE" 2>/dev/null || echo "")
+if [ -z "$TALK_ACTUAL" ]; then
+  fail "could not measure the stored talk audio with ffprobe"
+fi
+
+if ! awk -v recorded="$TALK_DURATION" -v actual="$TALK_ACTUAL" 'BEGIN {
+  diff = recorded - actual; if (diff < 0) diff = -diff;
+  # The station derives the duration from the byte count at the format it requests,
+  # so this allows for container overhead; it still catches a wrong constant, a
+  # truncated track, or audio replaced by silence.
+  tolerance = actual * 0.10 + 2;
+  exit (diff <= tolerance) ? 0 : 1
+}'; then
+  fail "recorded duration ${TALK_DURATION}s does not match the audio's ${TALK_ACTUAL}s"
+fi
+echo "  ✓ talk duration matches the audio: recorded ${TALK_DURATION}s, decoded ${TALK_ACTUAL}s"
+
 if ! echo "$TALK_SCRIPT" | jq -e 'type == "array" and length >= 3' >/dev/null 2>&1; then
   fail "TalkSegment script is not a valid multi-turn array: $TALK_SCRIPT"
 fi
 echo "  ✓ TalkSegment script contains multi-turn dialogue"
 
-# The script must be the mock's dialogue. A fabricated fallback has exactly five
-# turns too, so a turn count alone cannot tell the two apart.
-if ! echo "$TALK_SCRIPT" | grep -q "landlord just stopped replying"; then
-  fail "talk script is not the mock's dialogue - something invented it: $TALK_SCRIPT"
+# The script must be the recorded dialogue, not something invented. A fabricated
+# fallback has several turns too, so a turn count alone cannot tell the two apart.
+# The line to look for comes from the fixture itself, so re-recording the fixture
+# moves this assertion with it instead of leaving a stale phrase behind.
+LLM_FIXTURE_LINE=$(cat /scripts/fixtures/llm-dialogue-fingerprint.txt 2>/dev/null || echo "")
+if [ -z "$LLM_FIXTURE_LINE" ]; then
+  fail "llm-dialogue-fingerprint.txt is empty - the recorded dialogue cannot be identified"
 fi
-echo "  ✓ talk script came from the LLM mock, not from invented content"
+if ! echo "$TALK_SCRIPT" | grep -qF "$LLM_FIXTURE_LINE"; then
+  fail "talk script is not the recorded dialogue - something invented it: $TALK_SCRIPT"
+fi
+echo "  ✓ talk script came from the recorded LLM fixture, not from invented content"
 
 # The aired post must be recorded through the app's own code path. The suites used
 # to insert these rows by hand, which is how a broken insert stayed hidden.

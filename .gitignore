@@ -65,4 +65,8 @@ walkthrough.md
 # reddit-fetcher container
 /reddit-fetcher/dist
 /reddit-fetcher/node_modules
+
+# voice-service container
+/voice-service/dist
+/voice-service/node_modules
 .eslintcache

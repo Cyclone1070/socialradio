@@ -5,19 +5,13 @@
  * verified is exactly what the app assumes. No database, no channel, no
  * pipeline, and only toy prompts — never prod-like data.
  */
-import * as fs from 'fs';
-import * as path from 'path';
-import * as dotenv from 'dotenv';
 import { ConfigService } from '@nestjs/config';
 import { LlmService } from '../../../src/script/llm.service';
 import { ScriptService } from '../../../src/script/script.service';
 
-const envPath = path.join(__dirname, '..', '..', '..', '.env');
-if (fs.existsSync(envPath)) {
-  for (const [key, value] of Object.entries(dotenv.parse(fs.readFileSync(envPath)))) {
-    if (!process.env[key]) process.env[key] = value;
-  }
-}
+// Credentials arrive as environment variables: run-contract-tests.sh sources the
+// repo's .env, and CI passes them from its secrets. Reading .env here as well would
+// mean importing dotenv, which this package does not depend on.
 
 let failures = 0;
 let passes = 0;
@@ -35,6 +29,14 @@ const PROMPT =
 
 async function main(): Promise<void> {
   console.log(`=== Contract: script generation via LlmService (${process.env.LLM_MODEL}) ===`);
+
+  // No endpoint or key means there is no provider to hold to anything. That is a
+  // missing credential, not a broken contract, so it skips rather than fails -
+  // the same distinction the availability classifier below makes.
+  if (!process.env.LLM_BASE_URL || !process.env.LLM_API_KEY) {
+    skip('LLM_BASE_URL / LLM_API_KEY are not set - nothing to probe');
+    process.exit(0);
+  }
 
   let text = '';
   try {

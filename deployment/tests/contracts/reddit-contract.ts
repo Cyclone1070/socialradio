@@ -31,6 +31,18 @@ const skip = (reason: string): never => {
   process.exit(0);
 };
 
+// A wrong answer is a contract break and has to fail the run. Availability is
+// not: reddit blocks datacenter IPs and rate-limits, which is what skip() is for.
+let failures = 0;
+const check = (held: boolean, msg: string): void => {
+  if (held) {
+    process.stdout.write(`  OK   - ${msg}\n`);
+  } else {
+    failures++;
+    process.stdout.write(`  FAIL - ${msg}\n`);
+  }
+};
+
 const get = async (path: string): Promise<unknown> => {
   let res: Response;
   try {
@@ -57,8 +69,9 @@ const get = async (path: string): Promise<unknown> => {
     await get(`/exists/${IMPOSSIBLE}`),
     '/exists',
   );
-  process.stdout.write(
-    `  ${absent.valid ? 'FAIL' : '✓'} a name that cannot exist reports valid=${absent.valid}\n`,
+  check(
+    !absent.valid,
+    `a name that cannot exist reports valid=${absent.valid}`,
   );
 
   const page = parseFetcherPayload(
@@ -66,14 +79,15 @@ const get = async (path: string): Promise<unknown> => {
     await get(`/top-posts/${SUBREDDIT}?limit=5`),
     '/top-posts',
   );
-  process.stdout.write(
-    `  ${page.posts.length > 0 ? '✓' : 'FAIL'} r/${SUBREDDIT} returned ${page.posts.length} posts, isInvalid=${page.isInvalid}\n`,
+  check(
+    page.posts.length > 0,
+    `r/${SUBREDDIT} returned ${page.posts.length} posts, isInvalid=${page.isInvalid}`,
   );
 
   const first = page.posts[0];
   if (!first) {
     process.stdout.write('  SKIP: no post to fetch comments for\n');
-    process.exit(0);
+    process.exit(failures === 0 ? 0 : 1);
   }
 
   const { comments } = parseFetcherPayload(
@@ -86,13 +100,18 @@ const get = async (path: string): Promise<unknown> => {
     0,
   );
   const ids = new Set(comments.map((comment) => comment.id));
+  // Reaching this line means the backend's own schema accepted the payload: a
+  // mismatch would have thrown above and failed the run.
   process.stdout.write(
-    `  ✓ comments matched the schema: ${comments.length} comments, ${ids.size} distinct ids\n`,
+    `  .. measured, not asserted: comments matched the schema, ${comments.length} comments, ${ids.size} distinct ids\n`,
   );
   process.stdout.write(
     `  .. measured, not asserted: this thread is ${words} words (the scraper keeps a post at 2500+)\n`,
   );
-  process.exit(0);
+  process.stdout.write(
+    `\ncontract probes: ${failures === 0 ? 'all answered as required' : `${failures} wrong`}\n`,
+  );
+  process.exit(failures === 0 ? 0 : 1);
 })().catch((err: Error) => {
   process.stdout.write(`  FAIL: ${err.name}: ${err.message}\n`);
   process.exit(1);
