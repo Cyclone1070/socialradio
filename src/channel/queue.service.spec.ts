@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@mikro-orm/nestjs';
 import { EntityManager, MikroORM } from '@mikro-orm/postgresql';
-import { RequestContext } from '@mikro-orm/core';
+import { LockMode, RequestContext } from '@mikro-orm/core';
 import config from '../infrastructure/database/mikro-orm.config';
 import { QueueService } from './queue.service';
 import { Channel } from './entities/channel.entity';
@@ -47,6 +47,14 @@ describe('QueueService', () => {
     fork: mockFork,
     getReference: jest.fn((_cls, id: string) => ({ id }) as unknown as Channel),
     getConnection: jest.fn(() => ({ execute: mockExecute })),
+    // A transaction runs its callback inline, handing over this same mock as the
+    // transaction's entity manager - which is what the service must work through.
+    transactional: jest.fn(<T>(cb: (em: unknown) => Promise<T>): Promise<T> =>
+      cb(mockEntityManager),
+    ),
+    getRepository: jest.fn((cls: unknown) =>
+      cls === ChannelSchema ? mockChannelRepo : mockSegmentRepo,
+    ),
   };
   mockFork.mockReturnValue(mockEntityManager);
 
@@ -915,6 +923,60 @@ describe('QueueService', () => {
       } finally {
         jest.useRealTimers();
       }
+    });
+  });
+
+  describe('claiming work atomically', () => {
+    it('picks the cluster and marks its posts inside one transaction that locks the station', async () => {
+      setupChannelSubreddits([
+        { subredditId: 'sub-1', name: 'news', lastScrapedAt: new Date() },
+      ]);
+      mockSegmentRepo.count.mockResolvedValueOnce(1);
+      mockSegmentRepo.findOne.mockResolvedValueOnce(null);
+      mockContentContract.getPostsBySubredditIds.mockResolvedValueOnce([
+        { id: 'post-1', subredditId: 'sub-1', title: 'Alpha', score: 10 },
+      ]);
+      mockScriptContract.generateScript.mockResolvedValueOnce({
+        postId: 'post-1',
+        turns: [{ speaker: 'Dave', text: 'hello' }],
+      });
+      mockVoiceContract.synthesizeScript.mockResolvedValueOnce({
+        filePath: 'audio/talk.mp3',
+        durationSeconds: 3,
+      });
+
+      await service.bufferAhead('chan-1');
+
+      // The station is locked for the time it takes to decide and mark, which is what
+      // stops a second worker deciding the same posts are its own.
+      expect(mockEntityManager.transactional).toHaveBeenCalled();
+      expect(mockChannelRepo.findOne).toHaveBeenCalledWith(
+        { id: 'chan-1' },
+        expect.objectContaining({ lockMode: LockMode.PESSIMISTIC_WRITE }),
+      );
+      // Marking happens before the first paid call, not after it.
+      expect(mockEntityManager.flush.mock.invocationCallOrder[0]).toBeLessThan(
+        mockScriptContract.generateScript.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('decides the filler top-up and writes it inside one transaction that locks the station', async () => {
+      mockSegmentRepo.count.mockResolvedValue(0);
+      mockSegmentRepo.findOne.mockResolvedValue(null);
+      mockMediaService.getRandomMusic.mockResolvedValue({
+        filePath: 'music.mp3',
+        title: 't',
+        artist: 'a',
+        durationSeconds: 10,
+      });
+
+      await service.ensureInstantFiller('chan-1', 6);
+
+      expect(mockEntityManager.transactional).toHaveBeenCalled();
+      expect(mockChannelRepo.findOne).toHaveBeenCalledWith(
+        { id: 'chan-1' },
+        expect.objectContaining({ lockMode: LockMode.PESSIMISTIC_WRITE }),
+      );
     });
   });
 });

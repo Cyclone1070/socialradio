@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@mikro-orm/nestjs';
-import { RequestContext } from '@mikro-orm/core';
+import { LockMode, RequestContext } from '@mikro-orm/core';
 import { APICallError, RetryError } from 'ai';
 import { EntityRepository, EntityManager } from '@mikro-orm/postgresql';
 import { Channel, SubredditRef, PostRef } from './entities/channel.entity';
@@ -221,7 +221,7 @@ export class QueueService {
       process.stderr.write(
         `[QueueService] Looking for pending topic segment...\n`,
       );
-      const talkCluster = await this.findPendingTopicSegment(
+      const talkCluster = await this.claimNextTopicCluster(
         channelId,
         triedPostIds,
       );
@@ -236,10 +236,9 @@ export class QueueService {
       process.stderr.write(
         `[QueueService] Found topic cluster: ${talkCluster.id} with ${talkCluster.posts.length} post(s). Marking completed...\n`,
       );
-      // Step 1: Mark posts completed in DB immediately upon selection
+      // The posts were already marked inside the transaction that picked them.
       for (const p of talkCluster.posts) {
         triedPostIds.add(p.id);
-        await this.markPostCompletedForChannel(channelId, p.id);
       }
 
       // Step 2: Check pool health directly from DB state (now reflecting consumed posts)
@@ -369,9 +368,10 @@ export class QueueService {
     item: Segment,
     channelId: string,
     playOrder: number,
+    em: EntityManager = this.em,
   ): Promise<number> {
     try {
-      await this.em.persist(item).flush();
+      await em.persist(item).flush();
       return playOrder + 1;
     } catch (err: unknown) {
       const errStr = String(err);
@@ -387,12 +387,11 @@ export class QueueService {
           { channelId, playOrder },
           'playOrder collision detected, advancing to latest order',
         );
-        const latest = await this.segmentRepo.findOne(
-          { channelId },
-          { orderBy: { playOrder: 'DESC' } },
-        );
+        const latest = await em
+          .getRepository(SegmentSchema)
+          .findOne({ channelId }, { orderBy: { playOrder: 'DESC' } });
         item.playOrder = (latest?.playOrder ?? playOrder) + 1;
-        await this.em.persist(item).flush();
+        await em.persist(item).flush();
         return item.playOrder + 1;
       }
       throw err;
@@ -403,14 +402,33 @@ export class QueueService {
     channelId: string,
     minCount: number = 6,
   ): Promise<void> {
-    const existingCount = await this.segmentRepo.count({
+    // Counting the station and topping it up have to be one step: two instances that
+    // both count before either writes both fill the same gap, and the station ends up
+    // with twice the filler it asked for.
+    await this.em.transactional(async (txEm) => {
+      await this.fillUpTo(txEm, channelId, minCount);
+    });
+  }
+
+  private async fillUpTo(
+    em: EntityManager,
+    channelId: string,
+    minCount: number,
+  ): Promise<void> {
+    const segmentRepo = em.getRepository(SegmentSchema);
+    const channel = await em
+      .getRepository(ChannelSchema)
+      .findOne({ id: channelId }, { lockMode: LockMode.PESSIMISTIC_WRITE });
+    if (!channel) return;
+
+    const existingCount = await segmentRepo.count({
       channelId,
     });
     if (existingCount >= minCount) {
       return;
     }
 
-    const lastItem = await this.segmentRepo.findOne(
+    const lastItem = await segmentRepo.findOne(
       { channelId },
       { orderBy: { playOrder: 'DESC' } },
     );
@@ -420,11 +438,11 @@ export class QueueService {
     for (let i = 0; i < needed; i++) {
       try {
         if (i % 3 === 0) {
-          nextPlayOrder = await this.appendJingle(channelId, nextPlayOrder);
+          nextPlayOrder = await this.appendJingle(channelId, nextPlayOrder, em);
         } else if (i % 3 === 1) {
-          nextPlayOrder = await this.appendAd(channelId, nextPlayOrder);
+          nextPlayOrder = await this.appendAd(channelId, nextPlayOrder, em);
         } else {
-          nextPlayOrder = await this.appendMusic(channelId, nextPlayOrder);
+          nextPlayOrder = await this.appendMusic(channelId, nextPlayOrder, em);
         }
       } catch {
         // Fallback: create emergency static jingle segment if media pool is unavailable
@@ -437,6 +455,7 @@ export class QueueService {
           fallbackItem,
           channelId,
           nextPlayOrder,
+          em,
         );
       }
     }
@@ -445,13 +464,15 @@ export class QueueService {
   private async appendFiller(
     channelId: string,
     playOrder: number,
+    em: EntityManager = this.em,
   ): Promise<number> {
-    return this.appendAd(channelId, playOrder);
+    return this.appendAd(channelId, playOrder, em);
   }
 
   private async appendMusic(
     channelId: string,
     playOrder: number,
+    em: EntityManager = this.em,
   ): Promise<number> {
     const music = await this.mediaService.getRandomMusic();
     const musicItem = new MusicSegment(music.title, music.artist);
@@ -463,12 +484,14 @@ export class QueueService {
       musicItem,
       channelId,
       playOrder,
+      em,
     );
   }
 
   private async appendAd(
     channelId: string,
     playOrder: number,
+    em: EntityManager = this.em,
   ): Promise<number> {
     const ad = await this.mediaService.getRandomAd();
     const adItem = new AdSegment();
@@ -480,12 +503,14 @@ export class QueueService {
       adItem,
       channelId,
       playOrder,
+      em,
     );
   }
 
   private async appendJingle(
     channelId: string,
     playOrder: number,
+    em: EntityManager = this.em,
   ): Promise<number> {
     const jingle = await this.mediaService.getRandomJingle();
     const jingleItem = new JingleSegment();
@@ -497,14 +522,16 @@ export class QueueService {
       jingleItem,
       channelId,
       playOrder,
+      em,
     );
   }
 
   public async findPendingTopicSegment(
     channelId: string,
     excludedPostIds: Set<string> = new Set(),
+    channelRepo: EntityRepository<Channel> = this.channelRepo,
   ): Promise<TalkCluster | null> {
-    const channel = await this.channelRepo.findOne(
+    const channel = await channelRepo.findOne(
       { id: channelId },
       { populate: ['subreddits', 'completedPosts'] },
     );
@@ -600,11 +627,41 @@ export class QueueService {
     }
   }
 
-  private async markPostCompletedForChannel(
+  /**
+   * Picks this station's next cluster and marks its posts as used in the same
+   * transaction, with the station row locked. Two workers that both read the
+   * unplayed posts before either writes would otherwise each believe the cluster is
+   * theirs and each pay for it; the lock makes the decision and the record one step,
+   * so the second worker sees the posts taken and moves on.
+   */
+  private async claimNextTopicCluster(
     channelId: string,
-    postId: string,
-  ): Promise<void> {
-    await this.setPostConsumed(channelId, postId, true);
+    excludedPostIds: Set<string>,
+  ): Promise<TalkCluster | null> {
+    return this.em.transactional(async (txEm) => {
+      const channelRepo = txEm.getRepository(ChannelSchema);
+      // Locking the station is what makes the decision and the record one step: a
+      // second worker waits here, then reads the posts as already spoken for. The
+      // lock lives here rather than in the reader, because the reader is also a
+      // preview the admin endpoint calls outside any transaction.
+      const station = await channelRepo.findOne(
+        { id: channelId },
+        { lockMode: LockMode.PESSIMISTIC_WRITE },
+      );
+      if (!station) return null;
+
+      const cluster = await this.findPendingTopicSegment(
+        channelId,
+        excludedPostIds,
+        channelRepo,
+      );
+      if (!cluster) return null;
+
+      for (const post of cluster.posts) {
+        await this.setPostConsumed(channelId, post.id, true, txEm);
+      }
+      return cluster;
+    });
   }
 
   /**
@@ -631,11 +688,11 @@ export class QueueService {
     channelId: string,
     postId: string,
     consumed: boolean,
+    em: EntityManager = this.em,
   ): Promise<void> {
-    const channel = await this.channelRepo.findOne(
-      { id: channelId },
-      { populate: ['completedPosts'] },
-    );
+    const channel = await em
+      .getRepository(ChannelSchema)
+      .findOne({ id: channelId }, { populate: ['completedPosts'] });
     if (!channel) return;
 
     const alreadyRecorded = channel.completedPosts
@@ -643,13 +700,13 @@ export class QueueService {
       .some((item) => item.id === postId);
     if (alreadyRecorded === consumed) return;
 
-    const postRef = this.em.getReference<PostRef>('Post', postId);
+    const postRef = em.getReference<PostRef>('Post', postId);
     if (consumed) {
       channel.completedPosts.add(postRef);
     } else {
       channel.completedPosts.remove(postRef);
     }
-    await this.em.flush();
+    await em.flush();
   }
 }
 

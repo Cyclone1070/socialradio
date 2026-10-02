@@ -7,6 +7,7 @@ import { UserSchema } from '../infrastructure/database/schemas/user.schema';
 import { RegisterDto } from './dto/register.dto';
 import { UserResponseDto } from './dto/user-response.dto';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
+import { isUniqueViolation } from '../infrastructure/database/errors';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
@@ -36,8 +37,19 @@ export class UserService implements OnModuleInit {
       admin.email = adminEmail;
       admin.passwordHash = hash;
       admin.role = 'admin';
-      await em.persist(admin).flush();
-      this.logger.info({ email: adminEmail }, 'admin user seeded');
+      try {
+        await em.persist(admin).flush();
+        this.logger.info({ email: adminEmail }, 'admin user seeded');
+      } catch (err: unknown) {
+        // A rolling deploy can put two instances on a fresh database, where both see
+        // no admin and both insert. Losing that race is not a failure: the other
+        // instance seeded exactly the account this one was about to create.
+        if (!isUniqueViolation(err)) throw err;
+        this.logger.info(
+          { email: adminEmail },
+          'admin user was seeded by another instance',
+        );
+      }
     }
   }
 

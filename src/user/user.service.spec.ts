@@ -19,7 +19,10 @@ describe('UserService', () => {
   const mockEntityManager = {
     persist: jest.fn().mockReturnThis(),
     flush: jest.fn(),
+    findOne: jest.fn(),
+    fork: jest.fn(),
   };
+  mockEntityManager.fork.mockReturnValue(mockEntityManager);
 
   const mockConfigService = {
     get: jest.fn(),
@@ -168,6 +171,38 @@ describe('UserService', () => {
         email: 'test@example.com',
       });
       expect(result).toBeNull();
+    });
+  });
+
+  describe('seeding the admin on boot', () => {
+    beforeEach(() => {
+      mockConfigService.get.mockImplementation((key: string) =>
+        key === 'ADMIN_EMAIL' ? 'admin@example.com' : 'correct-horse',
+      );
+      mockEntityManager.findOne.mockResolvedValue(null);
+    });
+
+    it('treats another instance having seeded it first as done, not as a crash', async () => {
+      // A rolling deploy puts two instances on a fresh database; both see no admin,
+      // both insert, and the loser gets a unique violation. Losing that race is fine.
+      mockEntityManager.flush.mockRejectedValueOnce(
+        Object.assign(
+          new Error('duplicate key value violates unique constraint'),
+          {
+            code: '23505',
+          },
+        ),
+      );
+
+      await expect(service.onModuleInit()).resolves.toBeUndefined();
+    });
+
+    it('still fails loudly when the insert failed for any other reason', async () => {
+      mockEntityManager.flush.mockRejectedValueOnce(
+        new Error('database is away'),
+      );
+
+      await expect(service.onModuleInit()).rejects.toThrow('database is away');
     });
   });
 });

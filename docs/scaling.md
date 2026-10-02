@@ -42,24 +42,29 @@ the first two items below are about money and duplicate airtime, not integrity.
    one stuck station from starving itself. The lease itself is shared:
    `src/infrastructure/lease/claim-lease.ts` is now used by both the scraper and the queue, with the cap
    passed in per caller, because a scrape walk and a buffer batch are different lengths of work.
-2. **A topic cluster is never claimed before generation.** Selection is not a claim: the consumed-posts
-   pivot is written between picking a cluster and generating it, so two instances that both pass
-   selection before either writes are both convinced the cluster is theirs, and both generate it — two
-   LLM calls, two speech calls, two similar segments airing. The batch claim above closes the case where
-   the overlap is simultaneous on one station, but not the case where the two batches are working from
-   different moments. Fix: claim the cluster itself, with the same lease.
-3. **The playhead is read-modify-write with no lock.** `playback.service.ts` (roughly lines 120-160)
-   updates `currentSegmentId`, `currentPlayOrder`, `playheadStartedAt` and `lastActiveAt` from values
-   it read earlier, so two instances serving manifests at the same moment can lose an update and the
-   playhead can jump or rewind slightly. Fix: a version column with an optimistic check, or a row lock
-   for that update.
-4. **The admin seed is check-then-insert on boot.** `user.service.ts:23` looks for the admin, and
-   inserts if absent. Two instances booting against a fresh database both insert and the loser dies on
-   the unique email at flush, which in a rolling deploy is a crash loop rather than a nuisance. Fix:
-   treat the duplicate as done, the way the queue already treats a `play_order` collision.
-5. **`ensureInstantFiller` is count-guarded, not claimed.** Called from `playback.service.ts:66` and
-   `:312`, it checks the filler count and tops up, so two instances can both top up at cold start.
-   Same duplicate-work shape as item 1, much lower cost, because filler is cheap.
+2. ~~**A topic cluster is never claimed before generation.**~~ **Done.** Picking a cluster and marking
+   its posts are now one transaction that locks the station row (`claimNextTopicCluster`), and the
+   generation happens outside it. The second worker waits for the first to commit, sees the posts
+   already spoken for, and moves on.
+
+   Worth being honest about its standing: this is defence in depth rather than a live bug. The station
+   claim above already stops two instances buffering the same station, so what is left is the take-over
+   case — an owner whose renewals fail for three beats while its generation calls still work, or one
+   that goes quiet and then resumes. A lease can bound that overlap but cannot remove it; making the
+   decision atomic does. Nothing here is about sharing work between stations: clusters are built from
+   each station's own unplayed posts, and generated audio belongs to the station that paid for it.
+3. ~~**The playhead is read-modify-write with no lock.**~~ **Not an issue — withdrawn.** The playhead
+   is read inside `em.transactional` with `lockMode: LockMode.PESSIMISTIC_WRITE`
+   (`playback.service.ts:77-82`), so two instances cannot lose each other's move. The original audit
+   read the block that mutates the playhead but not the transaction wrapping it. Recorded here so it is
+   not raised again.
+4. ~~**The admin seed is check-then-insert on boot.**~~ **Done.** The insert now treats a unique
+   violation as another instance having done the job, and still fails loudly on anything else.
+5. ~~**`ensureInstantFiller` is count-guarded, not claimed.**~~ **Done.** Counting the station and
+   topping it up are now one transaction that locks the station row, so the second worker counts the
+   first one's rows and appends nothing. This one was live rather than defensive: the filler top-up is
+   deliberately outside the buffer claim (it is what makes a brand-new station audible at once), so two
+   instances really could both fill the same gap.
 6. **Not the app, but adjacent:** the reddit fetcher's pacer (500-1000 ms per request, same subreddit
    serialised) is per process. Running more than one fetcher container breaks the pacing that keeps us
    welcome on reddit.
@@ -80,3 +85,16 @@ went quiet, the new owner starts its own batch, and the old owner stops at its n
 than finishing. Stopping is best effort by design: a batch wedged inside a single call that never
 returns cannot be interrupted by the cap, only abandoned, which is why timeouts on the model and speech
 calls are the real cure and the claim is the safety net.
+
+## Verified against a real database, not only mocks
+
+- **Two instances topping up a fresh station at the same time**: the station ends with six segments,
+  not twelve. Before this batch both instances counted zero filler and both appended six.
+- **Two instances buffering the same station**: exactly one entered the batch, a third asked while the
+  claim was held also stood aside, and the claim row was held while the winner worked.
+- The cluster claim's overlap needs a lease take-over to reproduce, so it is covered two ways instead:
+  the unit test asserts the pick and the marking happen inside a transaction holding a write lock on
+  the station, and the docker suite drives the whole path end to end (suites 05 and 07).
+- Caught by the docker tier rather than the unit gate: a lock placed in the shared reader broke the
+  admin topics endpoint with `An open transaction is required for this operation`. The lock belongs in
+  the claim that wraps the reader, where a transaction exists.
