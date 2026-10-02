@@ -98,3 +98,24 @@ calls are the real cure and the claim is the safety net.
 - Caught by the docker tier rather than the unit gate: a lock placed in the shared reader broke the
   admin topics endpoint with `An open transaction is required for this operation`. The lock belongs in
   the claim that wraps the reader, where a transaction exists.
+
+## Deadlines we chose, rather than ones we inherited
+
+- **The fetcher call has one now.** Measured against real reddit: 14 calls over two passes, 4.4-9.4
+  seconds each, median about 6.5, and that already includes the pacer's deliberate 0.5-1s delay. Node's
+  http client would only give up after five minutes of *silence*, and any byte resets that clock, so a
+  hung browser job could hold the scrape claim - and every other instance standing aside - for the
+  length of the walk. `REDDIT_FETCHER_TIMEOUT_MS` now defaults to 60s per call, about six times the
+  worst observed call; the walk keeps its own 30-minute cap, and the scraper keeps releasing the claim
+  in its `finally`.
+- **The model call already had one**: 30s to the first chunk, 15s between chunks, 5 minutes total. No
+  change needed, and the audit was wrong to imply otherwise.
+- **The speech client deliberately has none yet.** It is a stub until real TTS lands, and the same
+  one-line treatment applies then. Recorded so it is not re-raised as an oversight.
+- **Not done, and why**: cancelling an in-flight call the moment the claim is lost. The cap stops
+  renewals and the next checkpoint stops the next paid step, so what remains is one call in flight that
+  would be aborted early. Worth doing when real speech arrives and those calls get long.
+- **Known edge, not fixed**: `exists()` swallows any fetch failure as "no", so an existence check that
+  hangs now answers "no" at the deadline rather than after five minutes of silence. The shape is the
+  same as before the deadline - every network failure already read that way - but the caller acts on a
+  false answer, so it is worth revisiting when that path matters.

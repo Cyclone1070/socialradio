@@ -49,9 +49,43 @@ export class RedditScraperService {
     return url;
   }
 
+  /**
+   * A page fetch takes about 4-9 seconds against reddit, measured. Node's own http
+   * client would only give up after five minutes of silence, and any byte resets
+   * that clock, so a browser job that hangs can hold the scrape claim - and every
+   * other instance standing aside - for the length of the walk. This is our own
+   * ceiling instead, generous enough that a cold browser under load still fits.
+   */
+  private get deadlineMs(): number {
+    const raw = this.configService.get<string>('REDDIT_FETCHER_TIMEOUT_MS');
+    const parsed = raw ? parseFloat(raw) : NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 60000;
+  }
+
   private async getJson(path: string): Promise<unknown> {
     const startMs = Date.now();
-    const res = await fetch(`${this.baseUrl}${path}`);
+    const deadlineMs = this.deadlineMs;
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}${path}`, {
+        signal: AbortSignal.timeout(deadlineMs),
+      });
+    } catch (err: unknown) {
+      // Matched by name rather than by class: the abort carries whichever realm
+      // created the signal, and under jest that is not this one, so
+      // `instanceof Error` is not a reliable gate here.
+      const name = (err as { name?: unknown } | null | undefined)?.name;
+      if (name === 'TimeoutError') {
+        this.logger.warn(
+          { path, ms: Date.now() - startMs, deadlineMs },
+          'reddit-fetcher call exceeded its deadline',
+        );
+        throw new Error(
+          `reddit-fetcher ${path} exceeded its ${deadlineMs}ms deadline`,
+        );
+      }
+      throw err;
+    }
     const ms = Date.now() - startMs;
     if (!res.ok) {
       // The walk converts this into a quiet stop; the warn is how ops sees
