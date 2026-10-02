@@ -10,8 +10,8 @@
       "name": "app",
       "credentials": [
         {
-          "accessKey": "minioadmin",
-          "secretKey": "minioadmin"
+          "accessKey": "socialradio-local",
+          "secretKey": "socialradio-local-secret"
         }
       ],
       "actions": [

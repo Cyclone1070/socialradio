@@ -28,10 +28,22 @@ export class StorageService implements OnModuleInit {
     const endpoint =
       this.configService.get<string>('STORAGE_ENDPOINT') ||
       'http://localhost:9000';
-    const accessKeyId =
-      this.configService.get<string>('STORAGE_ACCESS_KEY') || 'minioadmin';
+    // Credentials have no default on purpose. The old one was a public constant,
+    // so a missing value authenticated as whoever that constant belonged to and
+    // the mistake surfaced later, as somebody else's 403.
+    const accessKeyId = this.configService.get<string>('STORAGE_ACCESS_KEY');
+    if (!accessKeyId) {
+      throw new Error(
+        'Storage access key is not configured (set STORAGE_ACCESS_KEY)',
+      );
+    }
     const secretAccessKey =
-      this.configService.get<string>('STORAGE_SECRET_KEY') || 'minioadmin';
+      this.configService.get<string>('STORAGE_SECRET_KEY');
+    if (!secretAccessKey) {
+      throw new Error(
+        'Storage secret key is not configured (set STORAGE_SECRET_KEY)',
+      );
+    }
 
     this.bucketName =
       this.configService.get<string>('STORAGE_BUCKET') || 'socialradio-media';
@@ -47,7 +59,7 @@ export class StorageService implements OnModuleInit {
         accessKeyId,
         secretAccessKey,
       },
-      forcePathStyle: true, // Required for MinIO path-style bucket routing
+      forcePathStyle: true, // The endpoint is a custom S3 (SeaweedFS, R2), not AWS's virtual-hosted buckets.
     });
   }
 

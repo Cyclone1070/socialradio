@@ -33,8 +33,8 @@ describe('StorageService', () => {
               const env: Record<string, string> = {
                 STORAGE_ENDPOINT: 'http://localhost:9000',
                 STORAGE_BUCKET: 'socialradio-media',
-                STORAGE_ACCESS_KEY: 'minioadmin',
-                STORAGE_SECRET_KEY: 'minioadmin',
+                STORAGE_ACCESS_KEY: 'socialradio-local',
+                STORAGE_SECRET_KEY: 'socialradio-local-secret',
                 STORAGE_PUBLIC_URL: 'http://localhost:9000/socialradio-media',
               };
               return env[key];
@@ -112,5 +112,48 @@ describe('StorageService', () => {
 
     await service.onModuleInit();
     expect(mockS3Send).toHaveBeenCalledTimes(3);
+  });
+
+  describe('when the storage credentials are missing', () => {
+    const buildWith = async (
+      env: Record<string, string>,
+    ): Promise<StorageService> => {
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          StorageService,
+          {
+            provide: ConfigService,
+            useValue: {
+              get: jest.fn((key: string) => env[key]),
+            },
+          },
+        ],
+      }).compile();
+
+      return module.get<StorageService>(StorageService);
+    };
+
+    // A credential is not something to guess at. The old default was a public
+    // constant, so a missing value would authenticate as whoever that constant
+    // belonged to and the failure would surface later, as somebody else's 403.
+    it('should refuse to be constructed without STORAGE_ACCESS_KEY', async () => {
+      await expect(
+        buildWith({
+          STORAGE_ENDPOINT: 'http://localhost:9000',
+          STORAGE_BUCKET: 'socialradio-media',
+          STORAGE_SECRET_KEY: 'socialradio-local-secret',
+        }),
+      ).rejects.toThrow(/STORAGE_ACCESS_KEY/);
+    });
+
+    it('should refuse to be constructed without STORAGE_SECRET_KEY', async () => {
+      await expect(
+        buildWith({
+          STORAGE_ENDPOINT: 'http://localhost:9000',
+          STORAGE_BUCKET: 'socialradio-media',
+          STORAGE_ACCESS_KEY: 'socialradio-local',
+        }),
+      ).rejects.toThrow(/STORAGE_SECRET_KEY/);
+    });
   });
 });
