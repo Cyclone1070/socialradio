@@ -42,7 +42,7 @@ assert_status GET "$BASE_URL/channels/$AI_CHAN_ID/subreddits" 200 \
 assert_jq '[.[] | select(.name == "ai_talk_fixture_sub_e2e")] | length == 1' 'ai_talk_fixture_sub_e2e in channel subreddits list'
 
 echo "49. GET /channels/$AI_CHAN_ID/live.m3u8 (Trigger bufferAhead -> Synthesizes live AI TalkSegment)"
-echo "  Calling OpenCode Zen LLM + Microsoft Edge Neural TTS (generating dialogue and audio)..."
+echo "  Calling the Tier 1 mocks: the LLM stub, and the speech stub answering with real recorded audio..."
 assert_status GET "$BASE_URL/channels/$AI_CHAN_ID/live.m3u8" 200
 if ! echo "$BODY" | grep -q '^#EXTM3U'; then
   fail "Manifest does not start with #EXTM3U: $BODY"

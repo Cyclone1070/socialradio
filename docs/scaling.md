@@ -1,9 +1,10 @@
 # Running more than one app instance
 
 Audited 2026-10-01 by searching for in-memory state, timers, schedulers and boot hooks, then reading
-the queue, playback and lease paths. The verdict: **several instances can run without corrupting
-anything, but two of them will do the same paid work twice.** Nothing here blocks a second instance;
-the first two items below are about money and duplicate airtime, not integrity.
+the queue, playback and lease paths, and re-checked against the code on 2026-10-02. The verdict:
+**several instances can run without corrupting anything, and the two places that did the same paid
+work twice are fixed.** Nothing here blocks a second instance. What is left is one deployment rule
+about the fetcher (item 6), not a code change.
 
 ## State that is already shared, and stays correct
 
@@ -19,11 +20,13 @@ the first two items below are about money and duplicate airtime, not integrity.
   collision by re-reading the latest order. Concurrent inserts end up sequential rather than lost.
 - **No sticky sessions needed.** Auth is a stateless JWT, audio is plain HTTP from object storage, and
   there is no SSE or WebSocket anywhere.
+- **The sidecars hold nothing.** The app reaches the speech service and object storage by URL alone, so
+  any number of either is interchangeable. The fetcher is the exception, and it is item 6 below.
 - **Migrations.** A separate compose service runs them, never the app on boot, so a rolling deploy
   cannot race.
 - **Nothing else in memory.** No cron, no in-memory sessions, no throttle counters, no response or
-  entity caches. A sweep for `setInterval`/`setTimeout`/`@Cron`/debounce finds one hit, the scrape
-  lease heartbeat, whose authority is the database row.
+  entity caches. A sweep for `setInterval`/`setTimeout`/`@Cron`/debounce finds one hit, the shared claim
+  lease's heartbeat, whose authority is the database row.
 
 ## In-memory state that affects behaviour
 
@@ -31,7 +34,7 @@ the first two items below are about money and duplicate airtime, not integrity.
 |---|---|---|
 | `src/channel/queue.service.ts` | `inFlightBuffers`: a map of channel to its in-flight buffer batch | Spares this process a duplicate batch, and nothing more. **Fixed** by the claim below, which is what a second *instance* respects |
 
-## Races to fix, in order
+## Findings, in the order they were fixed
 
 1. ~~**Buffer batches are deduped per process, not per station.**~~ **Done.** The channel row carries
    `buffer_claim_id` and `buffer_claimed_at`; a batch takes the claim with one conditional write before
@@ -65,16 +68,25 @@ the first two items below are about money and duplicate airtime, not integrity.
    first one's rows and appends nothing. This one was live rather than defensive: the filler top-up is
    deliberately outside the buffer claim (it is what makes a brand-new station audible at once), so two
    instances really could both fill the same gap.
-6. **Not the app, but adjacent:** the reddit fetcher's pacer (500-1000 ms per request, same subreddit
+6. **Not the app, but adjacent: the reddit fetcher's pacer** (500-1000 ms per request, same subreddit
    serialised) is per process. Running more than one fetcher container breaks the pacing that keeps us
-   welcome on reddit.
+   welcome on reddit. **Parked 2026-10-02, and answered by deployment rather than by code**: the fetcher
+   is one container by design, because it *is* the pacing point. If it ever has to scale, the unit of
+   scale is a (browserless + fetcher) pair with its own egress IP — reddit's limits are per IP, so a
+   second fetcher behind the same egress IP would only double the request rate the pacer exists to hold
+   down.
 
-## How these get verified
+## How these were verified
 
-Every fix above belongs in the queue or playback spec as a unit test, and the docker suite already
-covers the pipeline end to end (suite 05 playback, suite 07 talk generation). A claim that only one
-instance may hold is worth a test that asserts the second attempt does not generate, which is what the
-scrape lease tests do.
+- **Unit tests, in the spec that owns the code.** The queue spec asserts that a batch takes and releases
+  the claim, that a second caller stands aside, and that picking a cluster and marking its posts happen
+  inside one transaction holding a write lock on the station; the user spec asserts the seed race is
+  accepted while any other error still fails loudly.
+- **The docker suite drives the pipeline end to end** (suite 05 playback, suite 07 talk generation), and
+  it is what caught the lock placed in the shared reader.
+- **The two-instance checks were run by hand against a real Postgres, and deliberately not kept as a
+  script**: they were worth doing once, and a committed two-container harness would be a second way of
+  saying what the unit tests and the docker suite already say. What they proved is in the next section.
 
 ## What the buffer claim does and does not protect
 
@@ -87,6 +99,9 @@ returns cannot be interrupted by the cap, only abandoned, which is why timeouts 
 calls are the real cure and the claim is the safety net.
 
 ## Verified against a real database, not only mocks
+
+Run 2026-10-01 against a local Postgres with two app processes sharing it, by hand rather than through
+a committed harness.
 
 - **Two instances topping up a fresh station at the same time**: the station ends with six segments,
   not twelve. Before this batch both instances counted zero filler and both appended six.

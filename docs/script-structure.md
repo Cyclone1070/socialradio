@@ -6,7 +6,15 @@ This document outlines the architecture, data mappings, dialogue rules, and prom
 
 ## 1. The Core 4-Step Segment Structure
 
-Social Radio models a real-world talk radio call-in show (e.g., *Loveline*, *Car Talk*, *Therapy Gecko*). The Guest Caller (representing the Reddit Post OP) calls into the station to discuss their dilemma with a panel of co-hosts (Dave, Sarah, Mike, Jenny).
+Social Radio models a real-world talk radio call-in show (e.g., *Loveline*, *Car Talk*, *Therapy Gecko*). The Guest Caller (representing the Reddit Post OP) calls into the station to discuss their dilemma with the hosts.
+
+> **Status.** This is a description of what ships, not a plan. It is implemented in
+> `src/script/script.service.ts`: the two-stage prompts, the four `STEP` sections, the
+> `Dave:` / `Sarah:` / `Caller:` speaker validation and the five-turn minimum.
+>
+> **The cast is three voices — Dave (lead host), Sarah (co-host) and the Caller.** Earlier drafts of
+> this document wrote a four-host room with Mike and Jenny; that room was never built, and
+> `ALLOWED_SPEAKERS` in the service is the authority.
 
 ```
 [Step 1: Host Intro & Hook] ➔ [Step 2: Caller Explains Details] ➔ [Step 3: Room Debate & Gap Angles] ➔ [Step 4: Quick Drop & Reset]
@@ -42,9 +50,9 @@ Social Radio models a real-world talk radio call-in show (e.g., *Loveline*, *Car
 - **Rules**: The Caller stays active on the line, reacting, clarifying, and pushing back against host takes.
 
 > **Example:**
-> - **Mike (Host - Reddit Comment Stance):** *"Look, an en-suite is nice, but 70/30 is extortion. Did you sign a 50/50 lease?"*
-> - **Sarah (Host - Counter Reddit Stance):** *"If you have private plumbing, you should pay a bit more. Maybe 55/45."*
-> - **Jenny (Host - LLM Gap Angle):** *"Wait guys, why is he springing this on you 3 months in? Did he lose his job?"*
+> - **Dave (Host - Reddit comment stance):** *"Look, an en-suite is nice, but 70/30 is extortion. Did you sign a 50/50 lease?"*
+> - **Sarah (Co-host - counter stance):** *"If you have private plumbing, you should pay a bit more. Maybe 55/45."*
+> - **Sarah (Co-host - LLM gap angle):** *"Wait, why is he springing this on you 3 months in? Did he lose his job?"*
 > - **Caller (Alex):** *"Actually... yeah, he got laid off two weeks ago..."*
 > - **Dave (Host):** *"Aha! There it is!"*
 
@@ -72,9 +80,11 @@ Social Radio models a real-world talk radio call-in show (e.g., *Loveline*, *Car
 
 ---
 
-## 3. To-Be-Experimented Strategies (Hook Generation)
+## 3. Hook Generation — what shipped
 
-We are experimenting with two approaches for generating Step 1 (Host Intro): **Approach A (On-the-Fly Dynamic Generation)** and **Approach B (Preset 10 Archetypes Rotation)**.
+Two approaches were on the table for Step 1 (Host Intro): **Approach A (on-the-fly dynamic generation)** and **Approach B (preset 10-archetype rotation)**.
+
+**Approach A shipped.** The Stage 1 prompt asks for an original hook per story and a varied delivery order for the three required slots (hook angle, caller and location, line number), so no two intros sound identical. **Approach B was never built**, and is kept below only as the fallback if dynamic hooks ever start sounding repetitive — it would be a change to the Stage 1 prompt and nothing else.
 
 ### Approach A: Dynamic Zero-Shot Hook Framing (Primary Choice)
 

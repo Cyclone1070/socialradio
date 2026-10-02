@@ -39,9 +39,10 @@ jobs:
           npx tsc --noEmit
           npx jest
 
-  # Tier 1 e2e: the whole suite against mocks. No provider keys, no reddit, and
-  # the browserless image is never pulled. The one external call left is the free
-  # TTS library, which is why it lives in this tier rather than the paid one.
+  # Tier 1 e2e: the whole suite against mocks. No provider keys, no reddit, no
+  # browserless image, and no speech engine: the LLM, the fetcher and the speech
+  # service are all stub containers (deployment/mocks/), while the database and
+  # object storage stay real.
   #
   # Decided, and not to be re-litigated:
   # - These eight suites stay black box, driving the station the way a client does.
@@ -51,11 +52,10 @@ jobs:
   #   pre-release schedule: integration tests do not detect provider drift. Drift is
   #   caught by provider deprecation announcements, by production failing early and
   #   by production logs - none of which is a test, and none of which exists yet.
-  # - The voice boundary is a domain contract with a DI provider and the speech
-  #   library imported in exactly one file, so swapping engines means a second
-  #   provider rather than a change to callers. The unit gate replaces it to keep
-  #   tests offline; both docker runs use the real library, and suite 07 holds its
-  #   output to the duration the station recorded for it.
+  # - The voice boundary is a sidecar (voice-service/) the app reaches over HTTP by
+  #   URL, so swapping engines replaces a container and no app code changes. Tier 1
+  #   answers with audio the real engine produced, and suite 07 holds the stored
+  #   duration to the decoded length of the track the station kept.
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30

@@ -21,22 +21,29 @@ This document provides decision rules for file placement, code organization, str
 3. **Architecture Guardrails (Enforced via `src/architecture.spec.ts`)**
    - **Rule 1: Domain Isolation**: `src/domain/` has zero dependencies on feature slices or infrastructure.
    - **Rule 2: Zero Cross-Slice Concrete Imports**: Feature slices only import from `src/domain/` or own directory.
-   - **Rule 3: Scalar Foreign IDs**: Entity classes across slices do not import peer entity models.
+   - **Rule 3: Pure POCOs & Scalar Foreign IDs**: Entity classes across slices are plain classes with zero ORM decorators, and they do not import peer entity models.
    - **Rule 4: Domain Anti-Dumping**: Contracts and interfaces in `src/domain/` must be cross-slice (consumed by 2 or more slices).
    - **Rule 5: Zero Bidirectional Slice Coupling**: Slices must have an acyclic dependency graph (no direct circular imports or contract cycles).
    - **Rule 6: Single Entity Table Ownership**: Every database table/entity is owned exclusively by a single domain slice.
    - **Rule 7: Route Domain Ownership**: Controllers only declare routes belonging to their owning domain slice.
+   - **Rule 8: Entity Encapsulation**: an entity's array and date getters must not hand out mutable references, and a public setter must either be used by production code or be private.
+   - **Rule 9: Entity Class Placement**: every schema's entity class is declared inside its slice's `entities/` directory.
+   - **Rule 10: Persistence Goes Through the ORM**: production code must not execute raw SQL.
+   - **Rule 13: Module Registration Matches Injections**: `MikroOrmModule.forFeature` registers exactly the schemas that are injected.
+   - **Rule 14: No Type-System Bypasses**: production code must not use `as unknown as` double casts.
+
+   Rule numbers are historical — 11 and 12 are unused — and the spec file is the authority, not this list.
 
 4. **Live Audio Streaming Architecture (Native HLS & Lazy Virtual Clock)**
    - RFC 8216-compliant HLS playlists served dynamically via `GET /channels/:channelId/live.m3u8`.
    - Scale-to-zero compute: Segment playhead advances on-demand via a lazy-evaluated virtual clock engine during manifest requests.
-   - **CDN-Native Edge Caching**: Manifests are tagged with `Cache-Control: public, max-age=2, s-maxage=2`, collapsing concurrent listener requests at the edge. NestJS origin poll rate is strictly capped at $\le 0.5$ req/s per active channel.
+   - **CDN-Native Edge Caching**: Manifests are tagged with `Cache-Control: public, max-age=2, s-maxage=2`, collapsing concurrent listener requests at the edge. The $\le 0.5$ req/s per active channel origin poll rate is a **deployment requirement, not a code guarantee**: it follows from those headers plus the CDN's cache and request collapsing, and no CDN configuration is checked into this repository.
    - **Idle Freeze & Wakeup**: Channels with no manifest requests for $> 10$ minutes freeze their playhead state cleanly, pausing background AI script synthesis and TTS generation until a listener returns.
    - **Low Runway Replenishment**: When fewer than 4 segments remain ahead in queue, `bufferAhead` asynchronously fills the runway.
-   - Static audio chunks (`.mp3`) are served directly from MinIO/S3 object storage with immutable cache headers (`Cache-Control: public, max-age=31536000, immutable`).
+   - Static audio chunks (`.mp3`) are served directly from object storage (SeaweedFS in local docker, R2/S3 in production), which is why they are uploaded with `Cache-Control: public, max-age=31536000` — long-lived but not `immutable`.
 
 5. **Sidecar Placement & Docker Orchestration**
-   - Independent background sidecars live at the repository root (e.g. `reddit-fetcher/`).
+   - Independent background sidecars live at the repository root. There are two, and each owns a boundary the app talks to over HTTP by URL alone: `reddit-fetcher/` (browserless, reddit browsing, the pacing queue) and `voice-service/` (the TTS engine, voice casting, turn concatenation, and the measured length of the audio it produced).
    - Container orchestration is centralized exclusively in [`deployment/docker/docker-compose.yml`](../deployment/docker/docker-compose.yml).
 
 ---
@@ -52,7 +59,7 @@ This document provides decision rules for file placement, code organization, str
 | **Feature-Internal Interface/Helper** | `src/<feature>/interfaces/` or `src/<feature>/utils/` | `<name>.interface.ts` or `<name>.util.ts` | `[Name]` |
 | **Cross-Slice Service Contract** | `src/domain/contracts/` | `index.ts` | `export abstract class [Feature]Contract` |
 | **Cross-Slice Domain Payload** | `src/domain/types/` | `<concept>.types.ts` | `export interface [Concept]Data` |
-| **Root-Level Sidecar Service** | `<service>/` | `Dockerfile`, `<service>.liq`, etc. | Containerized daemon |
+| **Root-Level Sidecar Service** | `<service>/` | `Dockerfile`, `src/`, `package.json` | Containerized daemon |
 | **Docker Compose Services** | `deployment/docker/` | `docker-compose.yml` | `[Service]` container |
 
 ---
