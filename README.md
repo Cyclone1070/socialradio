@@ -80,6 +80,7 @@ availability, not a broken contract.
 
 ## Docs
 
+- [docs/gaps.md](docs/gaps.md) — what the product still needs, and what each gap blocks
 - [docs/architecture-guidelines.md](docs/architecture-guidelines.md) — placement rules, and the guardrails `src/architecture.spec.ts` enforces
 - [docs/scaling.md](docs/scaling.md) — running more than one instance: what is shared, what was fixed, the fetcher's pacing rule
 - [docs/script-structure.md](docs/script-structure.md) — the four-step call-in segment and the hook rules
