@@ -246,3 +246,101 @@ case "$FILLER_BEHIND_TALK" in
   liner,music,music*) echo "  ✓ behind a conversation the filler announces itself, then two songs ($FILLER_BEHIND_TALK)" ;;
   *) fail "the filler behind a conversation should be liner,music,music - got: $FILLER_BEHIND_TALK" ;;
 esac
+
+echo "51h. A run in flight keeps the other instance out of the station"
+# The claim is a row, not a flag in memory, so a second process has to see it. The
+# model stub is slowed down here for one reason: without a run that takes seconds,
+# there is no window to ask the other instance inside, and a test that races for a
+# window is a test that fails on a fast machine and passes on a slow one.
+MOCKS_URL="${LLM_STUB_URL:-http://mocks:4010}"
+req POST "$MOCKS_URL/__control" -H "Content-Type: application/json" -d '{"mode":"normal","delayMs":1500}'
+[ "$STATUS" = "200" ] || fail "could not slow the model stub down (HTTP $STATUS)"
+
+psql_run -c "DELETE FROM channel_post_progress; DELETE FROM comment; DELETE FROM post;" >/dev/null
+psql_run -f /scripts/fixtures/ai-talk.sql >/dev/null || fail "ai-talk.sql fixture failed"
+ON_ONE
+assert_status POST "$BASE_URL/channels" 201 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Claim Visibility Radio","visibility":"public"}'
+CLAIM_CHAN_ID=$(echo "$BODY" | jq -r '.id')
+ON_ONE
+assert_status POST "$BASE_URL/channels/$CLAIM_CHAN_ID/subreddits" 201 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"subredditName":"ai_talk_fixture_sub_e2e"}'
+
+ON_ONE
+assert_status GET "$BASE_URL/channels/$CLAIM_CHAN_ID/live.m3u8" 200
+wait_until_not 25 "claim_of $CLAIM_CHAN_ID" "none" \
+  || fail "the first instance never claimed the station while it was generating"
+CLAIM_BEFORE=$(claim_of "$CLAIM_CHAN_ID")
+echo "  ✓ one instance holds the claim while it generates"
+
+ON_TWO
+assert_status GET "$BASE_URL/channels/$CLAIM_CHAN_ID/live.m3u8" 200
+CLAIM_AFTER=$(claim_of "$CLAIM_CHAN_ID")
+if [ "$CLAIM_AFTER" != "$CLAIM_BEFORE" ]; then
+  fail "the second instance took a claim that was still alive ($CLAIM_BEFORE -> $CLAIM_AFTER)"
+fi
+echo "  ✓ $(instance_name "$INSTANCE_TWO_URL") served its request without touching the claim"
+
+req POST "$MOCKS_URL/__control" -H "Content-Type: application/json" -d '{"delayMs":0}'
+wait_for 40 "claim_of $CLAIM_CHAN_ID" "none" \
+  || fail "the claim was never released when the run finished"
+echo "  ✓ the claim was released when the run finished"
+
+echo "51i. A claim whose owner went quiet is taken over, and the dead run's block is refused"
+req POST "$MOCKS_URL/__control" -H "Content-Type: application/json" -d '{"delayMs":4000}'
+[ "$STATUS" = "200" ] || fail "could not slow the model stub down (HTTP $STATUS)"
+
+psql_run -c "DELETE FROM channel_post_progress; DELETE FROM comment; DELETE FROM post;" >/dev/null
+psql_run -f /scripts/fixtures/ai-talk.sql >/dev/null || fail "ai-talk.sql fixture failed"
+ON_ONE
+assert_status POST "$BASE_URL/channels" 201 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Stale Claim Radio","visibility":"public"}'
+STALE_CHAN_ID=$(echo "$BODY" | jq -r '.id')
+ON_ONE
+assert_status POST "$BASE_URL/channels/$STALE_CHAN_ID/subreddits" 201 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"subredditName":"ai_talk_fixture_sub_e2e"}'
+
+ON_ONE
+assert_status GET "$BASE_URL/channels/$STALE_CHAN_ID/live.m3u8" 200
+wait_until_not 25 "claim_of $STALE_CHAN_ID" "none" \
+  || fail "the first instance never claimed the stale-claim station"
+CLAIM_OWNER=$(claim_of "$STALE_CHAN_ID")
+
+# Killing a container is the obvious way to write this and the wrong one: it needs a
+# docker socket the suite does not have, and it tests the death rather than the rule.
+# Backdating the claim is how a dead instance looks from the database, and the rule -
+# a claim older than the lease is up for grabs - is what actually has to hold.
+psql_run -c "UPDATE channel SET buffer_claimed_at = now() - interval '10 minutes' WHERE id = '$STALE_CHAN_ID';" >/dev/null
+ON_TWO
+assert_status GET "$BASE_URL/channels/$STALE_CHAN_ID/live.m3u8" 200
+TAKEOVER_CLAIM=$(claim_of "$STALE_CHAN_ID")
+if [ "$TAKEOVER_CLAIM" = "$CLAIM_OWNER" ]; then
+  fail "the second instance left a stale claim in place instead of taking over"
+fi
+echo "  ✓ $(instance_name "$INSTANCE_TWO_URL") took over the stale claim"
+
+req POST "$MOCKS_URL/__control" -H "Content-Type: application/json" -d '{"delayMs":0}'
+wait_for 60 "claim_of $STALE_CHAN_ID" "none" \
+  || fail "the station was left claimed after both runs stopped"
+echo "  ✓ neither instance left the station claimed"
+
+STALE_DUPLICATES=$(psql_run -t -A -c "SELECT COUNT(*) FROM (SELECT cluster_id FROM segment WHERE \"channel_id\" = '$STALE_CHAN_ID' AND type = 'talk' GROUP BY cluster_id HAVING COUNT(*) > 1) d;")
+if [ "$STALE_DUPLICATES" != "0" ]; then
+  fail "$STALE_DUPLICATES topic(s) aired twice after a takeover - the dead run's block was not refused"
+fi
+STALE_TALK=$(psql_run -t -A -c "SELECT COUNT(*) FROM segment WHERE \"channel_id\" = '$STALE_CHAN_ID' AND type = 'talk';")
+if [ "$STALE_TALK" = "0" ]; then
+  fail "the takeover produced no conversation at all"
+fi
+echo "  ✓ no topic aired twice across the takeover ($STALE_TALK conversation(s) from the survivor)"
+
+# Leave the stub as the rest of the run expects to find it.
+req POST "$MOCKS_URL/__control" -H "Content-Type: application/json" -d '{"mode":"normal","delayMs":0}'

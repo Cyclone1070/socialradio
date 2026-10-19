@@ -244,3 +244,36 @@ echo "  ✓ Private channel Cache-Control: private, no-store verified (Security 
 echo "38b. GET /channels/000.../live.m3u8 (Fake UUID -> 404)"
 assert_status GET "$BASE_URL/channels/00000000-0000-0000-0000-000000000000/live.m3u8" 404
 assert_jq '.message == "Channel not found"' '404 message'
+
+echo "38c. Issue 7: Two processes asked at once about an empty station fill it once"
+# The same hole, seen by two app processes rather than five requests in one: both are
+# asked at the same instant, and the station is filled for one of them, not both. This
+# is the check that failed when the watchdog read the runway under the station lock and
+# wrote the filler after letting go of it - four songs where two belong.
+ON_ONE
+assert_status POST "$BASE_URL/channels" 201 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Two Process Empty Station","visibility":"public"}'
+TWO_PROC_CHAN_ID=$(echo "$BODY" | jq -r '.id')
+[ -n "$TWO_PROC_CHAN_ID" ] && [ "$TWO_PROC_CHAN_ID" != "null" ] || fail "failed to extract TWO_PROC_CHAN_ID"
+
+# No subreddits: the run has nothing to generate, so the filler is the only writer.
+curl -s -o /tmp/two-proc-app.json -w "%{http_code}" "$(instance_at 0)/channels/$TWO_PROC_CHAN_ID/live.m3u8" > /tmp/two-proc-app.code &
+TWO_PROC_A=$!
+curl -s -o /tmp/two-proc-app2.json -w "%{http_code}" "$(instance_at 1)/channels/$TWO_PROC_CHAN_ID/live.m3u8" > /tmp/two-proc-app2.code &
+TWO_PROC_B=$!
+wait "$TWO_PROC_A" "$TWO_PROC_B"
+
+TWO_PROC_CODE_A=$(cat /tmp/two-proc-app.code)
+TWO_PROC_CODE_B=$(cat /tmp/two-proc-app2.code)
+rm -f /tmp/two-proc-app.json /tmp/two-proc-app2.json /tmp/two-proc-app.code /tmp/two-proc-app2.code
+if [ "$TWO_PROC_CODE_A" != "200" ] || [ "$TWO_PROC_CODE_B" != "200" ]; then
+  fail "two processes cold-starting the same station returned $TWO_PROC_CODE_A and $TWO_PROC_CODE_B instead of 200 and 200"
+fi
+
+TWO_PROC_ROWS=$(psql_run -t -A -c "SELECT COUNT(*) FROM segment WHERE \"channel_id\" = '$TWO_PROC_CHAN_ID';")
+if [ "$TWO_PROC_ROWS" != "2" ]; then
+  fail "two processes noticed the same hole and wrote $TWO_PROC_ROWS rows; the filler is two songs"
+fi
+echo "  ✓ $(instance_name "$(instance_at 0)") and $(instance_name "$(instance_at 1)") filled the station once between them ($TWO_PROC_ROWS songs)"

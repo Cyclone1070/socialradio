@@ -154,6 +154,38 @@ SECRET="${INTERNAL_SERVICE_SECRET:-secret}"
 STORAGE_URL="${STORAGE_ENDPOINT:-http://seaweedfs:9000}"
 BUCKET="${STORAGE_BUCKET:-socialradio-media}"
 
+# ── Waiting on the database, not on the clock ──────────────────────────
+#
+# A suite that waits for the station to do something polls a row instead of
+# sleeping a guessed number of seconds: a slower machine makes a wait longer,
+# never a conclusion different.
+
+wait_for() {
+  DEADLINE=$(( $(date +%s) + $1 ))
+  shift
+  while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+    if [ "$(eval "$1")" = "$2" ]; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+
+wait_until_not() {
+  DEADLINE=$(( $(date +%s) + $1 ))
+  shift
+  while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+    if [ "$(eval "$1")" != "$2" ]; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+
+# The station's claim, as the database sees it. 'none' rather than empty so a
+# comparison against it can never succeed by accident.
+claim_of() {
+  psql_run -t -A -c "SELECT COALESCE(buffer_claim_id, 'none') FROM channel WHERE id = '$1';"
+}
+
 # ── SQL Execution ──────────────────────────────────────────────────────
 
 psql_run() {
