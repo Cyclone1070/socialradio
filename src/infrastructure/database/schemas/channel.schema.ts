@@ -4,8 +4,8 @@ import {
   Segment,
   MusicSegment,
   TalkSegment,
-  AdSegment,
   JingleSegment,
+  LinerSegment,
 } from '../../../channel/entities/segment.entity';
 import { Subreddit } from '../../../content/entities/subreddit.entity';
 import { Post } from '../../../content/entities/post.entity';
@@ -118,7 +118,7 @@ export const SegmentSchema = new EntitySchema<Segment>({
     },
     {
       name: 'segment_type_check',
-      expression: "type in ('music', 'talk', 'ad', 'jingle')",
+      expression: "type in ('music', 'talk', 'jingle', 'liner')",
     },
     {
       name: 'segment_status_check',
@@ -155,19 +155,20 @@ export const TalkSegmentSchema = new EntitySchema<TalkSegment, Segment>({
     clusterId: { type: 'string', accessor: true },
     status: { type: 'string', default: 'generating', accessor: true },
     script: { type: 'json', nullable: true, accessor: true },
+    outline: { type: 'text', nullable: true, accessor: true },
   },
-});
-
-export const AdSegmentSchema = new EntitySchema<AdSegment, Segment>({
-  class: AdSegment,
-  extends: SegmentSchema,
-  discriminatorValue: 'ad',
-  properties: {},
 });
 
 export const JingleSegmentSchema = new EntitySchema<JingleSegment, Segment>({
   class: JingleSegment,
   extends: SegmentSchema,
   discriminatorValue: 'jingle',
+  properties: {},
+});
+
+export const LinerSegmentSchema = new EntitySchema<LinerSegment, Segment>({
+  class: LinerSegment,
+  extends: SegmentSchema,
+  discriminatorValue: 'liner',
   properties: {},
 });

@@ -7,7 +7,7 @@ export abstract class Segment {
   private _audioUrl!: string;
   private _durationSeconds!: number;
   private _createdAt!: Date;
-  abstract readonly type: 'music' | 'talk' | 'ad' | 'jingle';
+  abstract readonly type: 'music' | 'talk' | 'jingle' | 'liner';
 
   constructor(createdAt?: Date, id?: string) {
     if (createdAt !== undefined) {
@@ -142,6 +142,7 @@ export class TalkSegment extends Segment {
   private _clusterId!: string;
   private _status: 'generating' | 'ready' | 'failed' = 'generating';
   private _script: ScriptTurn[] | null = null;
+  private _outline: string | null = null;
 
   constructor(
     clusterId?: string,
@@ -185,6 +186,15 @@ export class TalkSegment extends Segment {
     this._status = value;
   }
 
+  get outline(): string | null {
+    return this._outline;
+  }
+
+  set outline(value: string | null | undefined) {
+    const trimmed = value?.trim();
+    this._outline = trimmed ? trimmed : null;
+  }
+
   get script(): readonly ScriptTurn[] | null {
     return this._script
       ? Object.freeze(this._script.map((t) => Object.freeze({ ...t })))
@@ -219,10 +229,10 @@ export class TalkSegment extends Segment {
   }
 }
 
-export class AdSegment extends Segment {
-  readonly type = 'ad' as const;
-}
-
 export class JingleSegment extends Segment {
   readonly type = 'jingle' as const;
+}
+
+export class LinerSegment extends Segment {
+  readonly type = 'liner' as const;
 }

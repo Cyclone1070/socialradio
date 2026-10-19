@@ -1,5 +1,4 @@
 import { MusicTrack } from './music-track.entity';
-import { AdTrack } from './ad-track.entity';
 import { Jingle } from './jingle.entity';
 
 describe('Media Track Entities Invariants & Encapsulation', () => {
@@ -48,39 +47,6 @@ describe('Media Track Entities Invariants & Encapsulation', () => {
       const leaked = track.createdAt;
       leaked?.setTime(0);
       expect(track.createdAt).toBeUndefined();
-    });
-  });
-
-  describe('AdTrack', () => {
-    it('enforces non-empty advertiser, filePath, and durationSeconds > 0', () => {
-      const ad = new AdTrack('  Acme Corp  ', '  ads/acme.mp3  ', 30);
-      expect(ad.advertiser).toBe('Acme Corp');
-      expect(ad.filePath).toBe('ads/acme.mp3');
-      expect(ad.durationSeconds).toBe(30);
-
-      expect(() => {
-        new AdTrack('   ', 'ads/acme.mp3', 30);
-      }).toThrow('advertiser cannot be empty');
-
-      expect(() => {
-        new AdTrack('Acme Corp', 'ads/acme.mp3', -1);
-      }).toThrow('durationSeconds must be > 0');
-    });
-
-    it('manages id and enforces read-only createdAt', () => {
-      const ad = new AdTrack('Acme', 'ads/acme.mp3', 30);
-      expect(ad.createdAt).toBeUndefined();
-
-      const persistedDate = new Date('2026-01-01T00:00:00Z');
-      const persisted = new AdTrack(
-        'Acme',
-        'ads/acme.mp3',
-        30,
-        'ad-1',
-        persistedDate,
-      );
-      expect(persisted.createdAt).toEqual(persistedDate);
-      expect(persisted.id).toBe('ad-1');
     });
   });
 

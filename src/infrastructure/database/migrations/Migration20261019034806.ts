@@ -1,19 +1,19 @@
 import { Migration } from '@mikro-orm/migrations';
 
-export class Migration20261001142747_init extends Migration {
+export class Migration20261019034806 extends Migration {
   override async up(): Promise<void> {
-    this.addSql(
-      `create table "ad_track" ("id" uuid not null default gen_random_uuid(), "advertiser" varchar(255) not null, "file_path" varchar(255) not null, "duration_seconds" real not null, "created_at" timestamptz not null default now(), constraint "ad_track_pkey" primary key ("id"), constraint ad_track_duration_positive check (duration_seconds > 0));`,
-    );
-    this.addSql(
-      `alter table "ad_track" add constraint "ad_track_file_path_unique" unique ("file_path");`,
-    );
-
     this.addSql(
       `create table "jingle" ("id" uuid not null default gen_random_uuid(), "name" varchar(255) not null, "file_path" varchar(255) not null, "duration_seconds" real not null, "created_at" timestamptz not null default now(), constraint "jingle_pkey" primary key ("id"), constraint jingle_duration_positive check (duration_seconds > 0));`,
     );
     this.addSql(
       `alter table "jingle" add constraint "jingle_file_path_unique" unique ("file_path");`,
+    );
+
+    this.addSql(
+      `create table "liner" ("id" uuid not null default gen_random_uuid(), "text" varchar(255) not null, "file_path" varchar(255) not null, "duration_seconds" real not null, "created_at" timestamptz not null default now(), constraint "liner_pkey" primary key ("id"), constraint liner_duration_positive check (duration_seconds > 0));`,
+    );
+    this.addSql(
+      `alter table "liner" add constraint "liner_file_path_unique" unique ("file_path");`,
     );
 
     this.addSql(
@@ -71,7 +71,7 @@ export class Migration20261001142747_init extends Migration {
     );
 
     this.addSql(
-      `create table "segment" ("id" uuid not null default gen_random_uuid(), "channel_id" uuid not null, "play_order" int not null, "audio_url" varchar(255) not null, "duration_seconds" real not null, "type" varchar(255) not null, "created_at" timestamptz not null default now(), "title" varchar(255) null, "artist" varchar(255) null, "cluster_id" varchar(255) null, "status" varchar(255) null default 'generating', "script" jsonb null, constraint "segment_pkey" primary key ("id"), constraint segment_play_order_positive check (play_order >= 1), constraint segment_duration_bounds check (duration_seconds > 0 and duration_seconds <= 7200), constraint segment_type_check check (type in ('music', 'talk', 'ad', 'jingle')), constraint segment_status_check check (status is null or status in ('generating', 'ready', 'failed')), constraint segment_music_subtype_check check (type != 'music' or (title is not null and artist is not null)), constraint segment_talk_subtype_check check (type != 'talk' or (cluster_id is not null)));`,
+      `create table "segment" ("id" uuid not null default gen_random_uuid(), "channel_id" uuid not null, "play_order" int not null, "audio_url" varchar(255) not null, "duration_seconds" real not null, "type" varchar(255) not null, "created_at" timestamptz not null default now(), "title" varchar(255) null, "artist" varchar(255) null, "cluster_id" varchar(255) null, "status" varchar(255) null default 'generating', "script" jsonb null, "outline" text null, constraint "segment_pkey" primary key ("id"), constraint segment_play_order_positive check (play_order >= 1), constraint segment_duration_bounds check (duration_seconds > 0 and duration_seconds <= 7200), constraint segment_type_check check (type in ('music', 'talk', 'jingle', 'liner')), constraint segment_status_check check (status is null or status in ('generating', 'ready', 'failed')), constraint segment_music_subtype_check check (type != 'music' or (title is not null and artist is not null)), constraint segment_talk_subtype_check check (type != 'talk' or (cluster_id is not null)));`,
     );
     this.addSql(`create index "segment_type_index" on "segment" ("type");`);
     this.addSql(

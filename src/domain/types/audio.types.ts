@@ -11,10 +11,10 @@ export interface TalkData {
   postIds: string[];
 }
 
-export interface AdData {
+export interface LinerData {
   filePath: string;
   durationSeconds: number;
-  advertiser: string;
+  text: string;
 }
 
 export interface JingleData {

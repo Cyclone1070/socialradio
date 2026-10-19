@@ -8,8 +8,8 @@ import {
   Segment,
   MusicSegment,
   TalkSegment,
-  AdSegment,
   JingleSegment,
+  LinerSegment,
 } from './entities/segment.entity';
 import {
   ChannelSchema,
@@ -25,11 +25,17 @@ import {
   MediaContract,
 } from '../domain/contracts';
 import { PostData } from '../domain/types/post.types';
-import { ScriptData, ScriptRejection } from '../domain/types/script.types';
+import {
+  ScriptData,
+  ScriptRejection,
+  ScriptTurn,
+} from '../domain/types/script.types';
 import { TalkData } from '../domain/types/audio.types';
 import { SubredditData } from '../domain/types/subreddit.types';
 import { randomUUID } from 'crypto';
+import { buildDirective, continuityFor } from './continuity';
 import { ClaimLease, ClaimStore } from '../infrastructure/lease/claim-lease';
+import { breakShape, BreakKind } from './break-shape';
 
 const SCRAPE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7-day scrape window
 const ACTIVE_SUB_POOL_TARGET = 20; // Maximum active subreddits with available posts per channel
@@ -41,6 +47,46 @@ const ACTIVE_SUB_POOL_TARGET = 20; // Maximum active subreddits with available p
 const BUFFER_CLAIM_TICK_MS = 30 * 1000;
 const BUFFER_CLAIM_LEASE_MS = 3 * BUFFER_CLAIM_TICK_MS;
 const BUFFER_CAP_MS = 10 * 60 * 1000;
+
+// A run starts when the queue is this short, and produces at least this much talk
+// before it closes the block with a break. Both are choices, not formulas: the low
+// water mark leaves room for a slow run without the station going quiet, and the
+// target is what makes the breaks land about half an hour apart.
+export const RUNWAY_LOW_WATER_SECONDS = 15 * 60;
+// When the watchdog fires. Safety does not depend on this number - the append is
+// awaited in the request that noticed, and the playhead only moves on requests -
+// so it is a smoothness and retry-budget choice.
+export const FILLER_RUNWAY_SECONDS = 60;
+const BATCH_TALK_TARGET_SECONDS = 30 * 60;
+// The loop's spin guard, above what thirty minutes of talk normally needs.
+const MAX_ITEMS_PER_BATCH = 8;
+// A rejection retires content for good, so one run may not walk the pool burning
+// topics because the model keeps answering with something unusable.
+const MAX_REJECTED_TOPICS_PER_RUN = 2;
+
+/** One row of a block: everything needed to write a segment, and nothing else. */
+export interface BlockSegmentSpec {
+  kind: 'talk' | 'music' | 'jingle' | 'liner';
+  audioUrl: string;
+  durationSeconds: number;
+  clusterId?: string;
+  title?: string;
+  artist?: string;
+  /** The posts this conversation speaks for: marked used with the block. */
+  postIds?: string[];
+  /** The words of a conversation, exactly as they were spoken. */
+  script?: ScriptTurn[];
+  /** The outline it was written from, which the next conversation reads. */
+  outline?: string;
+}
+
+function playableSeconds(duration: number | null | undefined): number {
+  return typeof duration === 'number' &&
+    Number.isFinite(duration) &&
+    duration > 0
+    ? duration
+    : 0;
+}
 
 /**
  * QueueService manages channel segment generation and queue replenishment.
@@ -64,69 +110,129 @@ export class QueueService {
     private readonly voiceContract: VoiceContract,
   ) {}
 
-  private readonly inFlightBuffers = new Map<string, Promise<void>>();
+  /**
+   * Writes a whole block in one transaction: play orders are assigned from the
+   * tail read under the station lock, so two writers serialise instead of
+   * colliding, and a half-written sequence never reaches the queue.
+   */
+  public async appendBlock(
+    channelId: string,
+    claimToken: string | null,
+    specs: BlockSegmentSpec[],
+  ): Promise<number> {
+    if (specs.length === 0) return 0;
 
-  async bufferAhead(channelId: string): Promise<void> {
-    const existing = this.inFlightBuffers.get(channelId);
-    if (existing) {
-      this.logger.debug(
-        { channelId },
-        'bufferAhead already in progress for channel, reusing in-flight batch',
-      );
-      return existing;
-    }
-
-    // Buffering runs detached from the request that triggered it, so it gets
-    // its own MikroORM context instead of relying on the caller's. The map is filled
-    // before the first await, so two requests arriving in the same tick share one
-    // batch; the claim inside is what stops a second *instance* doing the same work.
-    const promise = RequestContext.create(this.em, async () => {
-      try {
-        // One batch per station, not one per process. The claim lives on the channel
-        // row, so a second instance stands aside instead of paying for the same
-        // script and the same speech again.
-        const lease = await ClaimLease.take(
-          this.bufferClaimStore(),
-          channelId,
-          {
-            capMs: BUFFER_CAP_MS,
-            tickMs: BUFFER_CLAIM_TICK_MS,
-            leaseMs: BUFFER_CLAIM_LEASE_MS,
-          },
-        );
-        if (!lease) {
-          this.logger.debug(
-            { channelId },
-            'another instance is buffering this station, standing aside',
-          );
-          return;
-        }
-
-        try {
-          lease.start((reason) => {
-            this.logger.warn(
-              { channelId, reason },
-              'buffering lost its claim, letting the batch wind down',
-            );
-          });
-          await this.doBufferAhead(channelId, lease);
-        } finally {
-          await lease.stop();
-        }
-      } finally {
-        this.inFlightBuffers.delete(channelId);
-      }
-    });
-
-    this.inFlightBuffers.set(channelId, promise);
-    return promise;
+    return this.em.transactional((em) =>
+      this.appendBlockIn(em, channelId, claimToken, specs),
+    );
   }
 
   /**
-   * The claim is decided by one conditional write, and that is the only thing making
-   * it safe between processes: it matches a station whose claim is free or older than
-   * the lease, so exactly one instance can win it and a crashed one stops renewing.
+   * The body of an append, on a transaction the caller already owns. The watchdog
+   * needs this: its whole point is that the runway it decided on and the rows it
+   * writes are the same view, so a second instance taking the lock afterwards finds
+   * no hole left to fill.
    */
+  private async appendBlockIn(
+    em: EntityManager,
+    channelId: string,
+    claimToken: string | null,
+    specs: BlockSegmentSpec[],
+  ): Promise<number> {
+    {
+      const channelRepo = em.getRepository(ChannelSchema);
+      const station = await channelRepo.findOne(
+        { id: channelId },
+        { lockMode: LockMode.PESSIMISTIC_WRITE, populate: ['completedPosts'] },
+      );
+      if (!station) return 0;
+      if (claimToken !== null && station.bufferClaimId !== claimToken) {
+        this.logger.warn(
+          { channelId },
+          'claim changed hands while generating, block discarded',
+        );
+        return 0;
+      }
+
+      const segmentRepo = em.getRepository(SegmentSchema);
+      const tail = await segmentRepo.findOne(
+        { channelId },
+        { orderBy: { playOrder: 'DESC' } },
+      );
+      let playOrder = (tail?.playOrder ?? 0) + 1;
+      const alreadyUsed = new Set(
+        station.completedPosts?.getItems().map((post) => post.id) ?? [],
+      );
+
+      for (const spec of specs) {
+        const segment = this.buildSegment(spec);
+        segment.channelId = channelId;
+        segment.playOrder = playOrder++;
+        segment.audioUrl = spec.audioUrl;
+        segment.durationSeconds = spec.durationSeconds;
+        em.persist(segment);
+
+        for (const postId of spec.postIds ?? []) {
+          if (alreadyUsed.has(postId)) continue;
+          station.completedPosts.add(em.getReference<PostRef>('Post', postId));
+          alreadyUsed.add(postId);
+        }
+      }
+      await em.flush();
+      return specs.length;
+    }
+  }
+
+  private buildSegment(spec: BlockSegmentSpec): Segment {
+    switch (spec.kind) {
+      case 'talk': {
+        const talk = new TalkSegment(spec.clusterId, 'ready');
+        talk.script = spec.script ?? null;
+        talk.outline = spec.outline ?? null;
+        return talk;
+      }
+      case 'music':
+        return new MusicSegment(spec.title, spec.artist);
+      case 'liner':
+        return new LinerSegment();
+      case 'jingle':
+        return new JingleSegment();
+    }
+  }
+
+  /**
+   * One run per station, decided by the claim rather than by this process. The run
+   * is detached from the request that noticed, so it gets its own MikroORM context.
+   */
+  async bufferAhead(channelId: string): Promise<void> {
+    return RequestContext.create(this.em, async () => {
+      const lease = await ClaimLease.take(this.bufferClaimStore(), channelId, {
+        capMs: BUFFER_CAP_MS,
+        tickMs: BUFFER_CLAIM_TICK_MS,
+        leaseMs: BUFFER_CLAIM_LEASE_MS,
+      });
+      if (!lease) {
+        this.logger.debug(
+          { channelId },
+          'another instance is buffering this station, standing aside',
+        );
+        return;
+      }
+
+      try {
+        lease.start((reason) => {
+          this.logger.warn(
+            { channelId, reason },
+            'buffering lost its claim, letting the run wind down',
+          );
+        });
+        await this.run(channelId, lease);
+      } finally {
+        await lease.stop();
+      }
+    });
+  }
+
   private bufferClaimStore(): ClaimStore {
     return {
       take: (channelId, token, staleBefore) =>
@@ -154,193 +260,304 @@ export class QueueService {
     };
   }
 
-  private async doBufferAhead(
-    channelId: string,
-    lease: ClaimLease,
-  ): Promise<void> {
-    const lastItem = await this.segmentRepo.findOne(
-      { channelId },
-      { orderBy: { playOrder: 'DESC' } },
-    );
-    let nextPlayOrder = lastItem ? lastItem.playOrder + 1 : 1;
-
-    const talkCount = this.getRandomCount();
-    for (let i = 0; i < talkCount; i++) {
-      // A claim that has gone means another instance owns this station now, so the
-      // batch winds down instead of appending a second copy of the same runway.
-      if (lease.shouldStop) return;
-      const next = await this.appendTalk(channelId, nextPlayOrder, lease);
-      if (lease.shouldStop) return;
-      nextPlayOrder =
-        next ?? (await this.appendFiller(channelId, nextPlayOrder));
-    }
-
-    const musicCount = this.getRandomCount();
-    for (let i = 0; i < musicCount; i++) {
-      if (lease.shouldStop) return;
-      nextPlayOrder = await this.appendMusic(channelId, nextPlayOrder);
-    }
-
-    const adCount = this.getRandomCount();
-    for (let i = 0; i < adCount; i++) {
-      if (lease.shouldStop) return;
-      nextPlayOrder = await this.appendAd(channelId, nextPlayOrder);
-    }
-
-    if (lease.shouldStop) return;
-    await this.appendJingle(channelId, nextPlayOrder++);
-  }
-
-  public getRandomCount(): number {
-    return Math.random() < 0.5 ? 1 : 2;
-  }
-
-  private async appendTalk(
-    channelId: string,
-    playOrder: number,
-    lease: ClaimLease,
-  ): Promise<number | null> {
-    process.stderr.write(
-      `[QueueService] appendTalk called for channel ${channelId}, playOrder ${playOrder}\n`,
-    );
-    const triedPostIds = new Set<string>();
-    let rejectedTopics = 0;
-
-    while (true) {
-      if (lease.shouldStop) return null;
-      // A rejection retires content for good, so one wake-up may not walk the pool
-      // burning topics because the model keeps answering with something unusable.
-      // Filler covers the gap; the next demand-driven wake-up picks up the rest.
-      if (rejectedTopics >= MAX_REJECTED_TOPICS_PER_WAKE_UP) {
-        this.logger.warn(
-          { channelId, rejectedTopics },
-          'too many topics rejected in one wake-up, letting filler cover the gap',
-        );
-        return null;
-      }
-      process.stderr.write(
-        `[QueueService] Looking for pending topic segment...\n`,
+  /**
+   * The generator. Reads the runway *after* the claim, so a run that starts late
+   * does not pay for work the station no longer needs, then produces conversations
+   * until it has at least thirty minutes of talk and appends the whole block -
+   * conversations, announcement, song - in one write.
+   */
+  private async run(channelId: string, lease: ClaimLease): Promise<void> {
+    const runway = await this.computeRunwaySeconds(channelId);
+    if (runway >= RUNWAY_LOW_WATER_SECONDS) {
+      this.logger.debug(
+        { channelId, runway },
+        'the queue filled up while the claim was taken, run stands down',
       );
-      const talkCluster = await this.claimNextTopicCluster(
+      return;
+    }
+
+    const specs: BlockSegmentSpec[] = [];
+    const triedPostIds = new Set<string>();
+    // What the next conversation will follow: the tail of the queue to begin with,
+    // then whatever this run has just produced.
+    let lastAired: { type: string; outline: string | null } | null =
+      await this.readTail(channelId);
+    let producedSeconds = 0;
+    let consecutiveFailures = 0;
+    let rejections = 0;
+    let scrapeFired = false;
+
+    while (
+      producedSeconds < BATCH_TALK_TARGET_SECONDS &&
+      specs.length < MAX_ITEMS_PER_BATCH
+    ) {
+      // The claim went: this instance is no longer the run, and nothing it has
+      // made may reach the queue.
+      if (lease.shouldStop) return;
+
+      const cluster = await this.findPendingTopicSegment(
         channelId,
         triedPostIds,
       );
-      if (!talkCluster) {
-        process.stderr.write(
-          `[QueueService] No pending topic segment found. Checking pool deficit...\n`,
+      if (!cluster) {
+        if (!scrapeFired) {
+          scrapeFired = true;
+          await this.checkAndScrapePoolDeficit(channelId, triedPostIds);
+        }
+        break;
+      }
+      for (const post of cluster.posts) {
+        triedPostIds.add(post.id);
+      }
+
+      const directive = buildDirective(
+        continuityFor(lastAired),
+        lastAired?.outline ?? null,
+      );
+      const outcome = await this.produceConversation(cluster, lease, directive);
+      if (outcome.kind === 'claim-lost') return;
+
+      if (outcome.kind === 'rejected') {
+        rejections++;
+        this.logger.warn(
+          { channelId, clusterId: cluster.id, reason: outcome.reason },
+          'the model rejected this topic, retiring it',
         );
-        await this.checkAndScrapePoolDeficit(channelId, triedPostIds);
-        return null;
+        await this.retirePosts(
+          channelId,
+          cluster.posts.map((post) => post.id),
+        );
+        if (rejections >= MAX_REJECTED_TOPICS_PER_RUN) break;
+        continue;
       }
 
-      process.stderr.write(
-        `[QueueService] Found topic cluster: ${talkCluster.id} with ${talkCluster.posts.length} post(s). Marking completed...\n`,
-      );
-      // The posts were already marked inside the transaction that picked them.
-      for (const p of talkCluster.posts) {
-        triedPostIds.add(p.id);
+      if (outcome.kind === 'failed') {
+        consecutiveFailures++;
+        if (consecutiveFailures >= 2) break;
+        continue;
       }
 
-      // Step 2: Check pool health directly from DB state (now reflecting consumed posts)
-      process.stderr.write(
-        `[QueueService] Checking pool deficit after consumption...\n`,
-      );
-      await this.checkAndScrapePoolDeficit(channelId, triedPostIds);
+      specs.push(outcome.spec);
+      lastAired = {
+        type: 'talk',
+        outline: outcome.spec.outline?.trim() || null,
+      };
+      producedSeconds += outcome.spec.durationSeconds;
+      consecutiveFailures = 0;
+    }
 
-      // Step 3: Synthesize voice track
+    // Nothing was produced, so there is no block to end and nothing to write.
+    if (specs.length === 0) return;
+
+    specs.push(
+      ...(await this.drawBreak(
+        channelId,
+        specs[specs.length - 1].kind,
+        'break',
+      )),
+    );
+    await this.appendBlock(channelId, lease.token, specs);
+  }
+
+  /**
+   * A conversation costs a script and a speech, and the claim decides whether this
+   * instance is still the one that should be paying for them.
+   */
+  private async produceConversation(
+    cluster: TalkCluster,
+    lease: ClaimLease,
+    directive: string,
+  ): Promise<
+    | { kind: 'ready'; spec: BlockSegmentSpec }
+    | { kind: 'claim-lost' }
+    | { kind: 'rejected'; reason: string }
+    | { kind: 'failed' }
+  > {
+    const posts = cluster.posts;
+    try {
+      const outcome = await this.generateTalkVoiceTrack(
+        posts,
+        lease,
+        directive,
+      );
+      if (outcome === null) return { kind: 'claim-lost' };
+      if (isScriptRejection(outcome)) {
+        return { kind: 'rejected', reason: outcome.reason };
+      }
+      const { voiceTrack, scriptObj } = outcome;
+      return {
+        kind: 'ready',
+        spec: {
+          kind: 'talk',
+          clusterId: cluster.id,
+          postIds: posts.map((post) => post.id),
+          audioUrl: voiceTrack.filePath,
+          durationSeconds: voiceTrack.durationSeconds,
+          script: scriptObj.turns,
+          outline: scriptObj.outline,
+        },
+      };
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      const context = { channelId: cluster.id, err: error };
+      if (isRetryableLlmFailure(err)) {
+        this.logger.warn(
+          { ...context, clusterId: cluster.id },
+          'voice generation failed, the run will retry once before it gives up',
+        );
+      } else {
+        this.logger.error(
+          { ...context, clusterId: cluster.id },
+          'voice generation failed and will keep failing until the provider configuration is fixed (model retired, key rejected, provider refusing)',
+        );
+      }
+      return { kind: 'failed' };
+    }
+  }
+
+  /**
+   * Draws the media for a break. A missing pool costs the break a piece, never the
+   * conversations: the block is appended either way.
+   */
+  private async drawBreak(
+    channelId: string,
+    previousKind: BlockSegmentSpec['kind'] | null,
+    kind: BreakKind,
+  ): Promise<BlockSegmentSpec[]> {
+    const shape = breakShape(previousKind, kind);
+    const specs: BlockSegmentSpec[] = [];
+
+    for (const item of shape) {
       try {
-        process.stderr.write(
-          `[QueueService] Starting generateTalkVoiceTrack...\n`,
-        );
-        const outcome = await this.generateTalkVoiceTrack(
-          talkCluster.posts,
-          lease,
-        );
-        // The claim went while the posts were being read: not our station any more.
-        if (outcome === null) return null;
-        if (isScriptRejection(outcome)) {
-          rejectedTopics++;
-          this.logger.warn(
-            {
-              channelId,
-              clusterId: talkCluster.id,
-              reason: outcome.reason,
-            },
-            'the model rejected this topic, retiring it and trying the next one',
-          );
-          // The lease stays: this content is spent rather than postponed, which
-          // also shrinks the pool honestly so scrapes top the channel up instead
-          // of the station re-chewing the same poisoned post every wake-up.
-          continue;
-        }
-        const { voiceTrack, scriptObj } = outcome;
-        process.stderr.write(
-          `[QueueService] Voice track generated: ${voiceTrack.filePath}, persisting TalkSegment...\n`,
-        );
-        const talkItem = new TalkSegment(talkCluster.id, 'ready');
-        talkItem.channelId = channelId;
-        talkItem.playOrder = playOrder;
-        talkItem.audioUrl = voiceTrack.filePath;
-        talkItem.durationSeconds = voiceTrack.durationSeconds;
-        talkItem.script = scriptObj.turns;
-        const nextOrder = await this.persistSegmentWithOrderRetry(
-          talkItem,
-          channelId,
-          playOrder,
-        );
-        process.stderr.write(
-          `[QueueService] TalkSegment persisted successfully with status 'ready'!\n`,
-        );
-        return nextOrder;
-      } catch (err) {
-        process.stderr.write(
-          `[QueueService] voice generation failed: ${err instanceof Error ? err.stack || err.message : String(err)}\n`,
-        );
-        const failureContext = {
-          channelId,
-          clusterId: talkCluster.id,
-          err: err instanceof Error ? err : new Error(String(err)),
-        };
-
-        if (isRetryableLlmFailure(err)) {
-          this.logger.warn(
-            failureContext,
-            'voice generation failed, will retry when the queue runs low again',
-          );
+        if (item === 'liner') {
+          const liner = await this.mediaService.getRandomLiner();
+          specs.push({
+            kind: 'liner',
+            audioUrl: liner.filePath,
+            durationSeconds: liner.durationSeconds,
+          });
         } else {
-          this.logger.error(
-            failureContext,
-            'voice generation failed and will keep failing until the provider configuration is fixed (model retired, key rejected, provider refusing)',
-          );
+          const music = await this.mediaService.getRandomMusic();
+          specs.push({
+            kind: 'music',
+            title: music.title,
+            artist: music.artist,
+            audioUrl: music.filePath,
+            durationSeconds: music.durationSeconds,
+          });
         }
-
-        // The post goes back into the pool: retry is demand driven and needs
-        // something left to retry when the filler runs low.
-        await this.releasePostLease(
-          channelId,
-          talkCluster.posts.map((p) => p.id),
+      } catch (err) {
+        this.logger.warn(
+          {
+            channelId,
+            item,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          'a break pool is empty, leaving that part of the break out',
         );
-        // Infrastructure, not content: every remaining topic would fail the same
-        // way, so stop and let the caller append filler instead of grinding
-        // through the pool one futile attempt at a time.
-        return null;
       }
     }
+    return specs;
+  }
+
+  /**
+   * Minutes of airtime left from this moment: the rest of what is playing now plus
+   * everything queued behind it. One function, called by the trigger, the run's gate
+   * and the watchdog, because two implementations drift silently.
+   */
+  public async computeRunwaySeconds(channelId: string): Promise<number> {
+    const channel = await this.channelRepo.findOne({ id: channelId });
+    if (!channel) return 0;
+
+    const current = channel.currentSegmentId
+      ? await this.segmentRepo.findOne({ id: channel.currentSegmentId })
+      : await this.segmentRepo.findOne(
+          { channelId, playOrder: { $gte: channel.currentPlayOrder ?? 1 } },
+          { orderBy: { playOrder: 'ASC' } },
+        );
+
+    const ahead = await this.segmentRepo.find(
+      { channelId, playOrder: { $gt: current?.playOrder ?? 0 } },
+      { orderBy: { playOrder: 'ASC' } },
+    );
+    const aheadSeconds = ahead.reduce(
+      (total, segment) => total + playableSeconds(segment.durationSeconds),
+      0,
+    );
+    if (!current) return aheadSeconds;
+
+    const startedAt = channel.playheadStartedAt?.getTime() ?? Date.now();
+    const elapsed = Math.max(0, (Date.now() - startedAt) / 1000);
+    return (
+      Math.max(0, playableSeconds(current.durationSeconds) - elapsed) +
+      aheadSeconds
+    );
+  }
+
+  /**
+   * Retires posts whose topic the model refused. A refusal is a statement about the
+   * content, so the posts are spent rather than postponed - otherwise every run
+   * re-chews the same poisoned topic and the pool never shrinks honestly.
+   */
+  public async retirePosts(
+    channelId: string,
+    postIds: string[],
+  ): Promise<void> {
+    if (postIds.length === 0) return;
+
+    await this.em.transactional(async (em) => {
+      const channelRepo = em.getRepository(ChannelSchema);
+      const station = await channelRepo.findOne(
+        { id: channelId },
+        { populate: ['completedPosts'] },
+      );
+      if (!station) return;
+
+      const alreadyUsed = new Set(
+        station.completedPosts.getItems().map((post) => post.id),
+      );
+      for (const postId of postIds) {
+        if (alreadyUsed.has(postId)) continue;
+        station.completedPosts.add(em.getReference<PostRef>('Post', postId));
+        alreadyUsed.add(postId);
+      }
+      await em.flush();
+    });
+  }
+
+  /** What aired last, as far as the next conversation is concerned. */
+  private async readTail(
+    channelId: string,
+  ): Promise<{ type: string; outline: string | null } | null> {
+    const tail = await this.segmentRepo.findOne(
+      { channelId },
+      { orderBy: { playOrder: 'DESC' } },
+    );
+    if (!tail) return null;
+    // Only a conversation has an outline; everything else ends its own sentence.
+    const outline =
+      tail.type === 'talk' ? ((tail as TalkSegment).outline ?? null) : null;
+    return { type: tail.type, outline };
   }
 
   private async generateTalkVoiceTrack(
     posts: PostData[],
     lease: ClaimLease,
+    directive: string,
   ): Promise<
     { voiceTrack: TalkData; scriptObj: ScriptData } | ScriptRejection | null
   > {
     // Nothing below is free, and the claim decides whether this instance is still
-    // the one that should be paying. Null means stop the batch.
+    // the one that should be paying. Null means stop the run.
     if (lease.shouldStop) return null;
     const comments = await this.contentContract.getCommentsByPostIds(
       posts.map((p) => p.id),
     );
-    const rawScript = await this.scriptContract.generateScript(posts, comments);
+    const rawScript = await this.scriptContract.generateScript(
+      posts,
+      comments,
+      directive,
+    );
     if (isScriptRejection(rawScript)) {
       return rawScript;
     }
@@ -364,166 +581,47 @@ export class QueueService {
     return { voiceTrack, scriptObj };
   }
 
-  private async persistSegmentWithOrderRetry(
-    item: Segment,
-    channelId: string,
-    playOrder: number,
-    em: EntityManager = this.em,
-  ): Promise<number> {
-    try {
-      await em.persist(item).flush();
-      return playOrder + 1;
-    } catch (err: unknown) {
-      const errStr = String(err);
-      if (
-        (typeof err === 'object' &&
-          err !== null &&
-          'code' in err &&
-          (err as { code: string }).code === '23505') ||
-        errStr.includes('unique constraint') ||
-        errStr.includes('duplicate key')
-      ) {
-        this.logger.warn(
-          { channelId, playOrder },
-          'playOrder collision detected, advancing to latest order',
-        );
-        const latest = await em
-          .getRepository(SegmentSchema)
-          .findOne({ channelId }, { orderBy: { playOrder: 'DESC' } });
-        item.playOrder = (latest?.playOrder ?? playOrder) + 1;
-        await em.persist(item).flush();
-        return item.playOrder + 1;
-      }
-      throw err;
-    }
-  }
+  /**
+   * The watchdog. Only it ever writes filler, and for one reason: the station is
+   * about to go quiet. It is awaited by the request that noticed, so the manifest
+   * that request returns already has the filler in it.
+   */
+  public async ensureFiller(channelId: string): Promise<void> {
+    // One transaction: the runway is read under the station lock and the filler is
+    // written before that lock is released, so two instances that both noticed an
+    // empty station cannot both fill it. The second one takes the lock, sees the
+    // rows the first one wrote, and finds nothing left to do.
+    await this.em.transactional(async (em) => {
+      const channelRepo = em.getRepository(ChannelSchema);
+      const station = await channelRepo.findOne(
+        { id: channelId },
+        { lockMode: LockMode.PESSIMISTIC_WRITE, populate: ['completedPosts'] },
+      );
+      if (!station) return;
 
-  public async ensureInstantFiller(
-    channelId: string,
-    minCount: number = 6,
-  ): Promise<void> {
-    // Counting the station and topping it up have to be one step: two instances that
-    // both count before either writes both fill the same gap, and the station ends up
-    // with twice the filler it asked for.
-    await this.em.transactional(async (txEm) => {
-      await this.fillUpTo(txEm, channelId, minCount);
-    });
-  }
+      const runway = await this.computeRunwaySeconds(channelId);
+      if (runway >= FILLER_RUNWAY_SECONDS) return;
 
-  private async fillUpTo(
-    em: EntityManager,
-    channelId: string,
-    minCount: number,
-  ): Promise<void> {
-    const segmentRepo = em.getRepository(SegmentSchema);
-    const channel = await em
-      .getRepository(ChannelSchema)
-      .findOne({ id: channelId }, { lockMode: LockMode.PESSIMISTIC_WRITE });
-    if (!channel) return;
-
-    const existingCount = await segmentRepo.count({
-      channelId,
-    });
-    if (existingCount >= minCount) {
-      return;
-    }
-
-    const lastItem = await segmentRepo.findOne(
-      { channelId },
-      { orderBy: { playOrder: 'DESC' } },
-    );
-    let nextPlayOrder = lastItem ? lastItem.playOrder + 1 : 1;
-
-    const needed = minCount - existingCount;
-    for (let i = 0; i < needed; i++) {
-      try {
-        if (i % 3 === 0) {
-          nextPlayOrder = await this.appendJingle(channelId, nextPlayOrder, em);
-        } else if (i % 3 === 1) {
-          nextPlayOrder = await this.appendAd(channelId, nextPlayOrder, em);
-        } else {
-          nextPlayOrder = await this.appendMusic(channelId, nextPlayOrder, em);
-        }
-      } catch {
-        // Fallback: create emergency static jingle segment if media pool is unavailable
-        const fallbackItem = new JingleSegment();
-        fallbackItem.channelId = channelId;
-        fallbackItem.playOrder = nextPlayOrder;
-        fallbackItem.audioUrl = 'jingles/station-id.mp3';
-        fallbackItem.durationSeconds = 10;
-        nextPlayOrder = await this.persistSegmentWithOrderRetry(
-          fallbackItem,
+      const tail = await em
+        .getRepository(SegmentSchema)
+        .findOne({ channelId }, { orderBy: { playOrder: 'DESC' } });
+      this.logger.warn(
+        {
           channelId,
-          nextPlayOrder,
-          em,
-        );
-      }
-    }
-  }
+          runwaySeconds: Math.round(runway),
+          deficitSeconds: Math.round(FILLER_RUNWAY_SECONDS - runway),
+        },
+        'the station was about to run out of airtime, filling the gap',
+      );
 
-  private async appendFiller(
-    channelId: string,
-    playOrder: number,
-    em: EntityManager = this.em,
-  ): Promise<number> {
-    return this.appendAd(channelId, playOrder, em);
-  }
-
-  private async appendMusic(
-    channelId: string,
-    playOrder: number,
-    em: EntityManager = this.em,
-  ): Promise<number> {
-    const music = await this.mediaService.getRandomMusic();
-    const musicItem = new MusicSegment(music.title, music.artist);
-    musicItem.channelId = channelId;
-    musicItem.playOrder = playOrder;
-    musicItem.audioUrl = music.filePath;
-    musicItem.durationSeconds = music.durationSeconds;
-    return await this.persistSegmentWithOrderRetry(
-      musicItem,
-      channelId,
-      playOrder,
-      em,
-    );
-  }
-
-  private async appendAd(
-    channelId: string,
-    playOrder: number,
-    em: EntityManager = this.em,
-  ): Promise<number> {
-    const ad = await this.mediaService.getRandomAd();
-    const adItem = new AdSegment();
-    adItem.channelId = channelId;
-    adItem.playOrder = playOrder;
-    adItem.audioUrl = ad.filePath;
-    adItem.durationSeconds = ad.durationSeconds;
-    return await this.persistSegmentWithOrderRetry(
-      adItem,
-      channelId,
-      playOrder,
-      em,
-    );
-  }
-
-  private async appendJingle(
-    channelId: string,
-    playOrder: number,
-    em: EntityManager = this.em,
-  ): Promise<number> {
-    const jingle = await this.mediaService.getRandomJingle();
-    const jingleItem = new JingleSegment();
-    jingleItem.channelId = channelId;
-    jingleItem.playOrder = playOrder;
-    jingleItem.audioUrl = jingle.filePath;
-    jingleItem.durationSeconds = jingle.durationSeconds;
-    return await this.persistSegmentWithOrderRetry(
-      jingleItem,
-      channelId,
-      playOrder,
-      em,
-    );
+      // No claim: the watchdog has to work while a run is still generating.
+      const specs = await this.drawBreak(
+        channelId,
+        tail?.type ?? null,
+        'filler',
+      );
+      await this.appendBlockIn(em, channelId, null, specs);
+    });
   }
 
   public async findPendingTopicSegment(
@@ -626,97 +724,7 @@ export class QueueService {
       }
     }
   }
-
-  /**
-   * Picks this station's next cluster and marks its posts as used in the same
-   * transaction, with the station row locked. Two workers that both read the
-   * unplayed posts before either writes would otherwise each believe the cluster is
-   * theirs and each pay for it; the lock makes the decision and the record one step,
-   * so the second worker sees the posts taken and moves on.
-   */
-  private async claimNextTopicCluster(
-    channelId: string,
-    excludedPostIds: Set<string>,
-  ): Promise<TalkCluster | null> {
-    return this.em.transactional(async (txEm) => {
-      const channelRepo = txEm.getRepository(ChannelSchema);
-      // Locking the station is what makes the decision and the record one step: a
-      // second worker waits here, then reads the posts as already spoken for. The
-      // lock lives here rather than in the reader, because the reader is also a
-      // preview the admin endpoint calls outside any transaction.
-      const station = await channelRepo.findOne(
-        { id: channelId },
-        { lockMode: LockMode.PESSIMISTIC_WRITE },
-      );
-      if (!station) return null;
-
-      const cluster = await this.findPendingTopicSegment(
-        channelId,
-        excludedPostIds,
-        channelRepo,
-      );
-      if (!cluster) return null;
-
-      for (const post of cluster.posts) {
-        await this.setPostConsumed(channelId, post.id, true, txEm);
-      }
-      return cluster;
-    });
-  }
-
-  /**
-   * Puts a post back into the pool when its talk was never produced. Without
-   * this a dead provider burns the pool one cluster at a time, and the
-   * demand-driven retry has nothing left to work with.
-   */
-  private async releasePostLease(
-    channelId: string,
-    postIds: string[],
-  ): Promise<void> {
-    for (const postId of postIds) {
-      await this.setPostConsumed(channelId, postId, false);
-    }
-  }
-
-  /**
-   * The pivot table belongs to the ORM, which knows its column names. Writing
-   * this insert by hand is how it silently broke when the foreign keys were
-   * renamed to snake_case - a repository mock accepts any string, and the catch
-   * that swallowed the error logged at debug.
-   */
-  private async setPostConsumed(
-    channelId: string,
-    postId: string,
-    consumed: boolean,
-    em: EntityManager = this.em,
-  ): Promise<void> {
-    const channel = await em
-      .getRepository(ChannelSchema)
-      .findOne({ id: channelId }, { populate: ['completedPosts'] });
-    if (!channel) return;
-
-    const alreadyRecorded = channel.completedPosts
-      .getItems()
-      .some((item) => item.id === postId);
-    if (alreadyRecorded === consumed) return;
-
-    const postRef = em.getReference<PostRef>('Post', postId);
-    if (consumed) {
-      channel.completedPosts.add(postRef);
-    } else {
-      channel.completedPosts.remove(postRef);
-    }
-    await em.flush();
-  }
 }
-
-/**
- * How many topics a single wake-up may have refused before it hands the slot to
- * filler. Each attempt is already bounded by the provider's own timeouts and an
- * outage stops the walk outright, so this count is what stops a fast but unusable
- * model from retiring half the pool in one go.
- */
-const MAX_REJECTED_TOPICS_PER_WAKE_UP = 2;
 
 /**
  * A refusal by the model, which says nothing about the next topic. Takes any

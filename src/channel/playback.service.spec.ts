@@ -37,7 +37,8 @@ describe('PlaybackService', () => {
 
   const mockQueueService = {
     bufferAhead: jest.fn().mockResolvedValue(undefined),
-    ensureInstantFiller: jest.fn().mockResolvedValue(undefined),
+    ensureFiller: jest.fn().mockResolvedValue(undefined),
+    computeRunwaySeconds: jest.fn().mockResolvedValue(1200),
   };
 
   const mockStorageService = {
@@ -85,7 +86,7 @@ describe('PlaybackService', () => {
     });
 
     describe('Cycle 3.2: Cold Start Initialization & Orphan Recovery', () => {
-      it('initializes instant filler and triggers async bufferAhead on cold start', async () => {
+      it('fills an empty station before it serves the window, then buffers ahead', async () => {
         const channelId = 'chan-cold';
         const channel = Object.assign(new Channel(), {
           id: channelId,
@@ -103,24 +104,47 @@ describe('PlaybackService', () => {
         });
 
         mockEntityManager.findOne.mockResolvedValue(channel);
-        mockSegmentRepo.count
-          .mockResolvedValueOnce(0) // Cold start segment count is 0
-          .mockResolvedValue(5);
+        mockQueueService.computeRunwaySeconds.mockResolvedValue(0);
         mockSegmentRepo.findOne.mockResolvedValue(firstSegment);
         mockSegmentRepo.find = jest.fn().mockResolvedValue([firstSegment]);
 
         const result = await service.getLiveManifest(channelId);
 
-        expect(mockQueueService.ensureInstantFiller).toHaveBeenCalledWith(
-          channelId,
-          6,
-        );
+        expect(mockQueueService.ensureFiller).toHaveBeenCalledWith(channelId);
         expect(mockQueueService.bufferAhead).toHaveBeenCalledWith(channelId);
         expect(result.visibility).toBe('public');
         expect(channel.currentSegmentId).toBe('seg-first');
         expect(channel.playheadStartedAt).toBeInstanceOf(Date);
         expect(channel.lastActiveAt).toBeInstanceOf(Date);
         expect(mockEntityManager.flush).toHaveBeenCalled();
+      });
+
+      it('does not fill when the station still has runway', async () => {
+        const channelId = 'chan-healthy';
+        const channel = Object.assign(new Channel(), {
+          id: channelId,
+          currentSegmentId: 'seg-1',
+          currentPlayOrder: 1,
+          playheadStartedAt: new Date(),
+          lastActiveAt: new Date(),
+        });
+        const segment = Object.assign(new MusicSegment(), {
+          id: 'seg-1',
+          channelId,
+          playOrder: 1,
+          durationSeconds: 600,
+          audioUrl: 'music/song.mp3',
+        });
+
+        mockEntityManager.findOne.mockResolvedValue(channel);
+        mockSegmentRepo.findOne.mockResolvedValue(segment);
+        mockSegmentRepo.find = jest.fn().mockResolvedValue([segment]);
+        mockQueueService.computeRunwaySeconds.mockResolvedValue(20 * 60);
+
+        await service.getLiveManifest(channelId);
+
+        expect(mockQueueService.ensureFiller).not.toHaveBeenCalled();
+        expect(mockQueueService.bufferAhead).not.toHaveBeenCalled();
       });
 
       it('recovers from orphaned/deleted playhead to the live edge without rewinding into retained historical segments', async () => {
@@ -211,7 +235,7 @@ describe('PlaybackService', () => {
         });
 
         mockEntityManager.findOne.mockResolvedValue(channel);
-        mockSegmentRepo.count.mockResolvedValue(0);
+        mockQueueService.computeRunwaySeconds.mockResolvedValue(0);
         mockSegmentRepo.findOne.mockResolvedValue(null);
 
         mockSegmentRepo.find = jest
@@ -221,10 +245,7 @@ describe('PlaybackService', () => {
 
         const result = await service.getLiveManifest(channelId);
 
-        expect(mockQueueService.ensureInstantFiller).toHaveBeenCalledWith(
-          channelId,
-          6,
-        );
+        expect(mockQueueService.ensureFiller).toHaveBeenCalledWith(channelId);
         expect(channel.currentSegmentId).toBe('seg-filler-1');
         expect(channel.currentPlayOrder).toBe(1);
         expect(result.manifest).toContain('#EXT-X-MEDIA-SEQUENCE:1');
@@ -414,7 +435,7 @@ describe('PlaybackService', () => {
     });
 
     describe('Cycle 3.5: Low Runway Replenishment (Rule Q-5)', () => {
-      it('triggers queue bufferAhead when ready segment runway is low (< 4)', async () => {
+      it('triggers bufferAhead when less than fifteen minutes of airtime is left', async () => {
         const channelId = 'chan-runway';
         const now = new Date('2026-09-10T12:00:00.000Z');
         jest.useFakeTimers();
@@ -423,6 +444,7 @@ describe('PlaybackService', () => {
         const channel = Object.assign(new Channel(), {
           id: channelId,
           currentSegmentId: 'seg-1',
+          currentPlayOrder: 1,
           playheadStartedAt: now,
           lastActiveAt: now,
         });
@@ -436,24 +458,15 @@ describe('PlaybackService', () => {
         });
 
         mockEntityManager.findOne.mockResolvedValue(channel);
-        mockSegmentRepo.findOne.mockResolvedValueOnce(segment);
-        // Only 2 segments ahead (< 4)
-        mockSegmentRepo.count.mockImplementation(
-          (criteria: { channelId?: string; playOrder?: { $gt?: number } }) => {
-            if (criteria.playOrder?.$gt !== undefined) {
-              return Promise.resolve(2);
-            }
-            return Promise.resolve(5);
-          },
-        );
+        mockSegmentRepo.findOne.mockResolvedValue(segment);
         mockSegmentRepo.find = jest.fn().mockResolvedValue([segment]);
+        mockQueueService.computeRunwaySeconds.mockResolvedValue(14 * 60);
 
         await service.getLiveManifest(channelId);
 
-        expect(mockSegmentRepo.count).toHaveBeenCalledWith({
+        expect(mockQueueService.computeRunwaySeconds).toHaveBeenCalledWith(
           channelId,
-          playOrder: { $gt: 1 },
-        });
+        );
         expect(mockQueueService.bufferAhead).toHaveBeenCalledWith(channelId);
 
         jest.useRealTimers();
@@ -1154,7 +1167,7 @@ describe('PlaybackService', () => {
         expect(result.manifest).toContain('music/good.mp3');
       });
 
-      it('Issue 5: ensures instant filler executes outside the pessimistic write transaction lock', async () => {
+      it('fills the station outside the playhead lock, and before the window is read', async () => {
         const channelId = 'chan-issue-5';
         const channel = Object.assign(new Channel(), {
           id: channelId,
@@ -1178,7 +1191,7 @@ describe('PlaybackService', () => {
           },
         );
 
-        mockQueueService.ensureInstantFiller.mockImplementation(() => {
+        mockQueueService.ensureFiller.mockImplementation(() => {
           if (insideTransaction) {
             fillerCalledInsideTx = true;
           }
@@ -1194,20 +1207,19 @@ describe('PlaybackService', () => {
         });
 
         mockEntityManager.findOne.mockResolvedValue(channel);
-        mockSegmentRepo.count.mockResolvedValue(1);
+        mockQueueService.computeRunwaySeconds.mockResolvedValue(30);
         mockSegmentRepo.findOne.mockResolvedValue(seg1);
-        mockSegmentRepo.find = jest
-          .fn()
-          .mockResolvedValueOnce([])
-          .mockResolvedValueOnce([seg1]);
+        mockSegmentRepo.find = jest.fn().mockResolvedValue([seg1]);
 
         await service.getLiveManifest(channelId);
 
-        expect(mockQueueService.ensureInstantFiller).toHaveBeenCalledWith(
-          channelId,
-          6,
-        );
+        expect(mockQueueService.ensureFiller).toHaveBeenCalledWith(channelId);
+        // Outside the lock: it writes its own rows under its own transaction.
         expect(fillerCalledInsideTx).toBe(false);
+        // And the window is read after it, so the filler reaches the manifest.
+        expect(
+          mockQueueService.ensureFiller.mock.invocationCallOrder[0],
+        ).toBeLessThan(mockSegmentRepo.find.mock.invocationCallOrder[0]);
       });
     });
   });

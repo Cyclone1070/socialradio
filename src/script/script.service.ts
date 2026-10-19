@@ -7,6 +7,39 @@ import {
   ScriptRejection,
   ScriptTurn,
 } from '../domain/types/script.types';
+import { ContinuityKind, describeOpeningProblem } from './opening';
+
+const CASE_MARKER = /^\s*\[([a-z-]+)\]\s*/;
+
+/**
+ * A directive may arrive carrying the case it was built for, so the opening check
+ * and the instructions the model reads are the same decision, read once.
+ */
+function readContinuityCase(directive?: string): {
+  kind: ContinuityKind | undefined;
+  directive: string | undefined;
+} {
+  if (!directive) return { kind: undefined, directive: undefined };
+  const marker = CASE_MARKER.exec(directive);
+  const kind = marker?.[1];
+  const known =
+    kind === 'open-the-show' ||
+    kind === 'welcome-back' ||
+    kind === 'pick-up-the-thread'
+      ? kind
+      : undefined;
+  return {
+    kind: known,
+    directive: directedText(directive, marker),
+  };
+}
+
+function directedText(
+  directive: string,
+  marker: RegExpExecArray | null,
+): string {
+  return marker ? directive.slice(marker[0].length) : directive;
+}
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
 
 export const STAGE1_OUTLINE_SYSTEM_PROMPT = `You are an executive producer for an authentic call-in talk radio show called "Social Radio".
@@ -186,6 +219,8 @@ export class ScriptService implements ScriptContract {
   async generateScript(
     posts: PostData[],
     comments: CommentData[],
+    continuityDirective?: string,
+    statedCase?: ContinuityKind,
   ): Promise<ScriptData | ScriptRejection> {
     const startMs = Date.now();
     const primaryPost = posts[0];
@@ -238,6 +273,8 @@ export class ScriptService implements ScriptContract {
     // and hopes for a different result. Provider errors are deliberately not caught
     // here: they propagate, because once the SDK has spent its own retries another
     // attempt with the same input cannot help, and the caller needs to know.
+    const asked = readContinuityCase(continuityDirective);
+    const openingCase = statedCase ?? asked.kind;
     let outlineMarkdown = '';
     let stage1Attempts = 0;
     let outlineProblem: string | null = null;
@@ -298,7 +335,10 @@ export class ScriptService implements ScriptContract {
       const repairNote = dialogueProblem
         ? buildRepairNote(dialogueProblem, rejectedDialogue)
         : '';
-      const stage2UserPrompt = `=== STAGE 1 SHOW OUTLINE (Follow this Markdown roadmap strictly) ===\n${outlineMarkdown}\n\n=== ORIGINAL SOURCE MATERIAL (Use for rich dialogue details & quotes) ===\n${sourceMaterial}\n\nPlease write the complete spoken dialogue script now following the Stage 1 outline.${repairNote}`;
+      const continuityNote = asked.directive
+        ? `\n\n=== HOW TO OPEN (do not skip this) ===\n${asked.directive}`
+        : '';
+      const stage2UserPrompt = `=== STAGE 1 SHOW OUTLINE (Follow this Markdown roadmap strictly) ===\n${outlineMarkdown}\n\n=== ORIGINAL SOURCE MATERIAL (Use for rich dialogue details & quotes) ===\n${sourceMaterial}${continuityNote}\n\nPlease write the complete spoken dialogue script now following the Stage 1 outline.${repairNote}`;
 
       process.stderr.write(
         `[ScriptService] Calling LLM for Stage 2 (attempt ${stage2Attempts})...\n`,
@@ -330,10 +370,27 @@ export class ScriptService implements ScriptContract {
       process.stderr.write(
         `[ScriptService] Parsed ${scriptData.turns.length} turns\n`,
       );
+      const openingProblem = describeOpeningProblem(
+        openingCase,
+        scriptData.turns[0]?.text ?? '',
+      );
+      if (openingProblem !== null) {
+        dialogueProblem = `its opening does not fit the show: ${openingProblem}`;
+        process.stderr.write(
+          `[ScriptService] Stage 2 rejected on attempt ${stage2Attempts}: ${dialogueProblem}\n`,
+        );
+        this.logger.warn(
+          { attempt: stage2Attempts, problem: dialogueProblem },
+          'Stage 2 opening contradicted the directive, re-asking',
+        );
+        continue;
+      }
+
       if (scriptData.turns.length >= 5) {
         process.stderr.write(
           `[ScriptService] Stage 2 dialogue valid with ${scriptData.turns.length} turns!\n`,
         );
+        dialogueProblem = null;
         break;
       }
       dialogueProblem = `it has only ${scriptData.turns.length} turns, and at least 5 are required`;
@@ -343,7 +400,11 @@ export class ScriptService implements ScriptContract {
       );
     }
 
-    if (!scriptData || scriptData.turns.length < 5) {
+    if (
+      !scriptData ||
+      scriptData.turns.length < 5 ||
+      dialogueProblem !== null
+    ) {
       const reason = `Stage 2 dialogue rejected after 2 attempts: ${dialogueProblem ?? 'no usable dialogue came back'}`;
       this.logger.error({ postId: primaryPost.id, reason }, reason);
       return { rejected: true, reason, postId: primaryPost.id, turns: [] };
@@ -366,7 +427,7 @@ export class ScriptService implements ScriptContract {
       '2-Stage LLM script generation finished',
     );
 
-    return scriptData;
+    return { ...scriptData, outline: outlineMarkdown };
   }
 }
 

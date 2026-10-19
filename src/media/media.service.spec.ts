@@ -3,8 +3,8 @@ import { getRepositoryToken } from '@mikro-orm/nestjs';
 import { MediaService } from './media.service';
 import {
   MusicTrackSchema,
-  AdTrackSchema,
   JingleSchema,
+  LinerSchema,
 } from '../infrastructure/database/schemas/media.schema';
 import { NotFoundException } from '@nestjs/common';
 import { PinoLogger } from 'nestjs-pino';
@@ -16,11 +16,11 @@ describe('MediaService', () => {
     findAll: jest.fn(),
   };
 
-  const mockAdRepo = {
+  const mockJingleRepo = {
     findAll: jest.fn(),
   };
 
-  const mockJingleRepo = {
+  const mockLinerRepo = {
     findAll: jest.fn(),
   };
 
@@ -32,8 +32,8 @@ describe('MediaService', () => {
           provide: getRepositoryToken(MusicTrackSchema),
           useValue: mockMusicRepo,
         },
-        { provide: getRepositoryToken(AdTrackSchema), useValue: mockAdRepo },
         { provide: getRepositoryToken(JingleSchema), useValue: mockJingleRepo },
+        { provide: getRepositoryToken(LinerSchema), useValue: mockLinerRepo },
       ],
     }).compile();
 
@@ -93,32 +93,31 @@ describe('MediaService', () => {
     });
   });
 
-  describe('getRandomAd', () => {
-    it('should return a random ad track as a AudioFileRef', async () => {
-      const ads = [
+  describe('getRandomLiner', () => {
+    it('should return a liner with the words it says', async () => {
+      mockLinerRepo.findAll.mockResolvedValue([
         {
           id: '1',
-          advertiser: 'Brand 1',
-          filePath: 'ad1.mp3',
-          durationSeconds: 30,
+          text: 'We will be right back.',
+          filePath: 'liners/back-01.mp3',
+          durationSeconds: 3.9,
         },
-      ];
-      mockAdRepo.findAll.mockResolvedValue(ads);
+      ]);
 
-      const result = await service.getRandomAd();
+      const result = await service.getRandomLiner();
 
-      expect(mockAdRepo.findAll).toHaveBeenCalled();
+      expect(mockLinerRepo.findAll).toHaveBeenCalled();
       expect(result).toEqual({
-        filePath: 'ad1.mp3',
-        durationSeconds: 30,
-        advertiser: 'Brand 1',
+        filePath: 'liners/back-01.mp3',
+        durationSeconds: 3.9,
+        text: 'We will be right back.',
       });
     });
 
-    it('should throw NotFoundException if no ads exist', async () => {
-      mockAdRepo.findAll.mockResolvedValue([]);
+    it('should throw NotFoundException if no liners exist', async () => {
+      mockLinerRepo.findAll.mockResolvedValue([]);
 
-      await expect(service.getRandomAd()).rejects.toThrow(NotFoundException);
+      await expect(service.getRandomLiner()).rejects.toThrow(NotFoundException);
     });
   });
 

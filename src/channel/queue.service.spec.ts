@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@mikro-orm/nestjs';
 import { EntityManager, MikroORM } from '@mikro-orm/postgresql';
 import { LockMode, RequestContext } from '@mikro-orm/core';
+import { PinoLogger } from 'nestjs-pino';
 import config from '../infrastructure/database/mikro-orm.config';
 import { QueueService } from './queue.service';
 import { Channel } from './entities/channel.entity';
@@ -77,8 +78,8 @@ describe('QueueService', () => {
 
   const mockMediaService = {
     getRandomMusic: jest.fn(),
-    getRandomAd: jest.fn(),
     getRandomJingle: jest.fn(),
+    getRandomLiner: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -122,19 +123,20 @@ describe('QueueService', () => {
       title: 'Title',
       artist: 'Artist',
     });
-    mockMediaService.getRandomAd.mockResolvedValue({
-      filePath: 'ad.mp3',
-      durationSeconds: 30,
-      advertiser: 'Advertiser',
+    mockMediaService.getRandomLiner.mockResolvedValue({
+      filePath: 'liners/back-01.mp3',
+      durationSeconds: 4,
+      text: 'We will be right back.',
     });
     mockContentContract.getCommentsByPostIds.mockResolvedValue([]);
+    // Nothing queued ahead unless a test says otherwise: the runway read asks.
+    mockSegmentRepo.find.mockResolvedValue([]);
     mockScriptContract.generateScript.mockResolvedValue('Mock script text');
     mockVoiceContract.synthesizeScript.mockResolvedValue({
       filePath: 'audio/talk-123.mp3',
       durationSeconds: 60,
       postIds: ['post-1'],
     });
-    jest.spyOn(service, 'getRandomCount').mockReturnValue(1);
   });
 
   function setupChannelSubreddits(
@@ -168,6 +170,16 @@ describe('QueueService', () => {
           if (at >= 0) completedItems.splice(at, 1);
         }),
       },
+    });
+    // The station row holds whatever token the run took: the real claim is a
+    // conditional write, so the fixture reads it back instead of guessing it.
+    Object.defineProperty(channel, 'bufferClaimId', {
+      configurable: true,
+      get: () =>
+        (
+          mockChannelRepo.nativeUpdate.mock.calls[0]?.[1] as
+            { bufferClaimId?: string } | undefined
+        )?.bufferClaimId ?? null,
     });
     mockChannelRepo.findOne.mockResolvedValue(channel);
     mockContentContract.getSubredditsByIds.mockResolvedValue(formatted);
@@ -223,16 +235,17 @@ describe('QueueService', () => {
         },
       ]);
 
-      await service.bufferAhead(channelId);
+      // Asked directly: this is the pool policy, and the run only asks it once the
+      // station has aired everything it had.
+      await service.checkAndScrapePoolDeficit(channelId, new Set());
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(mockContentContract.scrapeSubreddit).not.toHaveBeenCalled();
     });
 
-    it('should NOT trigger scraping if channel already has 20 active subreddits with unplayed posts even if some are stale', async () => {
+    it('should NOT ask for a scrape while enough subreddits still hold unplayed posts', async () => {
       const channelId = 'chan-1';
-      mockSegmentRepo.count.mockResolvedValue(0);
-
-      // 22 subreddits, all 22 have unplayed posts, but half are older than 7 days (stale)
+      // 22 subreddits, all 22 have unplayed posts, half are older than 7 days (stale)
       const staleDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
       const freshDate = new Date();
       const subs = Array.from({ length: 22 }, (_, i) => ({
@@ -242,7 +255,6 @@ describe('QueueService', () => {
       }));
       setupChannelSubreddits(subs);
 
-      // 2 posts per subreddit with distinct topics to prevent cross-sub clustering
       const posts: Array<{ id: string; subredditId: string; title: string }> =
         [];
       subs.forEach((s, i) => {
@@ -259,7 +271,12 @@ describe('QueueService', () => {
       });
       mockContentContract.getPostsBySubredditIds.mockResolvedValue(posts);
 
-      await service.bufferAhead(channelId);
+      // Asked directly: the run only asks this question once the station has aired
+      // everything it had, which is exactly when asking is right.
+      await service.checkAndScrapePoolDeficit(channelId, new Set());
+      // The scrape chain is deliberately not awaited by the caller; let it land
+      // before the assertions so it cannot leak into the next test either.
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(mockContentContract.scrapeSubreddit).not.toHaveBeenCalled();
     });
@@ -323,8 +340,10 @@ describe('QueueService', () => {
       });
       mockContentContract.getPostsBySubredditIds.mockResolvedValue(posts);
 
-      // toScrapeCount = min(20, 22) - 17 = 3
-      await service.bufferAhead(channelId);
+      // toScrapeCount = min(20, 22) - 17 = 3. Asked directly, because the run only
+      // asks once the station has aired everything it had.
+      await service.checkAndScrapePoolDeficit(channelId, new Set());
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(mockContentContract.scrapeSubreddit).toHaveBeenCalledTimes(3);
       expect(mockContentContract.scrapeSubreddit).toHaveBeenCalledWith(
@@ -408,319 +427,158 @@ describe('QueueService', () => {
     });
   });
 
-  describe('bufferAhead cycle generation', () => {
-    it('appends talk segment when topic is found, saves voice track, and marks posts completed immediately', async () => {
-      const channelId = 'chan-1';
-      setupChannelSubreddits([
-        {
-          subredditId: 'sub-1',
-          name: 'AskReddit',
-          lastScrapedAt: new Date(),
-        },
-      ]);
-      mockContentContract.getPostsBySubredditIds.mockResolvedValue([
-        {
-          id: 'post-1',
-          subredditId: 'sub-1',
-          title: 'Topic Title',
-          selftext: 'Body',
-          ups: 100,
-        },
-      ]);
-      mockContentContract.getCommentsByPostIds.mockResolvedValue([
-        { id: 'c-1', postId: 'post-1', body: 'Great comment' },
-      ]);
+  describe('the run', () => {
+    function runwayOf(
+      segments: Array<{ playOrder: number; durationSeconds: number }>,
+    ) {
+      mockSegmentRepo.findOne.mockResolvedValue(null);
+      mockSegmentRepo.find.mockResolvedValue(segments);
+    }
 
-      await service.bufferAhead(channelId);
-
-      expect(mockScriptContract.generateScript).toHaveBeenCalled();
-      expect(mockVoiceContract.synthesizeScript).toHaveBeenCalled();
-
-      // Consumption goes through the ORM, which owns the pivot table's column
-      // names. Raw SQL here is what silently broke when the columns were renamed.
-      expect(mockEntityManager.flush).toHaveBeenCalled();
-      expect(mockExecute).not.toHaveBeenCalled();
-    });
-
-    it('releases the consumed post when generation fails, so the retry has a pool', async () => {
-      const channelId = 'chan-1';
-      const channel = setupChannelSubreddits([
-        { subredditId: 'sub-1', name: 'AskReddit', lastScrapedAt: new Date() },
-      ]);
-      mockContentContract.getPostsBySubredditIds.mockResolvedValue([
-        {
-          id: 'post-1',
-          subredditId: 'sub-1',
-          title: 'Topic Title',
-          selftext: 'Body',
-          ups: 100,
-        },
-      ]);
-      mockScriptContract.generateScript.mockRejectedValue(
-        new Error('LLM error on post 1'),
+    function postsOf(...titles: string[]) {
+      mockContentContract.getPostsBySubredditIds.mockResolvedValue(
+        titles.map((title, idx) => ({
+          id: `post-${idx + 1}`,
+          subredditId: `sub-${idx + 1}`,
+          title,
+          selftext: `Body ${idx + 1}`,
+          ups: 100 - idx,
+        })),
       );
+    }
 
-      await service.bufferAhead(channelId);
-
-      // The post is aired nowhere, so it must go back into the pool: retry is
-      // demand driven, triggered when the filler that replaced it runs low.
-      expect(channel.completedPosts.remove).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'post-1' }),
-      );
-    });
-
-    it('retires a content-rejected topic and moves to the next one', async () => {
-      const channelId = 'chan-1';
-      jest.spyOn(service, 'getRandomCount').mockReturnValue(1);
-      const channel = setupChannelSubreddits([
-        {
-          subredditId: 'sub-1',
-          name: 'AskReddit',
+    function subsOf(count: number) {
+      setupChannelSubreddits(
+        Array.from({ length: count }, (_, idx) => ({
+          subredditId: `sub-${idx + 1}`,
+          name: `sub${idx + 1}`,
           lastScrapedAt: new Date(),
-        },
-      ]);
-      mockContentContract.getPostsBySubredditIds.mockResolvedValue([
-        {
-          id: 'post-1',
-          subredditId: 'sub-1',
-          title: 'Topic Title 1',
-          selftext: 'Body 1',
-          ups: 200,
-        },
-        {
-          id: 'post-2',
-          subredditId: 'sub-1',
-          title: 'Cooking Pasta Recipe',
-          selftext: 'Body 2',
-          ups: 100,
-        },
-      ]);
-      mockScriptContract.generateScript
-        .mockResolvedValueOnce({
-          rejected: true,
-          reason: 'missing STEP 4 header',
-        })
-        .mockResolvedValueOnce('Valid script for post 2');
-
-      await service.bufferAhead(channelId);
-
-      // The model rejected this content, so it is spent: keeping the lease stops
-      // the station re-chewing it one wake-up at a time.
-      expect(mockScriptContract.generateScript).toHaveBeenCalledTimes(2);
-      expect(mockVoiceContract.synthesizeScript).toHaveBeenCalledTimes(1);
-      expect(channel.completedPosts.remove).not.toHaveBeenCalled();
-      jest.restoreAllMocks();
-    });
-
-    it('stops the walk on an infrastructure failure so filler can play', async () => {
-      const channelId = 'chan-1';
-      jest.spyOn(service, 'getRandomCount').mockReturnValue(1);
-      const channel = setupChannelSubreddits([
-        {
-          subredditId: 'sub-1',
-          name: 'AskReddit',
-          lastScrapedAt: new Date(),
-        },
-      ]);
-      mockContentContract.getPostsBySubredditIds.mockResolvedValue([
-        {
-          id: 'post-1',
-          subredditId: 'sub-1',
-          title: 'Topic Title 1',
-          selftext: 'Body 1',
-          ups: 200,
-        },
-        {
-          id: 'post-2',
-          subredditId: 'sub-1',
-          title: 'Cooking Pasta Recipe',
-          selftext: 'Body 2',
-          ups: 100,
-        },
-      ]);
-      // Neither the LLM nor TTS can be blamed on the content: every remaining
-      // topic would fail the same way, so the cycle gives up and lets the queue
-      // append filler instead of grinding through the whole pool.
-      mockScriptContract.generateScript.mockRejectedValue(
-        new Error('LLM provider stream failed'),
+        })),
       );
+    }
 
-      await service.bufferAhead(channelId);
-
-      expect(mockScriptContract.generateScript).toHaveBeenCalledTimes(1);
-      expect(mockVoiceContract.synthesizeScript).not.toHaveBeenCalled();
-      expect(channel.completedPosts.remove).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'post-1' }),
-      );
-      jest.restoreAllMocks();
-    });
-
-    it('stops after two rejected topics instead of walking the pool', async () => {
-      const channelId = 'chan-1';
-      jest.spyOn(service, 'getRandomCount').mockReturnValue(1);
-      const channel = setupChannelSubreddits([
-        { subredditId: 'sub-1', name: 'AskReddit', lastScrapedAt: new Date() },
-      ]);
-      mockContentContract.getPostsBySubredditIds.mockResolvedValue([
-        {
-          id: 'post-1',
-          subredditId: 'sub-1',
-          title: 'Landlord Kept My Deposit',
-          selftext: 'Body 1',
-          ups: 500,
-        },
-        {
-          id: 'post-2',
-          subredditId: 'sub-1',
-          title: 'Best Hiking Trails Near Denver',
-          selftext: 'Body 2',
-          ups: 400,
-        },
-        {
-          id: 'post-3',
-          subredditId: 'sub-1',
-          title: 'Learning Guitar At 40',
-          selftext: 'Body 3',
-          ups: 300,
-        },
-        {
-          id: 'post-4',
-          subredditId: 'sub-1',
-          title: 'Marathon Training In Winter',
-          selftext: 'Body 4',
-          ups: 200,
-        },
-        {
-          id: 'post-5',
-          subredditId: 'sub-1',
-          title: 'Cheapest Way To Move Cross Country',
-          selftext: 'Body 5',
-          ups: 100,
-        },
-      ]);
-      mockScriptContract.generateScript.mockResolvedValue({
-        rejected: true,
-        reason: 'the model would not write this one',
-      });
-
-      await service.bufferAhead(channelId);
-
-      // A provider answering quickly with garbage must not be able to walk the
-      // pool: every rejection retires content for good.
-      expect(mockScriptContract.generateScript).toHaveBeenCalledTimes(2);
-      expect(channel.completedPosts.add).toHaveBeenCalledTimes(2);
-      jest.restoreAllMocks();
-    });
-
-    it('retries next available topic when first topic fails voice generation', async () => {
-      const channelId = 'chan-1';
-      setupChannelSubreddits([
-        {
-          subredditId: 'sub-1',
-          name: 'AskReddit',
-          lastScrapedAt: new Date(),
-        },
-      ]);
-      mockContentContract.getPostsBySubredditIds.mockResolvedValue([
-        {
-          id: 'post-1',
-          subredditId: 'sub-1',
-          title: 'Topic Title 1',
-          selftext: 'Body 1',
-          ups: 200,
-        },
-        {
-          id: 'post-2',
-          subredditId: 'sub-1',
-          title: 'Cooking Pasta Recipe',
-          selftext: 'Body 2',
-          ups: 100,
-        },
-      ]);
-
-      mockScriptContract.generateScript
-        .mockResolvedValueOnce({
-          rejected: true,
-          reason: 'dialogue rejected: only 3 turns',
-        })
-        .mockResolvedValueOnce('Valid script for post 2');
-
-      await service.bufferAhead(channelId);
-
-      expect(mockScriptContract.generateScript).toHaveBeenCalledTimes(2);
-      expect(mockVoiceContract.synthesizeScript).toHaveBeenCalledTimes(1);
-    });
-
-    it('falls back to filler when all available topics fail generation', async () => {
-      const channelId = 'chan-1';
-      setupChannelSubreddits([
-        {
-          subredditId: 'sub-1',
-          name: 'AskReddit',
-          lastScrapedAt: new Date(),
-        },
-      ]);
-      mockContentContract.getPostsBySubredditIds.mockResolvedValue([
-        {
-          id: 'post-1',
-          subredditId: 'sub-1',
-          title: 'Topic Title',
-          selftext: 'Body',
-          ups: 100,
-        },
-      ]);
-      mockScriptContract.generateScript.mockRejectedValue(
-        new Error('LLM permanent failure'),
-      );
-
-      await service.bufferAhead(channelId);
-
-      expect(mockScriptContract.generateScript).toHaveBeenCalledTimes(1);
-      expect(mockMediaService.getRandomAd).toHaveBeenCalled();
-    });
-
-    it('deduplicates concurrent bufferAhead calls on the same channel to prevent duplicate batch generation', async () => {
-      const channelId = 'chan-1';
-      // Set explicitly: this test previously inherited these from earlier tests,
-      // which is why shuffled order made it fail. The scrape below is fired
-      // without being awaited, so it must still return a promise.
-      mockSegmentRepo.count.mockResolvedValue(0);
-      mockContentContract.scrapeSubreddit.mockResolvedValue(undefined);
-      mockContentContract.getCommentsByPostIds.mockResolvedValue([]);
-      setupChannelSubreddits([
-        {
-          subredditId: 'sub-1',
-          name: 'AskReddit',
-          lastScrapedAt: new Date(),
-        },
-      ]);
-      mockContentContract.getPostsBySubredditIds.mockResolvedValue([
-        {
-          id: 'post-1',
-          subredditId: 'sub-1',
-          title: 'Topic Title',
-          selftext: 'Body',
-          ups: 100,
-        },
-      ]);
-      mockScriptContract.generateScript.mockImplementation(
-        () =>
-          new Promise((resolve) =>
-            setTimeout(() => resolve('Script text'), 50),
-          ),
-      );
+    function conversationsOf(seconds: number) {
       mockVoiceContract.synthesizeScript.mockResolvedValue({
-        filePath: 'audio/talk-1.mp3',
-        durationSeconds: 60,
+        filePath: 'audio/talk.mp3',
+        durationSeconds: seconds,
         postIds: ['post-1'],
       });
+    }
 
-      await Promise.all([
-        service.bufferAhead(channelId),
-        service.bufferAhead(channelId),
+    function appended(): Array<{ type: string; playOrder: number }> {
+      return mockEntityManager.persist.mock.calls.map(
+        (call: unknown[]) => call[0] as { type: string; playOrder: number },
+      );
+    }
+
+    it('writes nothing when the queue already has a healthy runway', async () => {
+      runwayOf([{ playOrder: 1, durationSeconds: 1200 }]);
+      subsOf(1);
+
+      await service.bufferAhead('chan-1');
+
+      expect(mockScriptContract.generateScript).not.toHaveBeenCalled();
+      expect(mockEntityManager.persist).not.toHaveBeenCalled();
+    });
+
+    it('produces talk until it has at least thirty minutes, then closes with a liner and one song', async () => {
+      runwayOf([]);
+      subsOf(2);
+      postsOf('Topic Alpha', 'Topic Beta');
+      conversationsOf(900);
+
+      await service.bufferAhead('chan-1');
+
+      expect(appended().map((item) => item.type)).toEqual([
+        'talk',
+        'talk',
+        'liner',
+        'music',
       ]);
+      expect(appended().map((item) => item.playOrder)).toEqual([1, 2, 3, 4]);
+    });
 
-      expect(mockScriptContract.generateScript).toHaveBeenCalledTimes(1);
+    it('closes the block after a single conversation longer than the target', async () => {
+      runwayOf([]);
+      subsOf(1);
+      postsOf('Topic Alpha');
+      conversationsOf(2000);
+
+      await service.bufferAhead('chan-1');
+
+      expect(appended().map((item) => item.type)).toEqual([
+        'talk',
+        'liner',
+        'music',
+      ]);
+    });
+
+    it('appends nothing when there is no topic, and asks reddit for more', async () => {
+      runwayOf([]);
+      subsOf(1);
+      mockContentContract.getPostsBySubredditIds.mockResolvedValue([]);
+
+      await service.bufferAhead('chan-1');
+
+      expect(mockContentContract.scrapeSubreddit).toHaveBeenCalled();
+      expect(mockEntityManager.persist).not.toHaveBeenCalled();
+    });
+
+    it('gives a failing pipeline exactly one more go, then keeps what it has', async () => {
+      runwayOf([]);
+      subsOf(3);
+      postsOf('Topic Alpha', 'Topic Beta', 'Topic Gamma');
+      conversationsOf(400);
+      mockScriptContract.generateScript
+        .mockRejectedValueOnce(new Error('provider blip'))
+        .mockResolvedValueOnce('A script')
+        .mockRejectedValueOnce(new Error('provider blip again'))
+        .mockRejectedValueOnce(new Error('and again'));
+
+      await service.bufferAhead('chan-1');
+
+      expect(appended().map((item) => item.type)).toEqual([
+        'talk',
+        'liner',
+        'music',
+      ]);
+    });
+
+    it('does not mark a topic it has only picked', async () => {
+      runwayOf([]);
+      const channel = setupChannelSubreddits([
+        { subredditId: 'sub-1', name: 'sub1', lastScrapedAt: new Date() },
+      ]);
+      postsOf('Topic Alpha');
+      mockScriptContract.generateScript.mockRejectedValue(
+        new Error('provider is down'),
+      );
+
+      await service.bufferAhead('chan-1');
+
+      expect(channel.completedPosts.add).not.toHaveBeenCalled();
+      expect(channel.completedPosts.remove).not.toHaveBeenCalled();
+    });
+
+    it('retires a topic the model rejected, so the next run does not pick it again', async () => {
+      runwayOf([]);
+      const channel = setupChannelSubreddits([
+        { subredditId: 'sub-1', name: 'sub1', lastScrapedAt: new Date() },
+      ]);
+      postsOf('Topic Alpha');
+      mockScriptContract.generateScript.mockResolvedValue({
+        rejected: true,
+        reason: 'missing STEP 4 header',
+        postId: 'post-1',
+        turns: [],
+      });
+
+      await service.bufferAhead('chan-1');
+
+      expect(channel.completedPosts.add).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'post-1' }),
+      );
+      expect(mockEntityManager.persist).not.toHaveBeenCalled();
     });
   });
 
@@ -907,6 +765,8 @@ describe('QueueService', () => {
         mockSegmentRepo.findOne.mockResolvedValueOnce(null);
         const parked = parkOnPosts();
         mockContentContract.getCommentsByPostIds.mockResolvedValue([]);
+        // Nothing queued ahead unless a test says otherwise: the runway read asks.
+        mockSegmentRepo.find.mockResolvedValue([]);
         // Take wins, the beat then finds another instance holds the station.
         mockChannelRepo.nativeUpdate
           .mockResolvedValueOnce(1)
@@ -926,57 +786,213 @@ describe('QueueService', () => {
     });
   });
 
-  describe('claiming work atomically', () => {
-    it('picks the cluster and marks its posts inside one transaction that locks the station', async () => {
+  describe('claiming work atomically', () => {});
+
+  describe('the watchdog', () => {
+    function drainedRunway() {
+      mockSegmentRepo.find.mockResolvedValue([]);
+    }
+
+    function tailIs(type: string) {
+      mockSegmentRepo.findOne.mockImplementation(
+        (where: { playOrder?: unknown }) =>
+          where?.playOrder
+            ? Promise.resolve(null)
+            : Promise.resolve({ playOrder: 4, type, durationSeconds: 200 }),
+      );
+    }
+
+    function written(): string[] {
+      return mockEntityManager.persist.mock.calls.map(
+        (call: unknown[]) => (call[0] as { type: string }).type,
+      );
+    }
+
+    it('announces and plays two songs when a conversation is about to run out', async () => {
       setupChannelSubreddits([
-        { subredditId: 'sub-1', name: 'news', lastScrapedAt: new Date() },
+        { subredditId: 'sub-1', name: 'sub1', lastScrapedAt: new Date() },
       ]);
-      mockSegmentRepo.count.mockResolvedValueOnce(1);
-      mockSegmentRepo.findOne.mockResolvedValueOnce(null);
-      mockContentContract.getPostsBySubredditIds.mockResolvedValueOnce([
-        { id: 'post-1', subredditId: 'sub-1', title: 'Alpha', score: 10 },
-      ]);
-      mockScriptContract.generateScript.mockResolvedValueOnce({
-        postId: 'post-1',
-        turns: [{ speaker: 'Dave', text: 'hello' }],
-      });
-      mockVoiceContract.synthesizeScript.mockResolvedValueOnce({
-        filePath: 'audio/talk.mp3',
-        durationSeconds: 3,
-      });
+      drainedRunway();
+      tailIs('talk');
 
-      await service.bufferAhead('chan-1');
+      await service.ensureFiller('chan-1');
 
-      // The station is locked for the time it takes to decide and mark, which is what
-      // stops a second worker deciding the same posts are its own.
-      expect(mockEntityManager.transactional).toHaveBeenCalled();
-      expect(mockChannelRepo.findOne).toHaveBeenCalledWith(
-        { id: 'chan-1' },
-        expect.objectContaining({ lockMode: LockMode.PESSIMISTIC_WRITE }),
-      );
-      // Marking happens before the first paid call, not after it.
-      expect(mockEntityManager.flush.mock.invocationCallOrder[0]).toBeLessThan(
-        mockScriptContract.generateScript.mock.invocationCallOrder[0],
-      );
+      expect(written()).toEqual(['liner', 'music', 'music']);
     });
 
-    it('decides the filler top-up and writes it inside one transaction that locks the station', async () => {
-      mockSegmentRepo.count.mockResolvedValue(0);
-      mockSegmentRepo.findOne.mockResolvedValue(null);
-      mockMediaService.getRandomMusic.mockResolvedValue({
-        filePath: 'music.mp3',
-        title: 't',
-        artist: 'a',
-        durationSeconds: 10,
-      });
+    it('stays silent when a break has just played', async () => {
+      setupChannelSubreddits([
+        { subredditId: 'sub-1', name: 'sub1', lastScrapedAt: new Date() },
+      ]);
+      drainedRunway();
+      tailIs('music');
 
-      await service.ensureInstantFiller('chan-1', 6);
+      await service.ensureFiller('chan-1');
 
-      expect(mockEntityManager.transactional).toHaveBeenCalled();
+      expect(written()).toEqual(['music', 'music']);
+    });
+
+    it('leaves the station alone when the runway is no longer short', async () => {
+      setupChannelSubreddits([
+        { subredditId: 'sub-1', name: 'sub1', lastScrapedAt: new Date() },
+      ]);
+      mockSegmentRepo.find.mockResolvedValue([{ durationSeconds: 600 }]);
+      tailIs('talk');
+
+      await service.ensureFiller('chan-1');
+
+      expect(mockEntityManager.persist).not.toHaveBeenCalled();
+    });
+
+    it('warns with how short the station was', async () => {
+      setupChannelSubreddits([
+        { subredditId: 'sub-1', name: 'sub1', lastScrapedAt: new Date() },
+      ]);
+      drainedRunway();
+      tailIs('talk');
+      const warnSpy = jest
+        .spyOn(PinoLogger.prototype, 'warn')
+        .mockImplementation(() => {});
+
+      await service.ensureFiller('chan-1');
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ channelId: 'chan-1', runwaySeconds: 0 }),
+        expect.stringContaining('run out'),
+      );
+      warnSpy.mockRestore();
+    });
+  });
+
+  describe('appendBlock', () => {
+    function station(token: string | null) {
+      return {
+        id: 'chan-1',
+        bufferClaimId: token,
+        completedPosts: {
+          getItems: () => [],
+          add: jest.fn(),
+          remove: jest.fn(),
+        },
+      };
+    }
+
+    it('writes every segment of the block in one transaction, ordered after the tail', async () => {
+      mockChannelRepo.findOne.mockResolvedValue(station('tok-1'));
+      mockSegmentRepo.findOne.mockResolvedValue({ playOrder: 4 });
+
+      const written = await service.appendBlock('chan-1', 'tok-1', [
+        {
+          kind: 'talk',
+          clusterId: 'cluster-1',
+          audioUrl: 'audio/talk-1.mp3',
+          durationSeconds: 300,
+        },
+        { kind: 'liner', audioUrl: 'liners/back-01.mp3', durationSeconds: 4 },
+        {
+          kind: 'music',
+          title: 'Song',
+          artist: 'Artist',
+          audioUrl: 'music/song.mp3',
+          durationSeconds: 180,
+        },
+      ]);
+
+      expect(written).toBe(3);
+      expect(mockEntityManager.transactional).toHaveBeenCalledTimes(1);
       expect(mockChannelRepo.findOne).toHaveBeenCalledWith(
         { id: 'chan-1' },
         expect.objectContaining({ lockMode: LockMode.PESSIMISTIC_WRITE }),
       );
+      const persisted = mockEntityManager.persist.mock.calls.map(
+        (call: unknown[]) => call[0] as { playOrder: number; type: string },
+      );
+      expect(persisted.map((item) => item.playOrder)).toEqual([5, 6, 7]);
+      expect(persisted.map((item) => item.type)).toEqual([
+        'talk',
+        'liner',
+        'music',
+      ]);
+      expect(mockEntityManager.flush).toHaveBeenCalled();
+    });
+
+    it('discards the block when the claim changed hands while it was generated', async () => {
+      mockChannelRepo.findOne.mockResolvedValue(
+        station('tok-from-another-run'),
+      );
+
+      const written = await service.appendBlock('chan-1', 'tok-1', [
+        {
+          kind: 'music',
+          title: 'Song',
+          artist: 'Artist',
+          audioUrl: 'music/song.mp3',
+          durationSeconds: 180,
+        },
+      ]);
+
+      expect(written).toBe(0);
+      expect(mockEntityManager.persist).not.toHaveBeenCalled();
+    });
+
+    it('writes without a claim, because the watchdog holds none', async () => {
+      mockChannelRepo.findOne.mockResolvedValue(station('tok-from-a-run'));
+      mockSegmentRepo.findOne.mockResolvedValue(null);
+
+      const written = await service.appendBlock('chan-1', null, [
+        {
+          kind: 'music',
+          title: 'Song',
+          artist: 'Artist',
+          audioUrl: 'music/song.mp3',
+          durationSeconds: 180,
+        },
+      ]);
+
+      expect(written).toBe(1);
+      expect(mockEntityManager.persist).toHaveBeenCalledTimes(1);
+    });
+
+    it('marks the posts of the conversations it writes, skipping ones already used', async () => {
+      const used = {
+        id: 'chan-1',
+        bufferClaimId: 'tok-1',
+        completedPosts: {
+          getItems: () => [{ id: 'post-0' }],
+          add: jest.fn(),
+          remove: jest.fn(),
+        },
+      };
+      mockChannelRepo.findOne.mockResolvedValue(used);
+      mockSegmentRepo.findOne.mockResolvedValue({ playOrder: 2 });
+
+      await service.appendBlock('chan-1', 'tok-1', [
+        {
+          kind: 'talk',
+          clusterId: 'cluster-1',
+          postIds: ['post-0', 'post-1', 'post-2'],
+          audioUrl: 'audio/talk-1.mp3',
+          durationSeconds: 300,
+        },
+        {
+          kind: 'liner',
+          audioUrl: 'liners/back-01.mp3',
+          durationSeconds: 4,
+        },
+      ]);
+
+      const marked = used.completedPosts.add.mock.calls.map(
+        (call: unknown[]) => (call[0] as { id: string }).id,
+      );
+      expect(marked).toEqual(['post-1', 'post-2']);
+    });
+
+    it('writes nothing at all for an empty block', async () => {
+      const written = await service.appendBlock('chan-1', 'tok-1', []);
+
+      expect(written).toBe(0);
+      expect(mockEntityManager.transactional).not.toHaveBeenCalled();
+      expect(mockEntityManager.persist).not.toHaveBeenCalled();
     });
   });
 });

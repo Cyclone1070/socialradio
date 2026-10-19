@@ -6,6 +6,8 @@ export interface ScriptTurn {
 export interface ScriptData {
   postId: string;
   turns: ScriptTurn[];
+  /** The Stage 1 outline the dialogue was written from: the next conversation's segue. */
+  outline?: string;
 }
 
 /**
@@ -21,6 +23,8 @@ export interface ScriptRejection {
   postId: string;
   /** Nothing usable came out of it, so there are no turns to air. */
   turns: ScriptTurn[];
+  /** Stage 1 can have produced an outline before Stage 2 was refused. */
+  outline?: string;
 }
 
 export type ScriptOutcome = ScriptData | ScriptRejection | string;

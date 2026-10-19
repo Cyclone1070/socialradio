@@ -2,15 +2,15 @@ import { Module } from '@nestjs/common';
 import { MikroOrmModule } from '@mikro-orm/nestjs';
 import {
   MusicTrackSchema,
-  AdTrackSchema,
   JingleSchema,
+  LinerSchema,
 } from '../infrastructure/database/schemas/media.schema';
 import { MediaService } from './media.service';
 import { MediaContract } from '../domain';
 
 @Module({
   imports: [
-    MikroOrmModule.forFeature([MusicTrackSchema, AdTrackSchema, JingleSchema]),
+    MikroOrmModule.forFeature([MusicTrackSchema, JingleSchema, LinerSchema]),
   ],
   providers: [
     MediaService,

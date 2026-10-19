@@ -1,8 +1,8 @@
 import {
   MusicSegment,
   TalkSegment,
-  AdSegment,
   JingleSegment,
+  LinerSegment,
 } from './segment.entity';
 
 describe('Segment Entities Invariants & Encapsulation', () => {
@@ -29,7 +29,7 @@ describe('Segment Entities Invariants & Encapsulation', () => {
     });
 
     it('enforces durationSeconds bounds (0 < duration <= 7200)', () => {
-      const segment = new AdSegment();
+      const segment = new JingleSegment();
       segment.durationSeconds = 30;
       expect(segment.durationSeconds).toBe(30);
 
@@ -128,5 +128,21 @@ describe('Segment Entities Invariants & Encapsulation', () => {
       expect(persistedSeg.createdAt).toEqual(persistedDate);
       expect(persistedSeg.id).toBe('seg-uuid');
     });
+  });
+});
+
+describe('LinerSegment', () => {
+  it('is a liner and keeps the shared segment invariants', () => {
+    const segment = new LinerSegment();
+    expect(segment.type).toBe('liner');
+
+    segment.playOrder = 7;
+    segment.durationSeconds = 4.2;
+    expect(segment.playOrder).toBe(7);
+    expect(segment.durationSeconds).toBe(4.2);
+
+    expect(() => {
+      segment.durationSeconds = 0;
+    }).toThrow('durationSeconds must be > 0 and <= 7200');
   });
 });

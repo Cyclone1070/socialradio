@@ -2,14 +2,14 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@mikro-orm/nestjs';
 import { EntityRepository } from '@mikro-orm/postgresql';
 import { MusicTrack } from './entities/music-track.entity';
-import { AdTrack as AdTrackEntity } from './entities/ad-track.entity';
 import { Jingle } from './entities/jingle.entity';
+import { Liner } from './entities/liner.entity';
 import {
   MusicTrackSchema,
-  AdTrackSchema,
   JingleSchema,
+  LinerSchema,
 } from '../infrastructure/database/schemas/media.schema';
-import { MusicData, AdData, JingleData, MediaContract } from '../domain';
+import { MusicData, JingleData, LinerData, MediaContract } from '../domain';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
 
 @Injectable()
@@ -19,10 +19,10 @@ export class MediaService implements MediaContract {
   constructor(
     @InjectRepository(MusicTrackSchema)
     private readonly musicRepo: EntityRepository<MusicTrack>,
-    @InjectRepository(AdTrackSchema)
-    private readonly adRepo: EntityRepository<AdTrackEntity>,
     @InjectRepository(JingleSchema)
     private readonly jingleRepo: EntityRepository<Jingle>,
+    @InjectRepository(LinerSchema)
+    private readonly linerRepo: EntityRepository<Liner>,
   ) {}
 
   async getRandomMusic(): Promise<MusicData> {
@@ -40,17 +40,17 @@ export class MediaService implements MediaContract {
     };
   }
 
-  async getRandomAd(): Promise<AdData> {
-    const ads = await this.adRepo.findAll();
-    if (ads.length === 0) {
-      this.logger.warn({ type: 'ad' }, 'media pool empty');
-      throw new NotFoundException('No ad tracks found');
+  async getRandomLiner(): Promise<LinerData> {
+    const liners = await this.linerRepo.findAll();
+    if (liners.length === 0) {
+      this.logger.warn({ type: 'liner' }, 'media pool empty');
+      throw new NotFoundException('No liners found');
     }
-    const ad = ads[Math.floor(Math.random() * ads.length)];
+    const liner = liners[Math.floor(Math.random() * liners.length)];
     return {
-      advertiser: ad.advertiser,
-      filePath: ad.filePath,
-      durationSeconds: ad.durationSeconds,
+      filePath: liner.filePath,
+      durationSeconds: liner.durationSeconds,
+      text: liner.text,
     };
   }
 

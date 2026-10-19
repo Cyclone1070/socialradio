@@ -1,12 +1,18 @@
 import { PostData, CommentData } from '../types/post.types';
 import { ScriptData, ScriptOutcome } from '../types/script.types';
-import { TalkData, MusicData, AdData, JingleData } from '../types/audio.types';
+import {
+  TalkData,
+  MusicData,
+  JingleData,
+  LinerData,
+} from '../types/audio.types';
 import { SubredditData } from '../types/subreddit.types';
 
 export abstract class ScriptContract {
   abstract generateScript(
     posts: PostData[],
     comments: CommentData[],
+    continuityDirective?: string,
   ): Promise<ScriptOutcome>;
 }
 
@@ -28,6 +34,6 @@ export abstract class ContentContract {
 
 export abstract class MediaContract {
   abstract getRandomMusic(): Promise<MusicData>;
-  abstract getRandomAd(): Promise<AdData>;
+  abstract getRandomLiner(): Promise<LinerData>;
   abstract getRandomJingle(): Promise<JingleData>;
 }

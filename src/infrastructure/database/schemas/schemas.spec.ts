@@ -1,5 +1,9 @@
-import { ChannelSchema, SegmentSchema } from './channel.schema';
-import { MusicTrackSchema, AdTrackSchema, JingleSchema } from './media.schema';
+import {
+  ChannelSchema,
+  SegmentSchema,
+  LinerSegmentSchema,
+} from './channel.schema';
+import { MusicTrackSchema, JingleSchema } from './media.schema';
 import { SubredditSchema } from './content.schema';
 import { UserSchema } from './user.schema';
 import * as allSchemas from './index';
@@ -81,6 +85,15 @@ describe('EntitySchema Database Constraint Specifications', () => {
       expect(props.createdAt.accessor).toBe(true);
     });
 
+    it('admits the liner type in the check and maps a liner discriminator', () => {
+      const typeCheck = (SegmentSchema.meta.checks ?? []).find(
+        (c) => c.name === 'segment_type_check',
+      );
+      expect(typeCheck?.expression).toContain("'liner'");
+      expect(typeCheck?.expression).not.toContain("'ad'");
+      expect(LinerSegmentSchema.meta.discriminatorValue).toBe('liner');
+    });
+
     it('enforces unique compound index on (channelId, playOrder)', () => {
       const uniques = SegmentSchema.meta.uniques ?? [];
       const hasChannelPlayOrder = uniques.some((u) => {
@@ -90,6 +103,16 @@ describe('EntitySchema Database Constraint Specifications', () => {
         return props.includes('channelId') && props.includes('playOrder');
       });
       expect(hasChannelPlayOrder).toBe(true);
+    });
+  });
+
+  describe('the advert is gone', () => {
+    it('has no ad_track table and no ad discriminator', () => {
+      const tables = Object.values(allSchemas)
+        .filter((s) => typeof s === 'object' && s !== null && 'meta' in s)
+        .map((s) => (s as { meta: { tableName?: string } }).meta.tableName);
+      expect(tables).not.toContain('ad_track');
+      expect(Object.values(allSchemas)).not.toContain(undefined);
     });
   });
 
@@ -108,17 +131,6 @@ describe('EntitySchema Database Constraint Specifications', () => {
         true,
       );
       expect(MusicTrackSchema.meta.properties.createdAt.accessor).toBe(true);
-    });
-
-    it('enforces positive duration check and unique filePath on AdTrackSchema', () => {
-      const checkNames = (AdTrackSchema.meta.checks ?? []).map((c) => c.name);
-      expect(checkNames).toContain('ad_track_duration_positive');
-      expect(AdTrackSchema.meta.properties.filePath.unique).toBe(true);
-      expect(AdTrackSchema.meta.properties.id.accessor).toBe(true);
-      expect(AdTrackSchema.meta.properties.advertiser.accessor).toBe(true);
-      expect(AdTrackSchema.meta.properties.filePath.accessor).toBe(true);
-      expect(AdTrackSchema.meta.properties.durationSeconds.accessor).toBe(true);
-      expect(AdTrackSchema.meta.properties.createdAt.accessor).toBe(true);
     });
 
     it('enforces positive duration check and unique filePath on JingleSchema', () => {

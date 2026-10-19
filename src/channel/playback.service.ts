@@ -12,7 +12,11 @@ import {
   ChannelSchema,
   SegmentSchema,
 } from '../infrastructure/database/schemas/channel.schema';
-import { QueueService } from './queue.service';
+import {
+  QueueService,
+  RUNWAY_LOW_WATER_SECONDS,
+  FILLER_RUNWAY_SECONDS,
+} from './queue.service';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
 import { generateHlsManifest } from './utils/hls-manifest.util';
 import { StorageService } from '../infrastructure/storage/storage.service';
@@ -58,21 +62,6 @@ export class PlaybackService {
         throw new ForbiddenException('Forbidden');
       }
     }
-
-    // Cold Start & Emergency filler: if channel queue is empty, insert instant pre-recorded filler (takes ~2ms),
-    // and fire background bufferAhead asynchronously (NEVER blocks the HTTP request path!)
-    const segmentCount = await this.segmentRepo.count({ channelId });
-    if (segmentCount === 0) {
-      await this.queueService.ensureInstantFiller(channelId, 6);
-      this.queueService.bufferAhead(channelId).catch((err) => {
-        this.logger.warn(
-          { channelId, err: err instanceof Error ? err.message : String(err) },
-          'Background bufferAhead failed on cold start',
-        );
-      });
-    }
-
-    let needsReplenishment = false;
 
     const playheadState = await this.em.transactional(async (em) => {
       const channel = await em.findOne(
@@ -261,30 +250,9 @@ export class PlaybackService {
         }
       }
 
-      if (currentSegment) {
-        const remainingCount = await this.segmentRepo.count({
-          channelId,
-          playOrder: { $gt: currentSegment.playOrder },
-        });
-        if (remainingCount < 4) {
-          this.logger.info(
-            { channelId, reason: 'low-runway' },
-            'bufferAhead triggered',
-          );
-          needsReplenishment = true;
-        }
-      } else {
-        needsReplenishment = true;
-      }
-
       await em.flush();
 
-      return {
-        channel,
-        currentSegment,
-        needsReplenishment,
-        now,
-      };
+      return { channel, currentSegment, now };
     });
 
     let currentSegment = playheadState.currentSegment;
@@ -293,6 +261,18 @@ export class PlaybackService {
 
     if (currentSegment) {
       await this.pruneConsumed(channelId, currentSegment.playOrder);
+    }
+
+    // One runway, read from the same function the run's gate uses - two
+    // implementations would drift and the station would go quiet in the gap.
+    const runwaySeconds =
+      await this.queueService.computeRunwaySeconds(channelId);
+
+    // The watchdog, awaited: the request that noticed the hole is the request that
+    // fills it, so the manifest served below already contains the filler. It runs
+    // outside the playhead lock and before the window is read.
+    if (runwaySeconds < FILLER_RUNWAY_SECONDS) {
+      await this.queueService.ensureFiller(channelId);
     }
 
     let windowSegments = currentSegment
@@ -309,7 +289,6 @@ export class PlaybackService {
       : [];
 
     if (windowSegments.length === 0) {
-      await this.queueService.ensureInstantFiller(channelId, 6);
       const minOrder = channel.currentPlayOrder ?? 1;
       windowSegments = await this.segmentRepo.find(
         { channelId, playOrder: { $gte: minOrder } },
@@ -367,7 +346,11 @@ export class PlaybackService {
       segments: hlsSegments,
     });
 
-    if (playheadState.needsReplenishment) {
+    if (runwaySeconds < RUNWAY_LOW_WATER_SECONDS) {
+      this.logger.info(
+        { channelId, reason: 'low-runway', runwaySeconds },
+        'bufferAhead triggered',
+      );
       this.queueService.bufferAhead(channelId).catch((err) => {
         this.logger.warn(
           { channelId, err: err instanceof Error ? err.message : String(err) },
