@@ -26,6 +26,39 @@ const isStageOne = (body: { messages?: { role: string; content: string }[] }): b
   return /executive producer/i.test(system);
 };
 
+/**
+ * The app tells the model what came before, and how to open. A real model acts on
+ * that, so the stub does too: the line it opens with is derived from the
+ * instruction it was given, which is what makes continuity observable end to end.
+ */
+const openingLineFor = (body: { messages?: { role: string; content: string }[] }): string => {
+  const user = body.messages?.find((message) => message.role === 'user')?.content ?? '';
+  const how = /=== HOW TO OPEN[^\n]*===\n([^\n]+)/.exec(user)?.[1] ?? '';
+  if (!how) return '';
+  const thread = /Here is the outline it followed:\s*([^\n]+)/.exec(
+    user.replace(/\n/g, ' '),
+  )?.[1];
+  if (thread) return `Dave: Picking up where we left off - ${thread.trim()}`;
+  if (/first conversation/.test(how)) {
+    return 'Dave: Hello and welcome to the show, first-time callers especially.';
+  }
+  if (/Welcome them back/.test(how)) return "Dave: Welcome back - here's where we were.";
+  return '';
+};
+
+/**
+ * Obedience is a mode, not a fact. A real model sometimes answers with the wrong
+ * opening, and the app is supposed to refuse it - so the stub can be told to
+ * misbehave over HTTP, which is the only channel the suites have.
+ */
+let contradict = process.env.LLM_STUB_CONTRADICT === '1';
+/**
+ * How long each answer takes. A run that is slow on purpose is the only way to hold
+ * a station mid-generation while a second instance asks for it, without racing.
+ */
+let delayMs = Number(process.env.LLM_STUB_DELAY_MS ?? 0);
+let completions = 0;
+
 const readBody = (req: IncomingMessage): Promise<Record<string, unknown>> =>
   new Promise((resolve) => {
     let raw = '';
@@ -56,6 +89,18 @@ createServer(async (req, res) => {
     return json(res, 200, { object: 'list', data: [{ id: MODEL, object: 'model', owned_by: 'mock' }] });
   }
 
+  if (url === '/__control') {
+    if (req.method === 'GET') {
+      return json(res, 200, { contradict, delayMs, completions });
+    }
+    if (req.method === 'POST') {
+      const control = (await readBody(req)) as { mode?: string; delayMs?: number };
+      if (control.mode !== undefined) contradict = control.mode === 'contradict';
+      if (typeof control.delayMs === 'number') delayMs = control.delayMs;
+      return json(res, 200, { contradict, delayMs, completions });
+    }
+  }
+
   if (req.method !== 'POST' || !url.startsWith('/chat/completions')) {
     return json(res, 404, { error: { message: `no mock route for ${url}` } });
   }
@@ -72,7 +117,18 @@ createServer(async (req, res) => {
     return json(res, 400, { error: { type: 'server_error', message: 'Model is unavailable.' } });
   }
 
-  const content = isStageOne(body) ? outline : dialogue;
+  // In contradict mode the model answers every conversation with a show-opening
+  // greeting, whatever it was asked for. Nobody has just arrived, so the app must
+  // refuse it rather than air it.
+  completions += 1;
+  if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+
+  const opening = isStageOne(body)
+    ? ''
+    : contradict
+      ? 'Dave: Hello and welcome to the show, first-time callers especially.'
+      : openingLineFor(body);
+  const content = isStageOne(body) ? outline : [opening, dialogue].filter(Boolean).join('\n');
 
   if (!body.stream) {
     return json(res, 200, {

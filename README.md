@@ -2,7 +2,8 @@
 
 An AI radio backend. It scrapes Reddit conversations, clusters them into topics, writes a call-in
 talk-radio script, synthesizes it with a speech service, and streams each station as a live HLS
-playlist — talk segments interleaved with music, ads and jingles.
+playlist — conversations interleaved with music it owns and pre-recorded "we'll be right back"
+announcements. There are no adverts: the advert type, its table and its picker were removed.
 
 ```
 Reddit → scrape → cluster → script → speech → queue → live HLS

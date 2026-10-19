@@ -78,6 +78,17 @@ case "$TARGET" in
     run_suite /scripts/suites/02-auth.sh
     run_suite /scripts/suites/08-broadcast.sh
     ;;
+  10|instances|multi|race)
+    run_suite /scripts/suites/01-healthcheck.sh
+    run_suite /scripts/suites/02-auth.sh
+    run_suite /scripts/suites/10-multi-instance.sh
+    ;;
+  09|continuity|refusal)
+    run_suite /scripts/suites/01-healthcheck.sh
+    run_suite /scripts/suites/02-auth.sh
+    run_suite /scripts/suites/09-continuity-refusal.sh
+    run_suite /scripts/suites/10-multi-instance.sh
+    ;;
   all|"")
     run_suite /scripts/suites/01-healthcheck.sh
     run_suite /scripts/suites/02-auth.sh
@@ -87,6 +98,8 @@ case "$TARGET" in
     run_suite /scripts/suites/06-scraping.sh
     run_suite /scripts/suites/07-ai-storage.sh
     run_suite /scripts/suites/08-broadcast.sh
+    run_suite /scripts/suites/09-continuity-refusal.sh
+    run_suite /scripts/suites/10-multi-instance.sh
     ;;
   *)
     fail "Unknown test suite: $TARGET (Valid options: 01, 02, 03, 04, 05, 06, 07, 08, all)"

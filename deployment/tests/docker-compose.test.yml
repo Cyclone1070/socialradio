@@ -67,6 +67,54 @@ services:
         condition: service_started
       voice-mock:
         condition: service_started
+  # A second instance of the app, on the same database and the same storage. The
+  # point is not load: it is that two processes can want the same station at the
+  # same time. The suites address it directly as `app2`, so which instance answers
+  # which request is decided by the test, never by a load balancer.
+  app2:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/Dockerfile
+      target: runner
+    env_file: !override
+      - ../tests/tier1.env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/socialradio
+      STORAGE_ENDPOINT: http://seaweedfs:9000
+      STORAGE_BUCKET: socialradio-media
+      STORAGE_ACCESS_KEY: socialradio-local
+      STORAGE_SECRET_KEY: socialradio-local-secret
+      STORAGE_PUBLIC_URL: http://localhost:9000/socialradio-media
+      INTERNAL_SERVICE_SECRET: tier1-internal-secret
+      LLM_BASE_URL: http://mocks:4010
+      LLM_API_KEY: mock-key
+      LLM_MODEL: mock-model
+      REDDIT_FETCHER_URL: http://fetcher-mock:4011
+      VOICE_SERVICE_URL: http://voice-mock:4012
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/healthcheck"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+    depends_on:
+      db:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+      seaweedfs:
+        condition: service_healthy
+      mocks:
+        condition: service_started
+      fetcher-mock:
+        condition: service_started
+      voice-mock:
+        condition: service_started
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+
   # All SQL runs from inside the suite via the single psql_run helper
   # (docker-test.sh) — the seed service below was removed when the suite
   # gained psql access (one pattern, not two).
@@ -84,6 +132,10 @@ services:
       - TARGET_URL=http://app:3000
       - STORAGE_ENDPOINT=http://seaweedfs:9000
       - TEST_SUITE=${TEST_SUITE:-all}
+      # The model stub, so suite 09 can make it misbehave on purpose.
+      - LLM_STUB_URL=http://mocks:4010
+      # Two instances, addressed explicitly. No proxy, no load balancer.
+      - APP2_URL=http://app2:3000
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -96,6 +148,8 @@ services:
       - default
     depends_on:
       app:
+        condition: service_healthy
+      app2:
         condition: service_healthy
 
 networks:

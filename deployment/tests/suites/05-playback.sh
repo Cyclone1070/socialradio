@@ -145,7 +145,22 @@ if psql_run -c "INSERT INTO segment (id, \"channel_id\", play_order, type, durat
 fi
 echo "  ✓ DB check constraint rejected talk segment with missing cluster_id"
 
+# The advert is gone, not merely unused: the discriminator must refuse it.
+if psql_run -c "INSERT INTO segment (id, \"channel_id\", play_order, type, duration_seconds, audio_url, advertiser) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', 9995, 'ad', 30, 'ads/acme.mp3', 'Acme');" 2>/dev/null; then
+  fail "DB still accepts an advert segment"
+fi
+if psql_run -c "INSERT INTO segment (id, \"channel_id\", play_order, type, duration_seconds, audio_url) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', 9994, 'liner', 5, 'liners/seed-back-01.mp3');" 2>/dev/null; then
+  echo "  ✓ DB accepts a liner segment (the replacement for the advert)"
+else
+  fail "DB refused a liner segment"
+fi
+
 echo "37g. Issue 5: Concurrent manifest requests must not deadlock or fail"
+# The station is drained first, so the five requests below all arrive believing the
+# station is about to go quiet. They may only fill it once between them: the runway is
+# decided and written under one lock, so the four that arrive second find no hole.
+BEFORE_ORDER=$(psql_run -t -A -c "SELECT COALESCE(MAX(play_order), 0) FROM segment WHERE \"channel_id\" = '$PLAY_CHAN_ID';")
+psql_run -c "UPDATE channel SET playhead_started_at = now() - interval '3600 seconds' WHERE id = '$PLAY_CHAN_ID';" >/dev/null
 PIDS=""
 for i in 1 2 3 4 5; do
   curl -s -o /dev/null -w "%{http_code}\n" "$BASE_URL/channels/$PLAY_CHAN_ID/live.m3u8" > "/tmp/concurrent_test_$i.txt" &
@@ -162,6 +177,15 @@ for i in 1 2 3 4 5; do
   fi
 done
 echo "  ✓ Concurrent manifest requests resolved cleanly without lock contention"
+
+BURST_MUSIC=$(psql_run -t -A -c "SELECT COUNT(*) FROM segment WHERE \"channel_id\" = '$PLAY_CHAN_ID' AND type = 'music' AND play_order > $BEFORE_ORDER;")
+if [ "$BURST_MUSIC" -lt 1 ]; then
+  fail "a drained station was asked five times and nothing was queued to fill it"
+fi
+if [ "$BURST_MUSIC" -gt 2 ]; then
+  fail "5 concurrent requests appended $BURST_MUSIC songs; the filler holds at most 2, so more than one of them filled the same hole"
+fi
+echo "  ✓ the drained station was filled once for all five requests ($BURST_MUSIC songs)"
 
 echo "37h. Issue 6: Channel FK integrity (current_segment_id, owner_id) & self-healing playhead"
 if psql_run -c "UPDATE channel SET current_segment_id = '00000000-0000-0000-0000-000000000000' WHERE id = '$PLAY_CHAN_ID';" 2>/dev/null; then

@@ -62,13 +62,19 @@ if ! echo "$MANIFEST_BODY" | grep -qE '#EXT-X-MEDIA-SEQUENCE:[0-9]+'; then
   fail "Manifest missing valid #EXT-X-MEDIA-SEQUENCE"
 fi
 INF_COUNT=$(echo "$MANIFEST_BODY" | grep -c '#EXTINF:' || echo "0")
-if [ "$INF_COUNT" -lt 4 ]; then
-  fail "Sliding window has fewer than 4 segments ($INF_COUNT found)"
+# The station serves what has actually been produced: a cold start gets its
+# filler first, and the window grows as the run appends whole blocks.
+# What must never happen is an empty or two-chunk window with a stale playhead.
+if [ "$INF_COUNT" -lt 2 ]; then
+  fail "Manifest carries fewer than the two chunks a cold start always has ($INF_COUNT found)"
+fi
+if [ "$INF_COUNT" -gt 6 ]; then
+  fail "Sliding window grew past its six-chunk cap ($INF_COUNT found)"
 fi
 if echo "$MANIFEST_BODY" | grep -q '#EXT-X-ENDLIST'; then
   fail "Live radio manifest must NOT terminate with #EXT-X-ENDLIST"
 fi
-echo "  ✓ RFC 8216 syntax, sliding window ($INF_COUNT chunks), and liveness contract verified"
+echo "  ✓ RFC 8216 syntax, window of $INF_COUNT chunks (cold-start filler up to the six-chunk cap), and liveness contract verified"
 
 echo "54. Audio Chunk Ingestion: retrieve and verify chunk from manifest"
 CHUNK_URL=$(echo "$MANIFEST_BODY" | grep -v '^#' | grep -v '^$' | head -1)
@@ -198,3 +204,31 @@ fi
 HEALED_SEG=$(psql_run -t -A -c "SELECT \"current_segment_id\" FROM channel WHERE \"id\" = '$BC_CHAN_ID';")
 [ -n "$HEALED_SEG" ] || fail "Channel current_segment_id was not self-healed in PostgreSQL"
 echo "  ✓ Orphaned playhead self-healed in DB (seq #$NEW_SEQ >= #$PREV_SEQ without rewinding to historical past)"
+
+echo "59. Degraded library: an empty media pool must not take the station down"
+# A user deletes the library, or a fresh deployment has none. The station may have
+# nothing to play, but it must not fail the request or stop answering.
+psql_run -c "DELETE FROM music_track;" >/dev/null
+psql_run -c "DELETE FROM liner;" >/dev/null
+psql_run -c "UPDATE channel SET playhead_started_at = now() - interval '3600 seconds' WHERE id = '$BC_CHAN_ID';" >/dev/null
+req GET "$BASE_URL/channels/$BC_CHAN_ID/live.m3u8"
+if [ "$STATUS" != "200" ]; then
+  fail "an empty media library took the station down (HTTP $STATUS)"
+fi
+if ! echo "$BODY" | grep -q '#EXT-X-VERSION:3'; then
+  fail "an empty media library produced a malformed manifest: $BODY"
+fi
+echo "  ✓ empty library: still answers with a well-formed manifest"
+
+# Put the library back and let the station fill the gap again.
+psql_run -f /scripts/fixtures/seed-base.sql >/dev/null || fail "restoring the media fixture failed"
+psql_run -c "UPDATE channel SET playhead_started_at = now() - interval '3600 seconds' WHERE id = '$BC_CHAN_ID';" >/dev/null
+req GET "$BASE_URL/channels/$BC_CHAN_ID/live.m3u8"
+if [ "$STATUS" != "200" ]; then
+  fail "the station did not recover once the library came back (HTTP $STATUS)"
+fi
+RECOVERED_CHUNKS=$(echo "$BODY" | grep -c '#EXTINF:' || echo "0")
+if [ "$RECOVERED_CHUNKS" -lt 2 ] && [ "$RECOVERED_CHUNKS" -lt 1 ]; then
+  fail "the station served no chunks after the library was restored"
+fi
+echo "  ✓ library restored: the station covers itself again ($RECOVERED_CHUNKS chunk(s))"

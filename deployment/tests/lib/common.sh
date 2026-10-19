@@ -97,7 +97,7 @@ ensure_base_fixtures() {
     ffmpeg -y -f lavfi -i "sine=frequency=440:duration=5" -c:a libmp3lame -b:a 128k /tmp/synth-fixture.mp3 >/dev/null 2>&1 || true
   fi
   if [ -f /tmp/synth-fixture.mp3 ]; then
-    for path in "music/neon-waves.mp3" "music/midnight-drive.mp3" "ads/acme-coffee.mp3" "ads/cyber-shield.mp3" "jingles/station-id.mp3" "jingles/intro.mp3"; do
+    for path in "music/neon-waves.mp3" "music/midnight-drive.mp3" "liners/seed-back-01.mp3" "liners/seed-back-02.mp3" "jingles/station-id.mp3" "jingles/intro.mp3"; do
       curl -s -X PUT -T /tmp/synth-fixture.mp3 "$STORAGE_URL/$BUCKET/$path" >/dev/null 2>&1 || true
     done
   fi

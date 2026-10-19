@@ -153,3 +153,96 @@ if [ -n "$BLOB_SIZE" ] && [ "$BLOB_SIZE" -gt 10000 ] 2>/dev/null; then
 else
   fail "Audio blob in SeaweedFS is suspiciously small or empty (size: $BLOB_SIZE)"
 fi
+
+echo "51. The block the run wrote: conversations, then the break that closes it"
+BLOCK_SHAPE=$(psql_run -t -A -c "SELECT string_agg(type, ',' ORDER BY play_order) FROM segment WHERE \"channel_id\" = '$AI_CHAN_ID';")
+echo "  Block shape: $BLOCK_SHAPE"
+case "$BLOCK_SHAPE" in
+  *talk,liner,music*) echo "  ✓ the run closed its block with an announcement and a song" ;;
+  *talk,music*)       echo "  ✓ the run closed its block with a song (no liner pool in this fixture)" ;;
+  *) fail "the block does not end the way the plan says: $BLOCK_SHAPE" ;;
+esac
+
+if psql_run -t -A -c "SELECT outline FROM segment WHERE \"channel_id\" = '$AI_CHAN_ID' AND type = 'talk' AND outline IS NULL LIMIT 1;" | grep -q .; then
+  fail "a conversation was stored without the outline it was written from"
+fi
+echo "  ✓ every stored conversation carries its Stage 1 outline"
+
+echo "51b. The manifest marks the type changes as discontinuities"
+req GET "$BASE_URL/channels/$AI_CHAN_ID/live.m3u8"
+WINDOW_MANIFEST="$BODY"
+if ! echo "$WINDOW_MANIFEST" | grep -q '#EXT-X-DISCONTINUITY'; then
+  fail "the window spans a type change but carries no #EXT-X-DISCONTINUITY: $WINDOW_MANIFEST"
+fi
+WINDOW_CHUNKS=$(echo "$WINDOW_MANIFEST" | grep -c '#EXTINF:' || echo "0")
+echo "  ✓ discontinuity present across a window of $WINDOW_CHUNKS chunk(s)"
+
+echo "51c. Continuity: the second conversation picks up where the first left off"
+FIRST_SCRIPT=$(psql_run -t -A -c "SELECT script::text FROM segment WHERE \"channel_id\" = '$AI_CHAN_ID' AND type = 'talk' ORDER BY play_order LIMIT 1;")
+LATER_SCRIPT=$(psql_run -t -A -c "SELECT script::text FROM segment WHERE \"channel_id\" = '$AI_CHAN_ID' AND type = 'talk' ORDER BY play_order OFFSET 1 LIMIT 1;")
+
+if echo "$FIRST_SCRIPT" | grep -q 'Picking up where we left off'; then
+  fail "the first conversation of the show claims to be picking up a thread that never aired"
+fi
+echo "  ✓ the first conversation opens the show rather than pretending to continue one"
+
+if ! echo "$LATER_SCRIPT" | grep -q 'Picking up where we left off'; then
+  fail "the second conversation does not refer back to the one before it: $LATER_SCRIPT"
+fi
+if ! echo "$LATER_SCRIPT" | grep -q 'HOST INTRO'; then
+  fail "the second conversation does not carry the previous outline it was given"
+fi
+echo "  ✓ the second conversation quotes the outline of the one before it"
+
+echo "51d. Marking: a conversation cannot air without its post being recorded"
+# The provable direction: everything that aired was marked. The reverse is not an
+# invariant - a topic the model refuses is retired (marked) without ever airing, by
+# design, so "marked but not aired" is legitimate and cannot be told apart here.
+UNAIRED=$(psql_run -t -A -c "SELECT COUNT(*) FROM segment s WHERE s.\"channel_id\" = '$AI_CHAN_ID' AND s.type = 'talk' AND NOT EXISTS (SELECT 1 FROM channel_post_progress p WHERE p.\"channel_id\" = s.\"channel_id\" AND p.post_id::text = s.cluster_id);")
+if [ "$UNAIRED" != "0" ]; then
+  fail "$UNAIRED conversation(s) aired without their post being recorded as used"
+fi
+MARKED_ROWS=$(psql_run -t -A -c "SELECT COUNT(*) FROM channel_post_progress WHERE \"channel_id\" = '$AI_CHAN_ID';")
+AIRED_TALK=$(psql_run -t -A -c "SELECT COUNT(*) FROM segment WHERE \"channel_id\" = '$AI_CHAN_ID' AND type = 'talk';")
+if [ "$MARKED_ROWS" -lt "$AIRED_TALK" ]; then
+  fail "only $MARKED_ROWS post(s) recorded for $AIRED_TALK conversation(s) that aired"
+fi
+echo "  ✓ every one of the $AIRED_TALK conversation(s) that aired is recorded ($MARKED_ROWS post row(s))"
+
+echo "51e. No filler inside a block: a song or an announcement never interrupts the conversations"
+INTERLEAVED=$(psql_run -t -A -c "SELECT COUNT(*) FROM segment s WHERE s.\"channel_id\" = '$AI_CHAN_ID' AND s.type IN ('music', 'liner', 'jingle') AND EXISTS (SELECT 1 FROM segment a WHERE a.\"channel_id\" = s.\"channel_id\" AND a.type = 'talk' AND a.play_order < s.play_order) AND EXISTS (SELECT 1 FROM segment b WHERE b.\"channel_id\" = s.\"channel_id\" AND b.type = 'talk' AND b.play_order > s.play_order);")
+if [ "$INTERLEAVED" != "0" ]; then
+  fail "$INTERLEAVED piece(s) of filler landed between two conversations"
+fi
+echo "  ✓ the block is conversations first, filler last"
+
+echo "51f. The station never goes quiet: drain the runway, and the request that notices serves the filler"
+DRAIN_MAX=$(psql_run -t -A -c "SELECT COALESCE(MAX(play_order), 0) FROM segment WHERE \"channel_id\" = '$AI_CHAN_ID';")
+psql_run -c "UPDATE channel SET playhead_started_at = now() - interval '3600 seconds' WHERE id = '$AI_CHAN_ID';" >/dev/null
+req GET "$BASE_URL/channels/$AI_CHAN_ID/live.m3u8"
+if [ "$STATUS" != "200" ]; then
+  fail "a drained station served no manifest at all (HTTP $STATUS)"
+fi
+FILLER_CHUNKS=$(echo "$BODY" | grep -c '#EXTINF:' || echo "0")
+if [ "$FILLER_CHUNKS" -lt 2 ]; then
+  fail "a drained station served $FILLER_CHUNKS chunk(s) instead of filler"
+fi
+FILLER_BEHIND_SONG=$(psql_run -t -A -c "SELECT string_agg(type, ',' ORDER BY play_order) FROM segment WHERE \"channel_id\" = '$AI_CHAN_ID' AND play_order > $DRAIN_MAX;")
+case "$FILLER_BEHIND_SONG" in
+  music,music*) echo "  ✓ behind a break the filler is songs only, no announcement ($FILLER_BEHIND_SONG)" ;;
+  *) fail "the filler behind a break should be songs only, got: $FILLER_BEHIND_SONG" ;;
+esac
+
+echo "51g. Filler behind a conversation announces itself first"
+LAST_ORDER=$(psql_run -t -A -c "SELECT COALESCE(MAX(play_order), 0) FROM segment WHERE \"channel_id\" = '$AI_CHAN_ID';")
+psql_run -c "INSERT INTO segment (id, \"channel_id\", play_order, type, duration_seconds, audio_url, cluster_id, status) VALUES (gen_random_uuid(), '$AI_CHAN_ID', $((LAST_ORDER + 1)), 'talk', 30, '$TALK_AUDIO_URL', 'seed-tail-cluster', 'ready');" >/dev/null
+psql_run -c "UPDATE channel SET playhead_started_at = now() - interval '3600 seconds' WHERE id = '$AI_CHAN_ID';" >/dev/null
+req GET "$BASE_URL/channels/$AI_CHAN_ID/live.m3u8"
+if [ "$STATUS" != "200" ]; then
+  fail "a drained station behind a conversation served no manifest (HTTP $STATUS)"
+fi
+FILLER_BEHIND_TALK=$(psql_run -t -A -c "SELECT string_agg(type, ',' ORDER BY play_order) FROM segment WHERE \"channel_id\" = '$AI_CHAN_ID' AND play_order > $((LAST_ORDER + 1));")
+case "$FILLER_BEHIND_TALK" in
+  liner,music,music*) echo "  ✓ behind a conversation the filler announces itself, then two songs ($FILLER_BEHIND_TALK)" ;;
+  *) fail "the filler behind a conversation should be liner,music,music - got: $FILLER_BEHIND_TALK" ;;
+esac

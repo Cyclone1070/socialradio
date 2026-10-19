@@ -28,14 +28,16 @@ account that can exist is the admin seeded at boot from `ADMIN_EMAIL` / `ADMIN_P
 
 ### 1.2 No media library write path
 
-`src/media/` has a service and three tables (`music_track`, `ad_track`, `jingle`), and no controller.
-Library contents are operator-managed by hand, and there is no documented way to put rows there.
+`src/media/` has a service and three tables (`music_track`, `liner`, `jingle`), and no controller.
+Library contents are operator-managed by hand. The break-out lines have a seeding command
+(`deployment/tools/seed-liners.ts`), but it writes rows, not audio: the speech pipeline still has to
+produce the files they point at.
 
 - **Blocks**: a station that sounds like a station. With an empty library the queue still fills, but
   every filler points at the placeholder key `jingles/station-id.mp3` — an object that exists only
   because the test fixtures upload it (`deployment/tests/lib/common.sh`), alongside the rows that
-  `seed-base.sql` inserts. A real deployment has neither, so the stream has holes where music, ads and
-  jingles should be.
+  `seed-base.sql` inserts. A real deployment has neither, so the stream has holes where music, liners
+  and jingles should be.
 - **Done means**: an admin route to add and list library entries, or a seeding command. Uploading audio
   through the API is the bigger decision: the app only ever writes what it generated itself, so a
   user-supplied file would be the first untrusted object in the bucket.
@@ -83,14 +85,16 @@ aggregates it.
 - **Done means**: at minimum the one [plan.md](../plan.md) already defers to prod — a health signal when
   generation fails repeatedly. It is cheap, and it is what would make 3.3 visible instead of silent.
 
-### 2.4 Ads as a business
+### 2.4 Advertising as a business
 
-`MediaService.getRandomAd()` picks uniformly from one table.
+There is no advertising anywhere in the system: the advert type, its table and its picker were removed
+when the media phase was rewritten, and the station now says "we'll be right back" in its own voice over
+music it owns (`src/media/liner-pool.ts`).
 
-- **Blocks**: selling anything. No campaigns, no targeting, no scheduling, no reporting, no proof an ad
-  ever aired.
+- **Blocks**: selling anything. No campaigns, no targeting, no scheduling, no reporting, no proof a slot
+  ever aired, and no place to put one.
 - **Done means**: this is product scope rather than a defect — it needs a decision about whether ads are
-  a feature at all before it needs code.
+  a feature at all before it needs code, and the seam it would return through is the `liner` segment.
 
 ### 2.5 Production shape
 

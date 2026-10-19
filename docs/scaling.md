@@ -100,16 +100,19 @@ calls are the real cure and the claim is the safety net.
 
 ## Verified against a real database, not only mocks
 
-Run 2026-10-01 against a local Postgres with two app processes sharing it, by hand rather than through
-a committed harness.
+This used to be checked by hand against a local Postgres with two app processes sharing it. It is a
+committed harness now: the test stack runs two app containers on one database, addressed by name rather
+than through a proxy, and suite 10 drives them.
 
-- **Two instances topping up a fresh station at the same time**: the station ends with six segments,
-  not twelve. Before this batch both instances counted zero filler and both appended six.
-- **Two instances buffering the same station**: exactly one entered the batch, a third asked while the
-  claim was held also stood aside, and the claim row was held while the winner worked.
-- The cluster claim's overlap needs a lease take-over to reproduce, so it is covered two ways instead:
-  the unit test asserts the pick and the marking happen inside a transaction holding a write lock on
-  the station, and the docker suite drives the whole path end to end (suites 05 and 07).
+- **Two instances topping up a fresh station at the same time**: the station ends with one filler,
+  not two. This failed the first time the harness ran it — both instances counted zero runway, because the
+  second one read the runway after the first had released the station lock but before it had written.
+  The watchdog now decides and writes in one transaction.
+- **Two instances buffering the same station**: exactly one enters the batch and the other stands aside,
+  with the claim row held while the winner works.
+- **A lease take-over**: reproduced by backdating the claim in SQL, which is how a dead instance looks
+  from the database. The survivor finishes the station and the dead run's block is refused by the claim
+  token, so no topic airs twice.
 - Caught by the docker tier rather than the unit gate: a lock placed in the shared reader broke the
   admin topics endpoint with `An open transaction is required for this operation`. The lock belongs in
   the claim that wraps the reader, where a transaction exists.
