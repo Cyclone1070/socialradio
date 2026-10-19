@@ -6,8 +6,9 @@ import { ConfigService } from '@nestjs/config';
 import { UserSchema } from '../infrastructure/database/schemas/user.schema';
 import { UserService } from './user.service';
 import { AuthService } from './auth.service';
+import { UserModule } from './user.module';
 
-describe('User & Auth Integration', () => {
+describe('UserModule Integration', () => {
   let userService: UserService;
   let authService: AuthService;
 
@@ -40,6 +41,7 @@ describe('User & Auth Integration', () => {
   });
 
   it('should instantiate both UserService and AuthService in user domain', () => {
+    expect(UserModule).toBeDefined();
     expect(userService).toBeDefined();
     expect(authService).toBeDefined();
   });

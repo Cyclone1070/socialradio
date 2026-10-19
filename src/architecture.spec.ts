@@ -680,3 +680,54 @@ describe('True Peer Decoupling Architecture Guardrails', () => {
     });
   });
 });
+
+describe('One spec file per implementation file', () => {
+  const repoRoot = path.join(__dirname, '..');
+  const sourceRoots = [__dirname, path.join(repoRoot, 'reddit-fetcher', 'src')];
+
+  /**
+   * Specs whose subject is a directory or the repository rather than a single file.
+   * They are the exception, and being on this list should be a decision somebody made
+   * rather than a habit: a spec that could name the file it tests must name it.
+   */
+  const AREA_SPECS = [
+    'architecture.spec.ts', // this file: the repository's shape
+    'domain/domain-architecture.spec.ts', // slice boundaries
+    'domain/domain.contracts.spec.ts', // the domain's published contracts
+    'infrastructure/infrastructure.spec.ts', // module wiring across three modules
+    'infrastructure/database/entity-mapping.spec.ts', // the ORM mapping across slices
+    'infrastructure/database/schema-snapshot.spec.ts', // migrations against the schemas
+    'infrastructure/database/schemas/schemas.spec.ts', // every schema in the directory
+  ];
+
+  function specFiles(dir: string): string[] {
+    const found: string[] = [];
+    if (!fs.existsSync(dir)) return found;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) found.push(...specFiles(full));
+      else if (entry.name.endsWith('.spec.ts')) found.push(full);
+    }
+    return found;
+  }
+
+  it('keeps every suite named after the file it tests', () => {
+    const orphans: string[] = [];
+
+    for (const root of sourceRoots) {
+      for (const spec of specFiles(root)) {
+        const relative = path.relative(root, spec).split(path.sep).join('/');
+        if (AREA_SPECS.includes(relative)) continue;
+
+        const implementation = spec.replace(/\.spec\.ts$/, '.ts');
+        if (!fs.existsSync(implementation)) {
+          // A suite named after an aspect ("outline", "watchdog-lock") outlives the
+          // file it describes and quietly becomes a second home for one file's tests.
+          orphans.push(relative);
+        }
+      }
+    }
+
+    expect(orphans).toEqual([]);
+  });
+});
