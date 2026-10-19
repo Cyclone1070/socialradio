@@ -163,7 +163,10 @@ BEFORE_ORDER=$(psql_run -t -A -c "SELECT COALESCE(MAX(play_order), 0) FROM segme
 psql_run -c "UPDATE channel SET playhead_started_at = now() - interval '3600 seconds' WHERE id = '$PLAY_CHAN_ID';" >/dev/null
 PIDS=""
 for i in 1 2 3 4 5; do
-  curl -s -o /dev/null -w "%{http_code}\n" "$BASE_URL/channels/$PLAY_CHAN_ID/live.m3u8" > "/tmp/concurrent_test_$i.txt" &
+  # Spread across the instances rather than piled onto one, alternating by index.
+  BURST_URL=$(instance_at $((i - 1)))
+  echo "  request $i -> $(instance_name "$BURST_URL")"
+  curl -s -o /dev/null -w "%{http_code}\n" "$BURST_URL/channels/$PLAY_CHAN_ID/live.m3u8" > "/tmp/concurrent_test_$i.txt" &
   PIDS="$PIDS $!"
 done
 for pid in $PIDS; do

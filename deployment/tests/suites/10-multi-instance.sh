@@ -5,7 +5,8 @@ set -e
 
 TOKEN=$(get_admin_token)
 ensure_base_fixtures
-APP2_URL="${APP2_URL:?APP2_URL is required - the second instance must be addressed, not guessed}"
+APP2_URL="${INSTANCE_TWO_URL:?the second instance must be addressed, not guessed}"
+APP1_URL="${INSTANCE_ONE_URL:?the first instance must be addressed, not guessed}"
 MOCKS_URL="${LLM_STUB_URL:-http://mocks:4010}"
 
 # How many seconds to wait for a condition, polled rather than slept on: every wait
@@ -41,7 +42,8 @@ echo "  app   -> $BASE_URL"
 echo "  app2  -> $APP2_URL"
 
 echo "62. Both instances see the same station and the same claim row"
-assert_status GET "$APP2_URL/healthcheck" 200
+ON_TWO
+assert_status GET "$BASE_URL/healthcheck" 200
 echo "  ✓ the second instance answers"
 
 req POST "$MOCKS_URL/__control" -H "Content-Type: application/json" -d '{"mode":"normal","delayMs":0}'
@@ -49,6 +51,7 @@ req POST "$MOCKS_URL/__control" -H "Content-Type: application/json" -d '{"mode":
 
 # ---- 63: exactly one instance fills an empty station -------------------------
 echo "63. Asking both instances at once about an empty station fills it once"
+ON_ONE
 assert_status POST "$BASE_URL/channels" 201 \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
@@ -56,7 +59,7 @@ assert_status POST "$BASE_URL/channels" 201 \
 RACE_CHAN_ID=$(echo "$BODY" | jq -r '.id')
 
 # No subreddits: the run has nothing to generate, so the only writer is the filler.
-curl -s -o /tmp/race-app.json -w "%{http_code}" "$BASE_URL/channels/$RACE_CHAN_ID/live.m3u8" > /tmp/race-app.code &
+curl -s -o /tmp/race-app.json -w "%{http_code}" "$APP1_URL/channels/$RACE_CHAN_ID/live.m3u8" > /tmp/race-app.code &
 RACE_A=$!
 curl -s -o /tmp/race-app2.json -w "%{http_code}" "$APP2_URL/channels/$RACE_CHAN_ID/live.m3u8" > /tmp/race-app2.code &
 RACE_B=$!
@@ -80,23 +83,27 @@ psql_run -f /scripts/fixtures/ai-talk.sql >/dev/null || fail "ai-talk.sql fixtur
 req POST "$MOCKS_URL/__control" -H "Content-Type: application/json" -d '{"mode":"normal","delayMs":1500}'
 [ "$STATUS" = "200" ] || fail "could not slow the model stub down"
 
+ON_ONE
 assert_status POST "$BASE_URL/channels" 201 \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name":"Two Instance Claim Station","visibility":"public"}'
 CLAIM_CHAN_ID=$(echo "$BODY" | jq -r '.id')
+ON_ONE
 assert_status POST "$BASE_URL/channels/$CLAIM_CHAN_ID/subreddits" 201 \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"subredditName":"ai_talk_fixture_sub_e2e"}'
 
+ON_ONE
 assert_status GET "$BASE_URL/channels/$CLAIM_CHAN_ID/live.m3u8" 200
 wait_until_not 25 "claim_of $CLAIM_CHAN_ID" "none" \
   || fail "the first instance never claimed the station while it was generating"
 CLAIM_BEFORE=$(claim_of "$CLAIM_CHAN_ID")
 echo "  ✓ the first instance holds the claim ($(echo "$CLAIM_BEFORE" | cut -c1-8)...)"
 
-assert_status GET "$APP2_URL/channels/$CLAIM_CHAN_ID/live.m3u8" 200
+ON_TWO
+assert_status GET "$BASE_URL/channels/$CLAIM_CHAN_ID/live.m3u8" 200
 CLAIM_AFTER=$(claim_of "$CLAIM_CHAN_ID")
 if [ "$CLAIM_AFTER" != "$CLAIM_BEFORE" ]; then
   fail "the second instance took a claim that was still alive ($CLAIM_BEFORE -> $CLAIM_AFTER)"
@@ -117,16 +124,19 @@ req POST "$MOCKS_URL/__control" -H "Content-Type: application/json" -d '{"delayM
 
 psql_run -c "DELETE FROM channel_post_progress; DELETE FROM comment; DELETE FROM post;" >/dev/null
 psql_run -f /scripts/fixtures/ai-talk.sql >/dev/null || fail "ai-talk.sql fixture failed"
+ON_ONE
 assert_status POST "$BASE_URL/channels" 201 \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name":"Two Instance Takeover Station","visibility":"public"}'
 TAKEOVER_CHAN_ID=$(echo "$BODY" | jq -r '.id')
+ON_ONE
 assert_status POST "$BASE_URL/channels/$TAKEOVER_CHAN_ID/subreddits" 201 \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"subredditName":"ai_talk_fixture_sub_e2e"}'
 
+ON_ONE
 assert_status GET "$BASE_URL/channels/$TAKEOVER_CHAN_ID/live.m3u8" 200
 wait_until_not 25 "claim_of $TAKEOVER_CHAN_ID" "none" \
   || fail "the first instance never claimed the takeover station"
@@ -135,7 +145,8 @@ CLAIM_OWNER=$(claim_of "$TAKEOVER_CHAN_ID")
 # The owner is still generating - to the database it is simply an old claim.
 # Backdating it is how a dead instance looks, without killing a container.
 psql_run -c "UPDATE channel SET buffer_claimed_at = now() - interval '10 minutes' WHERE id = '$TAKEOVER_CHAN_ID';" >/dev/null
-assert_status GET "$APP2_URL/channels/$TAKEOVER_CHAN_ID/live.m3u8" 200
+ON_TWO
+assert_status GET "$BASE_URL/channels/$TAKEOVER_CHAN_ID/live.m3u8" 200
 TAKEOVER_CLAIM=$(claim_of "$TAKEOVER_CHAN_ID")
 if [ "$TAKEOVER_CLAIM" = "$CLAIM_OWNER" ]; then
   fail "the second instance left a stale claim in place instead of taking over"

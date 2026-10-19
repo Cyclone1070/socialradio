@@ -11,6 +11,8 @@ echo "============================================="
 RESULTS=""
 FAILED_SUITES=""
 SUITE_COUNT=0
+TOTAL_ON_ONE=0
+TOTAL_ON_TWO=0
 PREREQ_FAILED=0
 
 # Suites are independent once the prerequisites pass: each one creates its own
@@ -24,11 +26,44 @@ run_suite() {
     fail "Suite file $SUITE_FILE not found"
   fi
 
+  # Every request a suite makes through the shared helper is routed to one of the
+  # instances in turn, and each one records which process answered. That file is how
+  # this script can tell whether a suite really ran against the whole stack or only
+  # proved something about one process.
+  INSTANCE_LOG="/tmp/instances-$$-$SUITE_NAME"
+  : > "$INSTANCE_LOG"
+  export INSTANCE_LOG
+
   # An `if` condition is exempt from `set -e`, so the rest of the script keeps
   # its guard while a failing suite only records itself.
   if /bin/sh "$SUITE_FILE"; then
+    SUITE_PASSED=1
+  else
+    SUITE_PASSED=0
+  fi
+
+  # grep -c prints 0 and exits non-zero when there is nothing to count, so the
+  # fallback must replace the value rather than append to it.
+  ON_ONE=$(grep -c '^app$' "$INSTANCE_LOG" 2>/dev/null) || ON_ONE=0
+  ON_TWO=$(grep -c '^app2$' "$INSTANCE_LOG" 2>/dev/null) || ON_TWO=0
+  rm -f "$INSTANCE_LOG"
+
+  # A suite whose assertions pass but which never reached the second instance fails
+  # anyway: it is evidence about one process, not about the stack.
+  if [ "$SUITE_PASSED" = "1" ] &&
+    [ "$INSTANCE_ONE_URL" != "$INSTANCE_TWO_URL" ] && [ "$ON_TWO" = "0" ]; then
+    echo "  ⛔ $SUITE_NAME never reached the second instance ($ON_ONE call(s) on app, 0 on app2)"
+    RESULTS="$RESULTS
+  FAIL $SUITE_NAME (single instance)"
+    FAILED_SUITES="$FAILED_SUITES $SUITE_NAME(single-instance)"
+  elif [ "$SUITE_PASSED" = "1" ]; then
     RESULTS="$RESULTS
   PASS $SUITE_NAME"
+    if [ "$INSTANCE_ONE_URL" != "$INSTANCE_TWO_URL" ]; then
+      echo "  instances exercised: app $ON_ONE, app2 $ON_TWO"
+      TOTAL_ON_ONE=$((TOTAL_ON_ONE + ON_ONE))
+      TOTAL_ON_TWO=$((TOTAL_ON_TWO + ON_TWO))
+    fi
   else
     RESULTS="$RESULTS
   FAIL $SUITE_NAME"
@@ -37,6 +72,7 @@ run_suite() {
       01-healthcheck | 02-auth) PREREQ_FAILED=1 ;;
     esac
   fi
+
   SUITE_COUNT=$((SUITE_COUNT + 1))
 }
 
@@ -120,6 +156,9 @@ if [ "$FAILED_COUNT" -eq 0 ]; then
     echo "  OK - All requested E2E checks passed (1 suite)"
   else
     echo "  OK - All requested E2E checks passed ($SUITE_COUNT suites)"
+  fi
+  if [ "$TOTAL_ON_TWO" -gt 0 ]; then
+    echo "  Every suite crossed the process boundary: $TOTAL_ON_ONE call(s) answered by app, $TOTAL_ON_TWO by app2."
   fi
 else
   echo "  FAILED - $FAILED_COUNT of $SUITE_COUNT suites:$FAILED_SUITES"

@@ -134,8 +134,12 @@ services:
       - TEST_SUITE=${TEST_SUITE:-all}
       # The model stub, so suite 09 can make it misbehave on purpose.
       - LLM_STUB_URL=http://mocks:4010
-      # Two instances, addressed explicitly. No proxy, no load balancer.
+      # Two instances, addressed explicitly. No proxy, no load balancer: the shared
+      # helper routes each request to the next instance in turn, and a URL naming an
+      # instance directly is left alone.
       - APP2_URL=http://app2:3000
+      - INSTANCE_ONE_URL=http://app:3000
+      - INSTANCE_URLS=http://app:3000 http://app2:3000
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

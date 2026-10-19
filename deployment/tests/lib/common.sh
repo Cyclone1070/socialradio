@@ -8,9 +8,85 @@ fail() {
   exit 1
 }
 
+# ── Instances ──────────────────────────────────────────────────────────
+#
+# The stack runs more than one app process on one database, and which one answers
+# is not left to a load balancer. Every request made through `req` is routed to the
+# next instance in turn, so a suite crosses the process boundary on every second
+# call without saying anything about it: a value written by one process is read
+# back from another, and state that only lived in memory would fail here.
+#
+# Rotation is by call order, so a given suite always sends the same request to the
+# same instance. Nothing is random, and every status line names the process that
+# answered. A URL that does not point at the first instance is left alone, which is
+# how a suite pins a call to a particular process on purpose.
+
+INSTANCE_ONE_URL="${INSTANCE_ONE_URL:-${TARGET_URL:?TARGET_URL is required}}"
+INSTANCE_URLS="${INSTANCE_URLS:-$INSTANCE_ONE_URL}"
+INSTANCE_TWO_URL=$(echo "$INSTANCE_URLS" | awk '{print $2}')
+INSTANCE_TWO_URL="${INSTANCE_TWO_URL:-$INSTANCE_ONE_URL}"
+INSTANCE_ROTATION=0
+
+instance_name() {
+  case "$1" in
+    "$INSTANCE_ONE_URL") echo "app" ;;
+    "$INSTANCE_TWO_URL") echo "app2" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+# The nth instance, for a burst that has to name its targets before it fires.
+instance_at() {
+  if [ "$(( $1 % 2 ))" = "0" ]; then
+    echo "$INSTANCE_ONE_URL"
+  else
+    echo "$INSTANCE_TWO_URL"
+  fi
+}
+
+# A suite that needs a particular process says so for one call, and the rotation
+# leaves it alone. Used where the identity of the instance is the subject.
+ON_ONE() { ROUTE_PIN="$INSTANCE_ONE_URL"; }
+ON_TWO() { ROUTE_PIN="$INSTANCE_TWO_URL"; }
+
+# Sets ROUTED_URL and INSTANCE_NAME. It assigns rather than echoes on purpose: the
+# rotation counter is the state that makes the alternation work, and a command
+# substitution would run this in a subshell where the increment is thrown away.
+route_url() {
+  if [ -n "$ROUTE_PIN" ]; then
+    ROUTED_INSTANCE="$ROUTE_PIN"
+    ROUTE_PIN=""
+  else
+    case "$1" in
+      "$INSTANCE_ONE_URL"*)
+        if [ "$(( INSTANCE_ROTATION % 2 ))" = "0" ]; then
+          ROUTED_INSTANCE="$INSTANCE_ONE_URL"
+        else
+          ROUTED_INSTANCE="$INSTANCE_TWO_URL"
+        fi
+        INSTANCE_ROTATION=$((INSTANCE_ROTATION + 1))
+        ;;
+      *)
+        ROUTED_INSTANCE="$1"
+        ;;
+    esac
+  fi
+
+  INSTANCE_NAME=$(instance_name "$ROUTED_INSTANCE")
+  if [ -n "$INSTANCE_LOG" ]; then
+    echo "$INSTANCE_NAME" >> "$INSTANCE_LOG"
+  fi
+
+  case "$1" in
+    "$INSTANCE_ONE_URL"*) ROUTED_URL="$ROUTED_INSTANCE${1#"$INSTANCE_ONE_URL"}" ;;
+    *) ROUTED_URL="$1" ;;
+  esac
+}
+
 req() {
   METHOD="$1"
-  URL="$2"
+  route_url "$2"
+  URL="$ROUTED_URL"
   shift 2
 
   HEADER_FILE=$(mktemp)
@@ -39,16 +115,16 @@ assert_status() {
       2*) ;;
       *)
         echo "  Body: $BODY"
-        fail "expected 2xx status, got $STATUS"
+        fail "expected 2xx status from $INSTANCE_NAME, got $STATUS"
         ;;
     esac
-    echo "  Status: $STATUS (expected 2xx) [${REQ_TIME}s]"
+    echo "  Status: $STATUS (expected 2xx) [$INSTANCE_NAME ${REQ_TIME}s]"
   else
     if [ "$STATUS" != "$EXPECTED" ]; then
       echo "  Body: $BODY"
-      fail "expected $EXPECTED, got $STATUS"
+      fail "expected $EXPECTED from $INSTANCE_NAME, got $STATUS"
     fi
-    echo "  Status: $STATUS (expected $EXPECTED) [${REQ_TIME}s]"
+    echo "  Status: $STATUS (expected $EXPECTED) [$INSTANCE_NAME ${REQ_TIME}s]"
   fi
 }
 

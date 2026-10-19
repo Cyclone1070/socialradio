@@ -146,9 +146,11 @@ echo "  ✓ Post-idle listener woke station up with zero sleep; last_active_at r
 echo "57. Concurrent Polling Deduplication: parallel requests maintain playhead consistency"
 RESP1_FILE=$(mktemp)
 RESP2_FILE=$(mktemp)
-curl -s "$BASE_URL/channels/$BC_CHAN_ID/live.m3u8" > "$RESP1_FILE" &
+# One request to each instance: the pair spans two processes, which is the only way
+# a playhead shared through the database can be shown to be shared.
+curl -s "$(instance_at 0)/channels/$BC_CHAN_ID/live.m3u8" > "$RESP1_FILE" &
 PID1=$!
-curl -s "$BASE_URL/channels/$BC_CHAN_ID/live.m3u8" > "$RESP2_FILE" &
+curl -s "$(instance_at 1)/channels/$BC_CHAN_ID/live.m3u8" > "$RESP2_FILE" &
 PID2=$!
 wait $PID1
 wait $PID2
