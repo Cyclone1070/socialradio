@@ -28,6 +28,72 @@ services:
       db:
         condition: service_healthy
 
+  # Makes the database agree with library/manifest.json. One-off: it runs after
+  # the migrations and before the app, and running it again writes nothing that
+  # is already there. The manifest is mounted read-only, so the container reads
+  # the inventory of the library rather than carrying a copy of it.
+  seed:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/Dockerfile
+      target: builder
+    command: ["npx", "ts-node", "media-cli/index.ts", "seed"]
+    env_file: ../../.env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/socialradio
+      STORAGE_ENDPOINT: http://seaweedfs:9000
+      STORAGE_BUCKET: socialradio-media
+      STORAGE_ACCESS_KEY: socialradio-local
+      STORAGE_SECRET_KEY: socialradio-local-secret
+    volumes:
+      - ../../library:/usr/src/app/library:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+      seaweedfs:
+        condition: service_healthy
+
+  # Local parity for what Terraform owns in a deployment: the second bucket the
+  # library is promoted into. The app creates the bucket it serves from; nothing
+  # else creates this one, and `media promote` deliberately does not.
+  bucket-init:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/Dockerfile
+      target: runner
+    command:
+      - "node"
+      - "-e"
+      - |
+        const { S3Client, CreateBucketCommand } = require('@aws-sdk/client-s3');
+        const s3 = new S3Client({
+          endpoint: process.env.STORAGE_ENDPOINT,
+          region: 'auto',
+          credentials: {
+            accessKeyId: process.env.STORAGE_ACCESS_KEY,
+            secretAccessKey: process.env.STORAGE_SECRET_KEY,
+          },
+          forcePathStyle: true,
+        });
+        const buckets = (process.env.EXTRA_BUCKETS || '').split(',').filter(Boolean);
+        Promise.all(
+          buckets.map((Bucket) =>
+            s3.send(new CreateBucketCommand({ Bucket })).catch((e) => {
+              if (e.name !== 'BucketAlreadyOwnedByYou' && e.name !== 'BucketAlreadyExists') throw e;
+            }),
+          ),
+        ).then(() => console.log('buckets ready:', buckets.join(', ')));
+    environment:
+      STORAGE_ENDPOINT: http://seaweedfs:9000
+      STORAGE_ACCESS_KEY: socialradio-local
+      STORAGE_SECRET_KEY: socialradio-local-secret
+      EXTRA_BUCKETS: socialradio-staging
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+
   # SeaweedFS replaced MinIO: the MinIO open-source project is archived (Docker
   # Hub repo deleted, binaries return 410 Gone). The S3 API still listens on
   # 9000 so the app config, the suites and STORAGE_PUBLIC_URL are unchanged.
@@ -46,9 +112,12 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     # -ip.bind=0.0.0.0 is required for the healthcheck: by default SeaweedFS
     # binds to the container's own IP, so localhost:9000 refuses connections
-    # from inside the container.
+    # from inside the container. -volume.max=0 lets the volume server grow a
+    # collection per bucket without a ceiling: a second bucket (what `media
+    # promote` copies into) is a second collection, and the default ceiling
+    # answers writes with "no free volumes left".
     command:
-      - "weed server -s3 -dir=/data -s3.port=9000 -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0"
+      - "weed server -s3 -dir=/data -s3.port=9000 -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0 -volume.max=0"
     volumes:
       - ./seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
       - seaweedfs_data:/data

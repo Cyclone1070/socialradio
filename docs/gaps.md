@@ -29,18 +29,30 @@ account that can exist is the admin seeded at boot from `ADMIN_EMAIL` / `ADMIN_P
 ### 1.2 No media library write path
 
 `src/media/` has a service and three tables (`music_track`, `liner`, `jingle`), and no controller.
-Library contents are operator-managed by hand. The break-out lines have a seeding command
-(`deployment/tools/seed-liners.ts`), but it writes rows, not audio: the speech pipeline still has to
-produce the files they point at.
+Library contents are operator-managed by hand.
 
-- **Blocks**: a station that sounds like a station. With an empty library the queue still fills, but
-  every filler points at the placeholder key `jingles/station-id.mp3` — an object that exists only
-  because the test fixtures upload it (`deployment/tests/lib/common.sh`), alongside the rows that
-  `seed-base.sql` inserts. A real deployment has neither, so the stream has holes where music, liners
-  and jingles should be.
-- **Done means**: an admin route to add and list library entries, or a seeding command. Uploading audio
-  through the API is the bigger decision: the app only ever writes what it generated itself, so a
-  user-supplied file would be the first untrusted object in the bucket.
+Seeding the *rows* now exists: `media-cli` reads a manifest (`library/manifest.json`)
+describing every audio file the station owns, and makes the rows agree with it - adding what is
+missing, correcting what disagrees, and refusing to write a row for an object the bucket does not
+hold. Running it twice writes nothing the second time. The draw path is defended from the other side
+too: a row whose audio has gone from the bucket is left out of the pool (checked once per process), so
+a stale row degrades into "that part of the break is dropped" instead of a 404 mid-break.
+
+What is still missing is content rather than machinery:
+
+- **Liner clips.** `media-cli speak` will speak the hundred lines in `library/liner-lines.json`, but
+  nobody has run it against a real speech service, so the inventory starts empty.
+- **Songs and jingles.** `media-cli add` measures a file and records it, but the files themselves are
+  not in the repository and no source is chosen for them.
+
+- **Blocks**: a station that sounds like a station. With an empty library the queue still fills - the
+  break drops whatever it cannot draw (`queue.service.ts`, "a break pool is empty, leaving that part of
+  the break out") - but every break and every filler comes out shorter than it should be. Nothing
+  falls back to a placeholder key: the fixture's `jingles/station-id.mp3` is a test row, not a default.
+- **Done means**: a command that speaks the liner pool into the bucket and records what it produced,
+  plus a way to put songs and jingles there and describe them. Uploading audio through the API is a
+  separate decision: the app only ever writes what it generated itself, so a user-supplied file would
+  be the first untrusted object in the bucket.
 
 ### 1.3 No CORS
 

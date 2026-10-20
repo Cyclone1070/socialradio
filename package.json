@@ -9,11 +9,15 @@
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\"",
     "lint": "eslint \"src/**/*.ts\" --fix --cache && tsc --noEmit",
-    "gate": "npm run format && npm run lint && npm test",
+    "gate": "npm run format && npm run lint && npm run lint:cli && npm run typecheck:cli && npm test && npm run test:cli",
     "test": "jest",
     "migration:create": "mikro-orm migration:create",
     "migration:up": "mikro-orm migration:up",
-    "migration:down": "mikro-orm migration:down"
+    "migration:down": "mikro-orm migration:down",
+    "media": "ts-node media-cli/index.ts",
+    "test:cli": "jest --config media-cli/jest.config.js",
+    "lint:cli": "eslint \"media-cli/**/*.ts\"",
+    "typecheck:cli": "tsc -p media-cli/tsconfig.json"
   },
   "dependencies": {
     "@ai-sdk/deepseek": "^3.0.28",

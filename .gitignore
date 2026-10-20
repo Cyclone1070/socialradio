@@ -70,3 +70,4 @@ walkthrough.md
 /voice-service/dist
 /voice-service/node_modules
 .eslintcache
+library/files/

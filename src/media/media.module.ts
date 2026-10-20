@@ -7,10 +7,12 @@ import {
 } from '../infrastructure/database/schemas/media.schema';
 import { MediaService } from './media.service';
 import { MediaContract } from '../domain';
+import { StorageModule } from '../infrastructure/storage/storage.module';
 
 @Module({
   imports: [
     MikroOrmModule.forFeature([MusicTrackSchema, JingleSchema, LinerSchema]),
+    StorageModule,
   ],
   providers: [
     MediaService,
