@@ -14,6 +14,7 @@ import {
 import {
   ChannelSchema,
   SegmentSchema,
+  TalkSegmentSchema,
 } from '../infrastructure/database/schemas/channel.schema';
 import { clusterPosts } from './utils/topic-clustering.util';
 import { TalkCluster } from './interfaces/talk-cluster.interface';
@@ -164,7 +165,39 @@ export class QueueService {
         station.completedPosts?.getItems().map((post) => post.id) ?? [],
       );
 
-      for (const spec of specs) {
+      // The pick is a read and cannot see a write that is still in flight. The
+      // segment table is the record of what this station has aired, so the decision
+      // is taken here, under the station lock: a conversation that already has a
+      // segment is dropped rather than put on the station twice.
+      const incoming = specs
+        .map((spec) => (spec.kind === 'talk' ? spec.clusterId : undefined))
+        .filter((clusterId): clusterId is string => Boolean(clusterId));
+      const aired = new Set(
+        incoming.length === 0
+          ? []
+          : (
+              await em
+                .getRepository(TalkSegmentSchema)
+                .find(
+                  { channelId, clusterId: { $in: incoming } },
+                  { fields: ['clusterId'] },
+                )
+            ).map((segment) => segment.clusterId),
+      );
+
+      const usable = specs.filter(
+        (spec) =>
+          spec.kind !== 'talk' || !spec.clusterId || !aired.has(spec.clusterId),
+      );
+      if (usable.length === 0) {
+        this.logger.warn(
+          { channelId, conversations: incoming.length },
+          'every conversation in the block is already on this station, block discarded',
+        );
+        return 0;
+      }
+
+      for (const spec of usable) {
         const segment = this.buildSegment(spec);
         segment.channelId = channelId;
         segment.playOrder = playOrder++;
@@ -179,7 +212,9 @@ export class QueueService {
         }
       }
       await em.flush();
-      return specs.length;
+      // What was written, not what was asked for: a block that lost a conversation
+      // on the way in reports the rest, and the runway maths reads this number.
+      return usable.length;
     }
   }
 

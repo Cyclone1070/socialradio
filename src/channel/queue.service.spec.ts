@@ -935,6 +935,64 @@ describe('QueueService', () => {
       expect(mockEntityManager.persist).not.toHaveBeenCalled();
     });
 
+    it('refuses a conversation that already has a segment on this station', async () => {
+      // The pick normally excludes what already aired, but the pick is a read: it
+      // cannot know what another write is doing, and it is not what decides. A
+      // station with two segments for one topic airs the same story twice, so the
+      // write itself must refuse it - the segment table is the record.
+      mockChannelRepo.findOne.mockResolvedValue(station('tok-1'));
+      mockSegmentRepo.findOne.mockResolvedValue({ playOrder: 4 });
+      mockSegmentRepo.find.mockResolvedValue([
+        { clusterId: 'cluster-1', type: 'talk' },
+      ]);
+
+      const written = await service.appendBlock('chan-1', 'tok-1', [
+        {
+          kind: 'talk',
+          clusterId: 'cluster-1',
+          postIds: ['post-1'],
+          audioUrl: 'audio/talk-1.mp3',
+          durationSeconds: 300,
+        },
+        { kind: 'liner', audioUrl: 'liners/back-01.mp3', durationSeconds: 4 },
+      ]);
+
+      const persisted = mockEntityManager.persist.mock.calls.map(
+        (call: unknown[]) => call[0] as { type: string; clusterId?: string },
+      );
+      expect(persisted.map((item) => item.type)).toEqual(['liner']);
+      expect(written).toBe(1);
+    });
+
+    it('discards the whole block when every conversation is already on the station', async () => {
+      mockChannelRepo.findOne.mockResolvedValue(station('tok-1'));
+      mockSegmentRepo.findOne.mockResolvedValue({ playOrder: 4 });
+      mockSegmentRepo.find.mockResolvedValue([
+        { clusterId: 'cluster-1' },
+        { clusterId: 'cluster-2' },
+      ]);
+
+      const written = await service.appendBlock('chan-1', 'tok-1', [
+        {
+          kind: 'talk',
+          clusterId: 'cluster-1',
+          postIds: ['post-1'],
+          audioUrl: 'audio/talk-1.mp3',
+          durationSeconds: 300,
+        },
+        {
+          kind: 'talk',
+          clusterId: 'cluster-2',
+          postIds: ['post-2'],
+          audioUrl: 'audio/talk-2.mp3',
+          durationSeconds: 300,
+        },
+      ]);
+
+      expect(written).toBe(0);
+      expect(mockEntityManager.persist).not.toHaveBeenCalled();
+    });
+
     it('writes without a claim, because the watchdog holds none', async () => {
       mockChannelRepo.findOne.mockResolvedValue(station('tok-from-a-run'));
       mockSegmentRepo.findOne.mockResolvedValue(null);
