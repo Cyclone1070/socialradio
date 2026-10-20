@@ -8,12 +8,16 @@ export COMPOSE_PROGRESS=auto
 
 cleanup() {
   STATUS=$?
+  trap - EXIT
   if [ $STATUS -ne 0 ]; then
     echo "=== App Container Logs (Failure Diagnosis) ==="
     $COMPOSE logs app 2>&1 | grep -v '"/healthcheck"' | tail -100 || true
   fi
   echo "=== Clean Up ==="
   $COMPOSE down -v >/dev/null 2>&1 || true
+  # Without this the trap's last command decided the exit status, so a failed
+  # run reported 0 and a broken stack looked like a green one.
+  exit "$STATUS"
 }
 # A failed run must still tear down: volumes leaking into the next run make
 # it non-clean (e.g. a dead-sub row surviving a crashed suite).

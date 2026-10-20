@@ -334,6 +334,16 @@ echo "  ✓ neither instance left the station claimed"
 
 STALE_DUPLICATES=$(psql_run -t -A -c "SELECT COUNT(*) FROM (SELECT cluster_id FROM segment WHERE \"channel_id\" = '$STALE_CHAN_ID' AND type = 'talk' GROUP BY cluster_id HAVING COUNT(*) > 1) d;")
 if [ "$STALE_DUPLICATES" != "0" ]; then
+  # The database is destroyed at the end of the run, so the only chance to see why
+  # this happened is here: the two rows, when they were written, and whether the
+  # post they came from is recorded as aired.
+  echo "  Duplicated topics, in the order they were written:"
+  psql_run -c "SELECT s.cluster_id, s.play_order, s.\"created_at\", (p.post_id IS NOT NULL) AS marked_aired
+               FROM segment s
+               LEFT JOIN channel_post_progress p ON p.\"channel_id\" = s.\"channel_id\" AND p.post_id::text = s.cluster_id
+               WHERE s.\"channel_id\" = '$STALE_CHAN_ID' AND s.type = 'talk'
+               ORDER BY s.\"created_at\", s.play_order;" || true
+  psql_run -c "SELECT \"buffer_claim_id\", \"buffer_claimed_at\", \"created_at\" FROM channel WHERE id = '$STALE_CHAN_ID';" || true
   fail "$STALE_DUPLICATES topic(s) aired twice after a takeover - the dead run's block was not refused"
 fi
 STALE_TALK=$(psql_run -t -A -c "SELECT COUNT(*) FROM segment WHERE \"channel_id\" = '$STALE_CHAN_ID' AND type = 'talk';")

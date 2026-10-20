@@ -234,3 +234,30 @@ if [ "$RECOVERED_CHUNKS" -lt 2 ] && [ "$RECOVERED_CHUNKS" -lt 1 ]; then
   fail "the station served no chunks after the library was restored"
 fi
 echo "  ✓ library restored: the station covers itself again ($RECOVERED_CHUNKS chunk(s))"
+
+echo "59b. A row whose audio has gone must not be aired"
+# The other half of a cold library: rows that survived but whose object did not.
+# The break needs a liner, so a liner pointing at a missing key is exactly the
+# case that used to answer 200 with a chunk URL that 404s on the player.
+psql_run -c "DELETE FROM liner;" >/dev/null
+psql_run -c "INSERT INTO liner (\"id\", \"text\", \"file_path\", \"duration_seconds\", \"created_at\") VALUES (gen_random_uuid(), 'Gone from the bucket.', 'liners/deleted-by-someone.mp3', 4.0, now());" >/dev/null \
+  || fail "could not seed a liner whose audio is absent"
+psql_run -c "UPDATE channel SET playhead_started_at = now() - interval '3600 seconds' WHERE id = '$BC_CHAN_ID';" >/dev/null
+req GET "$BASE_URL/channels/$BC_CHAN_ID/live.m3u8"
+if [ "$STATUS" != "200" ]; then
+  fail "a row whose audio is gone took the station down (HTTP $STATUS)"
+fi
+if echo "$BODY" | grep -q 'deleted-by-someone'; then
+  fail "the station aired a liner whose audio is not in the bucket: $BODY"
+fi
+SERVED_CHUNKS=$(echo "$BODY" | grep -c '#EXTINF:' || echo "0")
+if [ "$SERVED_CHUNKS" -lt 1 ]; then
+  fail "the station served nothing at all once the only liner lost its audio"
+fi
+echo "  ✓ the missing liner was left out and the break still played ($SERVED_CHUNKS chunk(s))"
+
+# Put the liners back so the sections after this one see a normal library.
+psql_run -c "DELETE FROM liner;" >/dev/null
+psql_run -c "INSERT INTO liner (\"id\", \"text\", \"file_path\", \"duration_seconds\", \"created_at\") VALUES (gen_random_uuid(), 'We will be right back after this.', 'liners/seed-back-01.mp3', 5.0, now()), (gen_random_uuid(), 'Stay with us, the phones are still open.', 'liners/seed-back-02.mp3', 5.0, now());" >/dev/null \
+  || fail "could not restore the liner fixture"
+echo "  ✓ liners restored"

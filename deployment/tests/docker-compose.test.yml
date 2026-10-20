@@ -118,6 +118,47 @@ services:
   # All SQL runs from inside the suite via the single psql_run helper
   # (docker-test.sh) — the seed service below was removed when the suite
   # gained psql access (one pattern, not two).
+  # Exercises the two commands a deploy runs, in the topology a deploy runs them
+  # in: promote the library into the second bucket, then seed from it. A failure
+  # here fails the compose dependency, so a suite run cannot pass without it.
+  promote-fixture:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/Dockerfile
+      target: builder
+    env_file: !override
+      - ../tests/tier1.env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/socialradio
+      STORAGE_ENDPOINT: http://seaweedfs:9000
+      STORAGE_BUCKET: socialradio-media
+      STORAGE_ACCESS_KEY: socialradio-local
+      STORAGE_SECRET_KEY: socialradio-local-secret
+      LIBRARY_SOURCE_BUCKET: socialradio-media
+    command:
+      - "sh"
+      - "-c"
+      - >
+        node /usr/src/app/upload-library.mjs
+        && npx ts-node media-cli/index.ts promote --from socialradio-media --to socialradio-staging
+        && STORAGE_BUCKET=socialradio-staging npx ts-node media-cli/index.ts seed
+    volumes:
+      - ../tests/fixtures/library-manifest.json:/usr/src/app/library/manifest.json:ro
+      - ../tests/fixtures:/fixtures:ro
+      # Inside the app directory, not under /fixtures: an ES module resolves its
+      # imports from its own location, and only /usr/src/app has node_modules.
+      - ../tests/fixtures/upload-library.mjs:/usr/src/app/upload-library.mjs:ro
+      # A directory, not one file: a bind mount cannot add a file to a mount
+      # that is already there and read-only.
+      - ../../voice-service/fixtures:/audio:ro
+    depends_on:
+      bucket-init:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+
   tests:
     build:
       context: ../tests
@@ -155,6 +196,9 @@ services:
         condition: service_healthy
       app2:
         condition: service_healthy
+      # The promote-and-seed path must have completed before the suites run.
+      promote-fixture:
+        condition: service_completed_successfully
 
 networks:
   external_test_net:

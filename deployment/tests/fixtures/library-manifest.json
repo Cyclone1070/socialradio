@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "kind": "music",
+      "key": "music/neon-waves.mp3",
+      "durationSeconds": 180,
+      "title": "Neon Waves",
+      "artist": "Synthwave Master"
+    },
+    {
+      "kind": "music",
+      "key": "music/midnight-drive.mp3",
+      "durationSeconds": 210,
+      "title": "Midnight Drive",
+      "artist": "City Walker"
+    },
+    {
+      "kind": "liner",
+      "key": "liners/seed-back-01.mp3",
+      "durationSeconds": 5,
+      "text": "We will be right back after this."
+    },
+    {
+      "kind": "liner",
+      "key": "liners/seed-back-02.mp3",
+      "durationSeconds": 5,
+      "text": "Stay with us, the phones are still open."
+    },
+    {
+      "kind": "jingle",
+      "key": "jingles/station-id.mp3",
+      "durationSeconds": 5,
+      "name": "Station ID Top of Hour"
+    },
+    {
+      "kind": "jingle",
+      "key": "jingles/intro.mp3",
+      "durationSeconds": 8,
+      "name": "Social Radio Intro"
+    }
+  ]
+}

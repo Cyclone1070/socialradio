@@ -683,7 +683,13 @@ describe('True Peer Decoupling Architecture Guardrails', () => {
 
 describe('One spec file per implementation file', () => {
   const repoRoot = path.join(__dirname, '..');
-  const sourceRoots = [__dirname, path.join(repoRoot, 'reddit-fetcher', 'src')];
+  // The library's management code was moved out of src, so this rule has to
+  // follow it out: a file that leaves src does not stop needing a spec.
+  const sourceRoots = [
+    __dirname,
+    path.join(repoRoot, 'reddit-fetcher', 'src'),
+    path.join(repoRoot, 'media-cli'),
+  ];
 
   /**
    * Specs whose subject is a directory or the repository rather than a single file.
@@ -729,5 +735,27 @@ describe('One spec file per implementation file', () => {
     }
 
     expect(orphans).toEqual([]);
+  });
+
+  /**
+   * The check above catches a spec with no subject. It says nothing about a
+   * subject with no spec, which is how a file moved out of src lost its tests
+   * without anything going red. This is that other direction, and it is only
+   * claimed for media-cli so far: src has production files without a spec, and
+   * pretending otherwise would mean an allowlist long enough to hide real gaps.
+   */
+  it('leaves no media-cli implementation file without a suite', () => {
+    const cliRoot = path.join(repoRoot, 'media-cli');
+    const unspecced: string[] = [];
+
+    for (const entry of fs.readdirSync(cliRoot, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      if (!entry.name.endsWith('.ts')) continue;
+      if (entry.name.endsWith('.spec.ts')) continue;
+      const spec = path.join(cliRoot, entry.name.replace(/\.ts$/, '.spec.ts'));
+      if (!fs.existsSync(spec)) unspecced.push(entry.name);
+    }
+
+    expect(unspecced).toEqual([]);
   });
 });
