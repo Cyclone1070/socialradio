@@ -157,10 +157,18 @@ fi
 echo "51. The block the run wrote: conversations, then the break that closes it"
 BLOCK_SHAPE=$(psql_run -t -A -c "SELECT string_agg(type, ',' ORDER BY play_order) FROM segment WHERE \"channel_id\" = '$AI_CHAN_ID';")
 echo "  Block shape: $BLOCK_SHAPE"
+# The show comes back through the jingle: the station was playing music (the cold-start
+# filler) and the first thing the block does is announce the return.
 case "$BLOCK_SHAPE" in
-  *talk,liner,music*) echo "  ✓ the run closed its block with an announcement and a song" ;;
-  *talk,music*)       echo "  ✓ the run closed its block with a song (no liner pool in this fixture)" ;;
-  *) fail "the block does not end the way the plan says: $BLOCK_SHAPE" ;;
+  *jingle,talk*) echo "  ✓ the jingle sits between the music and the conversations" ;;
+  *) fail "no jingle between the music and the conversations: $BLOCK_SHAPE" ;;
+esac
+# And the break that closes the block carries no jingle of its own: it cannot know
+# whether the watchdog will append another filler behind it.
+case "$BLOCK_SHAPE" in
+  *liner,music) echo "  ✓ the block closes with its break: announcement, then a song" ;;
+  *talk,music)  echo "  ✓ the block closes with a song (no liner pool in this fixture)" ;;
+  *) fail "the block does not end with its break: $BLOCK_SHAPE" ;;
 esac
 
 if psql_run -t -A -c "SELECT outline FROM segment WHERE \"channel_id\" = '$AI_CHAN_ID' AND type = 'talk' AND outline IS NULL LIMIT 1;" | grep -q .; then
@@ -229,7 +237,7 @@ if [ "$FILLER_CHUNKS" -lt 2 ]; then
 fi
 FILLER_BEHIND_SONG=$(psql_run -t -A -c "SELECT string_agg(type, ',' ORDER BY play_order) FROM segment WHERE \"channel_id\" = '$AI_CHAN_ID' AND play_order > $DRAIN_MAX;")
 case "$FILLER_BEHIND_SONG" in
-  music,music*) echo "  ✓ behind a break the filler is songs only, no announcement ($FILLER_BEHIND_SONG)" ;;
+  music,music) echo "  ✓ behind a break the filler is songs only, no announcement ($FILLER_BEHIND_SONG)" ;;
   *) fail "the filler behind a break should be songs only, got: $FILLER_BEHIND_SONG" ;;
 esac
 
@@ -243,7 +251,7 @@ if [ "$STATUS" != "200" ]; then
 fi
 FILLER_BEHIND_TALK=$(psql_run -t -A -c "SELECT string_agg(type, ',' ORDER BY play_order) FROM segment WHERE \"channel_id\" = '$AI_CHAN_ID' AND play_order > $((LAST_ORDER + 1));")
 case "$FILLER_BEHIND_TALK" in
-  liner,music,music*) echo "  ✓ behind a conversation the filler announces itself, then two songs ($FILLER_BEHIND_TALK)" ;;
+  liner,music,music) echo "  ✓ behind a conversation the filler announces itself, then two songs ($FILLER_BEHIND_TALK)" ;;
   *) fail "the filler behind a conversation should be liner,music,music - got: $FILLER_BEHIND_TALK" ;;
 esac
 

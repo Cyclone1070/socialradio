@@ -272,8 +272,10 @@ if [ "$TWO_PROC_CODE_A" != "200" ] || [ "$TWO_PROC_CODE_B" != "200" ]; then
   fail "two processes cold-starting the same station returned $TWO_PROC_CODE_A and $TWO_PROC_CODE_B instead of 200 and 200"
 fi
 
-TWO_PROC_ROWS=$(psql_run -t -A -c "SELECT COUNT(*) FROM segment WHERE \"channel_id\" = '$TWO_PROC_CHAN_ID';")
-if [ "$TWO_PROC_ROWS" != "2" ]; then
-  fail "two processes noticed the same hole and wrote $TWO_PROC_ROWS rows; the filler is two songs"
-fi
-echo "  ✓ $(instance_name "$(instance_at 0)") and $(instance_name "$(instance_at 1)") filled the station once between them ($TWO_PROC_ROWS songs)"
+# The filler is two songs: the watchdog has no conversations to hand back to, so no
+# jingle. One writer, one block - four rows would mean both of them filled it.
+TWO_PROC_SHAPE=$(psql_run -t -A -c "SELECT string_agg(type, ',' ORDER BY play_order) FROM segment WHERE \"channel_id\" = '$TWO_PROC_CHAN_ID';")
+case "$TWO_PROC_SHAPE" in
+  music,music) echo "  ✓ $(instance_name "$(instance_at 0)") and $(instance_name "$(instance_at 1)") filled the station once between them ($TWO_PROC_SHAPE)" ;;
+  *) fail "two processes noticed the same hole and wrote $TWO_PROC_SHAPE; the filler is two songs, written once" ;;
+esac

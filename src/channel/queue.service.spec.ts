@@ -494,6 +494,91 @@ describe('QueueService', () => {
       expect(appended().map((item) => item.playOrder)).toEqual([1, 2, 3, 4]);
     });
 
+    it('opens with the jingle when the show comes back after a song', async () => {
+      // The break cannot know it is the last one - the watchdog may append another
+      // filler behind it - so the jingle belongs to the moment talk resumes, and the
+      // segment behind the block is the only thing that decides it.
+      runwayOf([]);
+      subsOf(1);
+      postsOf('Topic Alpha');
+      conversationsOf(900);
+      mockSegmentRepo.findOne.mockResolvedValue({
+        playOrder: 6,
+        type: 'music',
+        durationSeconds: 200,
+      });
+
+      await service.bufferAhead('chan-1');
+
+      expect(appended().map((item) => item.type)).toEqual([
+        'jingle',
+        'talk',
+        'liner',
+        'music',
+      ]);
+      expect(mockMediaService.getRandomJingle).toHaveBeenCalled();
+    });
+
+    it('does not open with a jingle when nothing aired before the show', async () => {
+      runwayOf([]);
+      subsOf(1);
+      postsOf('Topic Alpha');
+      conversationsOf(900);
+      mockSegmentRepo.findOne.mockResolvedValue(null);
+
+      await service.bufferAhead('chan-1');
+
+      expect(appended().map((item) => item.type)).toEqual([
+        'talk',
+        'liner',
+        'music',
+      ]);
+      expect(mockMediaService.getRandomJingle).not.toHaveBeenCalled();
+    });
+
+    it('opens the block even when there is no jingle to play', async () => {
+      runwayOf([]);
+      subsOf(1);
+      postsOf('Topic Alpha');
+      conversationsOf(900);
+      mockSegmentRepo.findOne.mockResolvedValue({
+        playOrder: 6,
+        type: 'music',
+        durationSeconds: 200,
+      });
+      mockMediaService.getRandomJingle.mockRejectedValue(
+        new Error('media pool empty'),
+      );
+
+      await service.bufferAhead('chan-1');
+
+      expect(appended().map((item) => item.type)).toEqual([
+        'talk',
+        'liner',
+        'music',
+      ]);
+    });
+
+    it('does not repeat the jingle when talk was already back', async () => {
+      runwayOf([]);
+      subsOf(1);
+      postsOf('Topic Alpha');
+      conversationsOf(900);
+      mockSegmentRepo.findOne.mockResolvedValue({
+        playOrder: 3,
+        type: 'jingle',
+        durationSeconds: 5,
+      });
+
+      await service.bufferAhead('chan-1');
+
+      expect(appended().map((item) => item.type)).toEqual([
+        'talk',
+        'liner',
+        'music',
+      ]);
+    });
+
     it('closes the block after a single conversation longer than the target', async () => {
       runwayOf([]);
       subsOf(1);

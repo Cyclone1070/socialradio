@@ -6,6 +6,9 @@
  * The announcement is information, so it is only played when it is new. A break
  * that follows a break was just announced, and a station that has never aired
  * anything has nothing to come back from - both stay silent.
+ *
+ * No jingle here: a break does not know whether another filler follows it, and the
+ * jingle belongs to the moment the show comes back. That is the talk block's job.
  */
 export type BreakShapeItem = 'liner' | 'music';
 

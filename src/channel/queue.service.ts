@@ -189,6 +189,15 @@ export class QueueService {
         (spec) =>
           spec.kind !== 'talk' || !spec.clusterId || !aired.has(spec.clusterId),
       );
+
+      // The show coming back after music gets the station's jingle. It is decided
+      // here, not by the break: a break cannot know whether the watchdog will append
+      // another filler behind it, and only the segment already in the queue says what
+      // the listener is actually hearing before this block.
+      if (tail?.type === 'music' && usable[0]?.kind === 'talk') {
+        const jingle = await this.drawJingle(channelId);
+        if (jingle) usable.unshift(jingle);
+      }
       if (usable.length === 0) {
         this.logger.warn(
           { channelId, conversations: incoming.length },
@@ -447,6 +456,29 @@ export class QueueService {
         );
       }
       return { kind: 'failed' };
+    }
+  }
+
+  /**
+   * The station id that hands the show back. A missing jingle pool costs the
+   * transition its announcement, never the conversations behind it.
+   */
+  private async drawJingle(
+    channelId: string,
+  ): Promise<BlockSegmentSpec | null> {
+    try {
+      const jingle = await this.mediaService.getRandomJingle();
+      return {
+        kind: 'jingle',
+        audioUrl: jingle.filePath,
+        durationSeconds: jingle.durationSeconds,
+      };
+    } catch (err) {
+      this.logger.warn(
+        { channelId, err: err instanceof Error ? err.message : String(err) },
+        'no jingle to hand the show back, the block opens without one',
+      );
+      return null;
     }
   }
 
