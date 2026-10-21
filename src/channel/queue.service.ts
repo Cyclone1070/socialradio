@@ -9,7 +9,7 @@ import {
   MusicSegment,
   TalkSegment,
   JingleSegment,
-  LinerSegment,
+  BreakLinerSegment,
 } from './entities/segment.entity';
 import {
   ChannelSchema,
@@ -67,7 +67,7 @@ const MAX_REJECTED_TOPICS_PER_RUN = 2;
 
 /** One row of a block: everything needed to write a segment, and nothing else. */
 export interface BlockSegmentSpec {
-  kind: 'talk' | 'music' | 'jingle' | 'liner';
+  kind: 'talk' | 'music' | 'jingle' | 'break_liner';
   audioUrl: string;
   durationSeconds: number;
   clusterId?: string;
@@ -237,8 +237,8 @@ export class QueueService {
       }
       case 'music':
         return new MusicSegment(spec.title, spec.artist);
-      case 'liner':
-        return new LinerSegment();
+      case 'break_liner':
+        return new BreakLinerSegment();
       case 'jingle':
         return new JingleSegment();
     }
@@ -496,12 +496,12 @@ export class QueueService {
 
     for (const item of shape) {
       try {
-        if (item === 'liner') {
-          const liner = await this.mediaService.getRandomLiner();
+        if (item === 'break_liner') {
+          const breakLiner = await this.mediaService.getRandomBreakLiner();
           specs.push({
-            kind: 'liner',
-            audioUrl: liner.filePath,
-            durationSeconds: liner.durationSeconds,
+            kind: 'break_liner',
+            audioUrl: breakLiner.filePath,
+            durationSeconds: breakLiner.durationSeconds,
           });
         } else {
           const music = await this.mediaService.getRandomMusic();

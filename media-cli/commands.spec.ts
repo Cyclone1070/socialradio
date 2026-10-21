@@ -15,9 +15,9 @@ const song: LibraryEntry = {
   artist: 'The Static',
 };
 
-const liner: LibraryEntry = {
-  kind: 'liner',
-  key: 'liners/back-4b1e9d.mp3',
+const breakLiner: LibraryEntry = {
+  kind: 'break_liner',
+  key: 'break_liners/back-4b1e9d.mp3',
   durationSeconds: 4.8,
   text: 'We will be right back.',
 };
@@ -26,7 +26,7 @@ describe('speakPlan', () => {
   it('speaks only the lines that have no clip yet', () => {
     const plan = speakPlan(
       ['We will be right back.', 'Hold that thought.'],
-      [liner],
+      [breakLiner],
       10,
     );
 
@@ -43,9 +43,9 @@ describe('speakPlan', () => {
 
 describe('publishPlan', () => {
   it('uploads what the bucket does not hold and counts the rest', () => {
-    const plan = publishPlan([song, liner], new Set([song.key]));
+    const plan = publishPlan([song, breakLiner], new Set([song.key]));
 
-    expect(plan.toUpload).toEqual([liner]);
+    expect(plan.toUpload).toEqual([breakLiner]);
     expect(plan.alreadyThere).toBe(1);
   });
 });
@@ -53,12 +53,12 @@ describe('publishPlan', () => {
 describe('promotePlan', () => {
   it('copies what the target lacks from what the source holds', () => {
     const plan = promotePlan(
-      [song, liner],
+      [song, breakLiner],
       new Set([song.key]),
-      new Set([song.key, liner.key]),
+      new Set([song.key, breakLiner.key]),
     );
 
-    expect(plan.toCopy).toEqual([liner]);
+    expect(plan.toCopy).toEqual([breakLiner]);
     expect(plan.alreadyThere).toBe(1);
     expect(plan.absent).toEqual([]);
   });
@@ -103,8 +103,8 @@ describe('seedReport', () => {
     const lines = seedReport({
       add: [song],
       update: [],
-      unchanged: [liner],
-      missing: [liner],
+      unchanged: [breakLiner],
+      missing: [breakLiner],
     });
 
     expect(lines[0]).toBe('1 to add, 0 to correct, 1 already there');

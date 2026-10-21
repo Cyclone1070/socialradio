@@ -12,7 +12,7 @@ describe('what the next conversation is told', () => {
     expect(continuityFor({ type: 'music', outline: null })).toBe(
       'welcome-back',
     );
-    expect(continuityFor({ type: 'liner', outline: null })).toBe(
+    expect(continuityFor({ type: 'break_liner', outline: null })).toBe(
       'welcome-back',
     );
     expect(buildDirective('welcome-back', null)).toContain('Welcome them back');

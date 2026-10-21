@@ -15,7 +15,7 @@ export function manifestPath(): string {
 }
 
 export function linesPath(): string {
-  return path.join('library', 'liner-lines.json');
+  return path.join('library', 'break-liner-lines.json');
 }
 
 export function readManifest(file = manifestPath()): LibraryEntry[] {

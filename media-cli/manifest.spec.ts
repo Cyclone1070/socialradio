@@ -15,8 +15,8 @@ describe('parseLibraryManifest', () => {
       entries: [
         music,
         {
-          kind: 'liner',
-          key: 'liners/we-ll-be-right-back-4b1e9d.mp3',
+          kind: 'break_liner',
+          key: 'break_liners/we-ll-be-right-back-4b1e9d.mp3',
           durationSeconds: 4.8,
           text: "We'll be right back after this.",
         },
@@ -32,8 +32,8 @@ describe('parseLibraryManifest', () => {
     expect(entries).toEqual([
       music,
       {
-        kind: 'liner',
-        key: 'liners/we-ll-be-right-back-4b1e9d.mp3',
+        kind: 'break_liner',
+        key: 'break_liners/we-ll-be-right-back-4b1e9d.mp3',
         durationSeconds: 4.8,
         text: "We'll be right back after this.",
       },
@@ -75,8 +75,8 @@ describe('manifestDocument', () => {
   it('writes something this module reads back unchanged', () => {
     const entries = [
       {
-        kind: 'liner' as const,
-        key: 'liners/back-4b1e9d.mp3',
+        kind: 'break_liner' as const,
+        key: 'break_liners/back-4b1e9d.mp3',
         durationSeconds: 4.8,
         text: 'We will be right back.',
       },

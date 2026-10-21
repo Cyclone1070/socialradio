@@ -1,4 +1,4 @@
-import { contentKey, linerKey, slug } from './keys';
+import { contentKey, breakLinerKey, slug } from './keys';
 
 describe('slug', () => {
   it('turns a title into a key segment', () => {
@@ -27,10 +27,10 @@ describe('contentKey', () => {
   });
 });
 
-describe('linerKey', () => {
-  it('names a liner after its words, since the words are what it is', () => {
-    expect(linerKey("We'll be right back after this.")).toBe(
-      'liners/we-ll-be-right-back-after-this.mp3',
+describe('breakLinerKey', () => {
+  it('names a break liner after its words, since the words are what it is', () => {
+    expect(breakLinerKey("We'll be right back after this.")).toBe(
+      'break_liners/we-ll-be-right-back-after-this.mp3',
     );
   });
 });

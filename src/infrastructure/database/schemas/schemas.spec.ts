@@ -1,7 +1,7 @@
 import {
   ChannelSchema,
   SegmentSchema,
-  LinerSegmentSchema,
+  BreakLinerSegmentSchema,
 } from './channel.schema';
 import { MusicTrackSchema, JingleSchema } from './media.schema';
 import { SubredditSchema } from './content.schema';
@@ -85,13 +85,15 @@ describe('EntitySchema Database Constraint Specifications', () => {
       expect(props.createdAt.accessor).toBe(true);
     });
 
-    it('admits the liner type in the check and maps a liner discriminator', () => {
+    it('admits the break liner type in the check and maps a break liner discriminator', () => {
       const typeCheck = (SegmentSchema.meta.checks ?? []).find(
         (c) => c.name === 'segment_type_check',
       );
-      expect(typeCheck?.expression).toContain("'liner'");
+      expect(typeCheck?.expression).toContain("'break_liner'");
       expect(typeCheck?.expression).not.toContain("'ad'");
-      expect(LinerSegmentSchema.meta.discriminatorValue).toBe('liner');
+      expect(BreakLinerSegmentSchema.meta.discriminatorValue).toBe(
+        'break_liner',
+      );
     });
 
     it('enforces unique compound index on (channelId, playOrder)', () => {

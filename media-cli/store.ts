@@ -9,13 +9,13 @@
  */
 import { EntityManager } from '@mikro-orm/postgresql';
 import { Jingle } from '../src/media/entities/jingle.entity';
-import { Liner } from '../src/media/entities/liner.entity';
+import { BreakLiner } from '../src/media/entities/break-liner.entity';
 import { MusicTrack } from '../src/media/entities/music-track.entity';
 import { LibraryEntry } from './manifest';
 import { LibraryStore } from './seeder';
 
 /** The three row types, told apart by the fields only they carry. */
-export type LibraryRow = MusicTrack | Liner | Jingle;
+export type LibraryRow = MusicTrack | BreakLiner | Jingle;
 
 export function entryOf(row: LibraryRow): LibraryEntry {
   if (row instanceof MusicTrack) {
@@ -27,9 +27,9 @@ export function entryOf(row: LibraryRow): LibraryEntry {
       artist: row.artist,
     };
   }
-  if (row instanceof Liner) {
+  if (row instanceof BreakLiner) {
     return {
-      kind: 'liner',
+      kind: 'break_liner',
       key: row.filePath,
       durationSeconds: row.durationSeconds,
       text: row.text,
@@ -52,16 +52,18 @@ function rowFor(entry: LibraryEntry): LibraryRow {
         entry.key,
         entry.durationSeconds,
       );
-    case 'liner':
-      return new Liner(entry.text, entry.key, entry.durationSeconds);
+    case 'break_liner':
+      return new BreakLiner(entry.text, entry.key, entry.durationSeconds);
     case 'jingle':
       return new Jingle(entry.name, entry.key, entry.durationSeconds);
   }
 }
 
+// Keyed by the manifest's kind, so the row a stored entry belongs in is the row
+// the same kind writes.
 const ROWS = {
   music: MusicTrack,
-  liner: Liner,
+  break_liner: BreakLiner,
   jingle: Jingle,
 } as const;
 
@@ -69,12 +71,12 @@ export class MikroLibraryStore implements LibraryStore {
   constructor(private readonly em: EntityManager) {}
 
   async stored(): Promise<LibraryEntry[]> {
-    const [tracks, liners, jingles] = await Promise.all([
+    const [tracks, breakLiners, jingles] = await Promise.all([
       this.em.find(MusicTrack, {}),
-      this.em.find(Liner, {}),
+      this.em.find(BreakLiner, {}),
       this.em.find(Jingle, {}),
     ]);
-    return [...tracks, ...liners, ...jingles].map(entryOf);
+    return [...tracks, ...breakLiners, ...jingles].map(entryOf);
   }
 
   async write(entry: LibraryEntry): Promise<void> {

@@ -4,7 +4,7 @@ import { MediaService } from './media.service';
 import {
   MusicTrackSchema,
   JingleSchema,
-  LinerSchema,
+  BreakLinerSchema,
 } from '../infrastructure/database/schemas/media.schema';
 import { NotFoundException } from '@nestjs/common';
 import { PinoLogger } from 'nestjs-pino';
@@ -21,7 +21,7 @@ describe('MediaService', () => {
     findAll: jest.fn(),
   };
 
-  const mockLinerRepo = {
+  const mockBreakLinerRepo = {
     findAll: jest.fn(),
   };
 
@@ -38,7 +38,10 @@ describe('MediaService', () => {
           useValue: mockMusicRepo,
         },
         { provide: getRepositoryToken(JingleSchema), useValue: mockJingleRepo },
-        { provide: getRepositoryToken(LinerSchema), useValue: mockLinerRepo },
+        {
+          provide: getRepositoryToken(BreakLinerSchema),
+          useValue: mockBreakLinerRepo,
+        },
         { provide: StorageService, useValue: mockStorage },
       ],
     }).compile();
@@ -97,90 +100,94 @@ describe('MediaService', () => {
     });
   });
 
-  describe('getRandomLiner', () => {
-    it('should return a liner with the words it says', async () => {
-      mockLinerRepo.findAll.mockResolvedValue([
+  describe('getRandomBreakLiner', () => {
+    it('should return a break liner with the words it says', async () => {
+      mockBreakLinerRepo.findAll.mockResolvedValue([
         {
           id: '1',
           text: 'We will be right back.',
-          filePath: 'liners/back-01.mp3',
+          filePath: 'break_liners/back-01.mp3',
           durationSeconds: 3.9,
         },
       ]);
 
-      const result = await service.getRandomLiner();
+      const result = await service.getRandomBreakLiner();
 
-      expect(mockLinerRepo.findAll).toHaveBeenCalled();
+      expect(mockBreakLinerRepo.findAll).toHaveBeenCalled();
       expect(result).toEqual({
-        filePath: 'liners/back-01.mp3',
+        filePath: 'break_liners/back-01.mp3',
         durationSeconds: 3.9,
         text: 'We will be right back.',
       });
     });
 
-    it('should throw NotFoundException if no liners exist', async () => {
-      mockLinerRepo.findAll.mockResolvedValue([]);
+    it('should throw NotFoundException if no break liners exist', async () => {
+      mockBreakLinerRepo.findAll.mockResolvedValue([]);
 
-      await expect(service.getRandomLiner()).rejects.toThrow(NotFoundException);
+      await expect(service.getRandomBreakLiner()).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
-    it('leaves out a liner whose audio is not in the bucket', async () => {
-      mockLinerRepo.findAll.mockResolvedValue([
+    it('leaves out a break liner whose audio is not in the bucket', async () => {
+      mockBreakLinerRepo.findAll.mockResolvedValue([
         {
           id: 'stale',
           text: 'Gone from the bucket.',
-          filePath: 'liners/gone.mp3',
+          filePath: 'break_liners/gone.mp3',
           durationSeconds: 4,
         },
         {
           id: 'good',
           text: 'Still there.',
-          filePath: 'liners/there.mp3',
+          filePath: 'break_liners/there.mp3',
           durationSeconds: 4,
         },
       ]);
       mockStorage.exists.mockImplementation((key: string) =>
-        Promise.resolve(key === 'liners/there.mp3'),
+        Promise.resolve(key === 'break_liners/there.mp3'),
       );
       const warnSpy = jest
         .spyOn(PinoLogger.prototype, 'warn')
         .mockImplementation(() => {});
 
-      const result = await service.getRandomLiner();
+      const result = await service.getRandomBreakLiner();
 
-      expect(result.filePath).toBe('liners/there.mp3');
+      expect(result.filePath).toBe('break_liners/there.mp3');
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'liner', absent: 1 }),
+        expect.objectContaining({ type: 'break_liner', absent: 1 }),
         expect.any(String),
       );
     });
 
     it('treats a pool whose audio is entirely gone as an empty pool', async () => {
-      mockLinerRepo.findAll.mockResolvedValue([
+      mockBreakLinerRepo.findAll.mockResolvedValue([
         {
           id: 'stale',
           text: 'Gone from the bucket.',
-          filePath: 'liners/gone.mp3',
+          filePath: 'break_liners/gone.mp3',
           durationSeconds: 4,
         },
       ]);
       mockStorage.exists.mockResolvedValue(false);
 
-      await expect(service.getRandomLiner()).rejects.toThrow(NotFoundException);
+      await expect(service.getRandomBreakLiner()).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('asks the bucket about a file once, not once per break', async () => {
-      mockLinerRepo.findAll.mockResolvedValue([
+      mockBreakLinerRepo.findAll.mockResolvedValue([
         {
           id: '1',
           text: 'Still there.',
-          filePath: 'liners/there.mp3',
+          filePath: 'break_liners/there.mp3',
           durationSeconds: 4,
         },
       ]);
 
-      await service.getRandomLiner();
-      await service.getRandomLiner();
+      await service.getRandomBreakLiner();
+      await service.getRandomBreakLiner();
 
       expect(mockStorage.exists).toHaveBeenCalledTimes(1);
     });

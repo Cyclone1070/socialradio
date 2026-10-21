@@ -35,7 +35,7 @@ describe('the library files on disk', () => {
   });
 
   it('refuses a lines file that is not a list of lines', () => {
-    const file = path.join(dir, 'liner-lines.json');
+    const file = path.join(dir, 'break-liner-lines.json');
     fs.writeFileSync(file, JSON.stringify({ words: ['no'] }));
 
     expect(() => readLines(file)).toThrow(/list of lines/);

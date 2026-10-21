@@ -16,14 +16,14 @@
       "artist": "City Walker"
     },
     {
-      "kind": "liner",
-      "key": "liners/seed-back-01.mp3",
+      "kind": "break_liner",
+      "key": "break_liners/seed-back-01.mp3",
       "durationSeconds": 5,
       "text": "We will be right back after this."
     },
     {
-      "kind": "liner",
-      "key": "liners/seed-back-02.mp3",
+      "kind": "break_liner",
+      "key": "break_liners/seed-back-02.mp3",
       "durationSeconds": 5,
       "text": "Stay with us, the phones are still open."
     },

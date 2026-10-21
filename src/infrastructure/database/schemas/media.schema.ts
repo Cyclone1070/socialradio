@@ -1,7 +1,7 @@
 import { EntitySchema } from '@mikro-orm/core';
 import { MusicTrack } from '../../../media/entities/music-track.entity';
 import { Jingle } from '../../../media/entities/jingle.entity';
-import { Liner } from '../../../media/entities/liner.entity';
+import { BreakLiner } from '../../../media/entities/break-liner.entity';
 
 export const MusicTrackSchema = new EntitySchema<MusicTrack>({
   class: MusicTrack,
@@ -58,9 +58,9 @@ export const JingleSchema = new EntitySchema<Jingle>({
   ],
 });
 
-export const LinerSchema = new EntitySchema<Liner>({
-  class: Liner,
-  tableName: 'liner',
+export const BreakLinerSchema = new EntitySchema<BreakLiner>({
+  class: BreakLiner,
+  tableName: 'break_liner',
   properties: {
     id: {
       type: 'uuid',
@@ -79,7 +79,7 @@ export const LinerSchema = new EntitySchema<Liner>({
   },
   checks: [
     {
-      name: 'liner_duration_positive',
+      name: 'break_liner_duration_positive',
       expression: 'duration_seconds > 0',
     },
   ],

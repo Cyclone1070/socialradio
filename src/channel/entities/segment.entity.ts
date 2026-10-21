@@ -7,7 +7,7 @@ export abstract class Segment {
   private _audioUrl!: string;
   private _durationSeconds!: number;
   private _createdAt!: Date;
-  abstract readonly type: 'music' | 'talk' | 'jingle' | 'liner';
+  abstract readonly type: 'music' | 'talk' | 'jingle' | 'break_liner';
 
   constructor(createdAt?: Date, id?: string) {
     if (createdAt !== undefined) {
@@ -233,6 +233,6 @@ export class JingleSegment extends Segment {
   readonly type = 'jingle' as const;
 }
 
-export class LinerSegment extends Segment {
-  readonly type = 'liner' as const;
+export class BreakLinerSegment extends Segment {
+  readonly type = 'break_liner' as const;
 }

@@ -1,5 +1,5 @@
 /** A pre-recorded station announcement: a break jingle with a human voice on it. */
-export class Liner {
+export class BreakLiner {
   private _id!: string;
   private _text!: string;
   private _filePath!: string;

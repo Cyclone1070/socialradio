@@ -3,7 +3,7 @@ import { MikroOrmModule } from '@mikro-orm/nestjs';
 import {
   MusicTrackSchema,
   JingleSchema,
-  LinerSchema,
+  BreakLinerSchema,
 } from '../infrastructure/database/schemas/media.schema';
 import { MediaService } from './media.service';
 import { MediaContract } from '../domain';
@@ -11,7 +11,11 @@ import { StorageModule } from '../infrastructure/storage/storage.module';
 
 @Module({
   imports: [
-    MikroOrmModule.forFeature([MusicTrackSchema, JingleSchema, LinerSchema]),
+    MikroOrmModule.forFeature([
+      MusicTrackSchema,
+      JingleSchema,
+      BreakLinerSchema,
+    ]),
     StorageModule,
   ],
   providers: [

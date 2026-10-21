@@ -4,7 +4,7 @@ import {
   TalkData,
   MusicData,
   JingleData,
-  LinerData,
+  BreakLinerData,
 } from '../types/audio.types';
 import { SubredditData } from '../types/subreddit.types';
 
@@ -34,6 +34,6 @@ export abstract class ContentContract {
 
 export abstract class MediaContract {
   abstract getRandomMusic(): Promise<MusicData>;
-  abstract getRandomLiner(): Promise<LinerData>;
+  abstract getRandomBreakLiner(): Promise<BreakLinerData>;
   abstract getRandomJingle(): Promise<JingleData>;
 }

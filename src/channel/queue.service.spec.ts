@@ -79,7 +79,7 @@ describe('QueueService', () => {
   const mockMediaService = {
     getRandomMusic: jest.fn(),
     getRandomJingle: jest.fn(),
-    getRandomLiner: jest.fn(),
+    getRandomBreakLiner: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -123,8 +123,8 @@ describe('QueueService', () => {
       title: 'Title',
       artist: 'Artist',
     });
-    mockMediaService.getRandomLiner.mockResolvedValue({
-      filePath: 'liners/back-01.mp3',
+    mockMediaService.getRandomBreakLiner.mockResolvedValue({
+      filePath: 'break_liners/back-01.mp3',
       durationSeconds: 4,
       text: 'We will be right back.',
     });
@@ -477,7 +477,7 @@ describe('QueueService', () => {
       expect(mockEntityManager.persist).not.toHaveBeenCalled();
     });
 
-    it('produces talk until it has at least thirty minutes, then closes with a liner and one song', async () => {
+    it('produces talk until it has at least thirty minutes, then closes with a break liner and one song', async () => {
       runwayOf([]);
       subsOf(2);
       postsOf('Topic Alpha', 'Topic Beta');
@@ -488,7 +488,7 @@ describe('QueueService', () => {
       expect(appended().map((item) => item.type)).toEqual([
         'talk',
         'talk',
-        'liner',
+        'break_liner',
         'music',
       ]);
       expect(appended().map((item) => item.playOrder)).toEqual([1, 2, 3, 4]);
@@ -513,7 +513,7 @@ describe('QueueService', () => {
       expect(appended().map((item) => item.type)).toEqual([
         'jingle',
         'talk',
-        'liner',
+        'break_liner',
         'music',
       ]);
       expect(mockMediaService.getRandomJingle).toHaveBeenCalled();
@@ -530,7 +530,7 @@ describe('QueueService', () => {
 
       expect(appended().map((item) => item.type)).toEqual([
         'talk',
-        'liner',
+        'break_liner',
         'music',
       ]);
       expect(mockMediaService.getRandomJingle).not.toHaveBeenCalled();
@@ -554,7 +554,7 @@ describe('QueueService', () => {
 
       expect(appended().map((item) => item.type)).toEqual([
         'talk',
-        'liner',
+        'break_liner',
         'music',
       ]);
     });
@@ -574,7 +574,7 @@ describe('QueueService', () => {
 
       expect(appended().map((item) => item.type)).toEqual([
         'talk',
-        'liner',
+        'break_liner',
         'music',
       ]);
     });
@@ -589,7 +589,7 @@ describe('QueueService', () => {
 
       expect(appended().map((item) => item.type)).toEqual([
         'talk',
-        'liner',
+        'break_liner',
         'music',
       ]);
     });
@@ -620,7 +620,7 @@ describe('QueueService', () => {
 
       expect(appended().map((item) => item.type)).toEqual([
         'talk',
-        'liner',
+        'break_liner',
         'music',
       ]);
     });
@@ -898,7 +898,7 @@ describe('QueueService', () => {
 
       await service.ensureFiller('chan-1');
 
-      expect(written()).toEqual(['liner', 'music', 'music']);
+      expect(written()).toEqual(['break_liner', 'music', 'music']);
     });
 
     it('stays silent when a break has just played', async () => {
@@ -969,7 +969,11 @@ describe('QueueService', () => {
           audioUrl: 'audio/talk-1.mp3',
           durationSeconds: 300,
         },
-        { kind: 'liner', audioUrl: 'liners/back-01.mp3', durationSeconds: 4 },
+        {
+          kind: 'break_liner',
+          audioUrl: 'break_liners/back-01.mp3',
+          durationSeconds: 4,
+        },
         {
           kind: 'music',
           title: 'Song',
@@ -991,7 +995,7 @@ describe('QueueService', () => {
       expect(persisted.map((item) => item.playOrder)).toEqual([5, 6, 7]);
       expect(persisted.map((item) => item.type)).toEqual([
         'talk',
-        'liner',
+        'break_liner',
         'music',
       ]);
       expect(mockEntityManager.flush).toHaveBeenCalled();
@@ -1035,13 +1039,17 @@ describe('QueueService', () => {
           audioUrl: 'audio/talk-1.mp3',
           durationSeconds: 300,
         },
-        { kind: 'liner', audioUrl: 'liners/back-01.mp3', durationSeconds: 4 },
+        {
+          kind: 'break_liner',
+          audioUrl: 'break_liners/back-01.mp3',
+          durationSeconds: 4,
+        },
       ]);
 
       const persisted = mockEntityManager.persist.mock.calls.map(
         (call: unknown[]) => call[0] as { type: string; clusterId?: string },
       );
-      expect(persisted.map((item) => item.type)).toEqual(['liner']);
+      expect(persisted.map((item) => item.type)).toEqual(['break_liner']);
       expect(written).toBe(1);
     });
 
@@ -1114,8 +1122,8 @@ describe('QueueService', () => {
           durationSeconds: 300,
         },
         {
-          kind: 'liner',
-          audioUrl: 'liners/back-01.mp3',
+          kind: 'break_liner',
+          audioUrl: 'break_liners/back-01.mp3',
           durationSeconds: 4,
         },
       ]);
@@ -1191,8 +1199,8 @@ describe('the watchdog fills the hole in the transaction that found it', () => {
         title: 'Song',
         artist: 'Artist',
       }),
-      getRandomLiner: jest.fn().mockResolvedValue({
-        filePath: 'liners/back-01.mp3',
+      getRandomBreakLiner: jest.fn().mockResolvedValue({
+        filePath: 'break_liners/back-01.mp3',
         durationSeconds: 4,
         text: 'We will be right back.',
       }),
@@ -1311,8 +1319,8 @@ function build(options: {
       artist: 'Artist',
     }),
     getRandomJingle: jest.fn(),
-    getRandomLiner: jest.fn().mockResolvedValue({
-      filePath: 'liners/back-01.mp3',
+    getRandomBreakLiner: jest.fn().mockResolvedValue({
+      filePath: 'break_liners/back-01.mp3',
       durationSeconds: 4,
       text: 'We will be right back.',
     }),
@@ -1382,7 +1390,7 @@ describe('the run and the outline it produces', () => {
     );
     expect(written.map((item) => item.type)).toEqual([
       'talk',
-      'liner',
+      'break_liner',
       'music',
     ]);
     expect(written[0].outline).toBe(OUTLINE);

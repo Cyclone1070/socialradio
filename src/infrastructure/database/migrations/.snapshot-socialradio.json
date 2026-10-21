@@ -204,7 +204,7 @@
           "mappedType": "datetime"
         }
       },
-      "name": "liner",
+      "name": "break_liner",
       "schema": "public",
       "indexes": [
         {
@@ -212,13 +212,13 @@
             "file_path"
           ],
           "composite": false,
-          "keyName": "liner_file_path_unique",
+          "keyName": "break_liner_file_path_unique",
           "constraint": true,
           "primary": false,
           "unique": true
         },
         {
-          "keyName": "liner_pkey",
+          "keyName": "break_liner_pkey",
           "columnNames": [
             "id"
           ],
@@ -230,7 +230,7 @@
       ],
       "checks": [
         {
-          "name": "liner_duration_positive",
+          "name": "break_liner_duration_positive",
           "expression": "duration_seconds > 0",
           "definition": "check ((duration_seconds > 0))"
         }
@@ -1373,7 +1373,7 @@
             "music",
             "talk",
             "jingle",
-            "liner"
+            "break_liner"
           ],
           "mappedType": "string"
         },
@@ -1548,8 +1548,8 @@
         },
         {
           "name": "segment_type_check",
-          "expression": "type in ('music', 'talk', 'jingle', 'liner')",
-          "definition": "check ((type in ('music', 'talk', 'jingle', 'liner')))"
+          "expression": "type in ('music', 'talk', 'jingle', 'break_liner')",
+          "definition": "check ((type in ('music', 'talk', 'jingle', 'break_liner')))"
         },
         {
           "name": "segment_status_check",

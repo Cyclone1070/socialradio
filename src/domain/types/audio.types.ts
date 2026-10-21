@@ -11,7 +11,7 @@ export interface TalkData {
   postIds: string[];
 }
 
-export interface LinerData {
+export interface BreakLinerData {
   filePath: string;
   durationSeconds: number;
   text: string;

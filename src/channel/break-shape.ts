@@ -10,7 +10,7 @@
  * No jingle here: a break does not know whether another filler follows it, and the
  * jingle belongs to the moment the show comes back. That is the talk block's job.
  */
-export type BreakShapeItem = 'liner' | 'music';
+export type BreakShapeItem = 'break_liner' | 'music';
 
 export type BreakKind = 'break' | 'filler';
 
@@ -18,14 +18,17 @@ const BREAK_SONGS = 1;
 const FILLER_SONGS = 2;
 
 export function breakShape(
-  previousType: 'talk' | 'music' | 'jingle' | 'liner' | null,
+  previousType: 'talk' | 'music' | 'jingle' | 'break_liner' | null,
   kind: BreakKind,
 ): BreakShapeItem[] {
   if (kind === 'break') {
-    return ['liner', ...songs(BREAK_SONGS)];
+    return ['break_liner', ...songs(BREAK_SONGS)];
   }
   const interrupts = previousType === 'talk' || previousType === 'jingle';
-  return [...(interrupts ? (['liner'] as const) : []), ...songs(FILLER_SONGS)];
+  return [
+    ...(interrupts ? (['break_liner'] as const) : []),
+    ...songs(FILLER_SONGS),
+  ];
 }
 
 function songs(count: number): BreakShapeItem[] {

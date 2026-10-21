@@ -1,6 +1,6 @@
 # The media library
 
-What the station can play when it isn't talking: songs, liner announcements and
+What the station can play when it isn't talking: songs, break liner announcements and
 jingles. Two halves, kept apart on purpose.
 
 | Half | Where it lives | Who owns it |
@@ -10,7 +10,7 @@ jingles. Two halves, kept apart on purpose.
 
 `manifest.json` lists every file the station owns: its object key, what kind of
 thing it is, how long it lasts, and the facts the row needs (a song's title and
-artist, a liner's words, a jingle's name). The database is a projection of this
+artist, a break liner's words, a jingle's name). The database is a projection of this
 file — `npm run seed:media` makes the rows agree with it, and refuses to write a
 row for a file the bucket does not hold.
 
@@ -26,8 +26,8 @@ row for a file the bucket does not hold.
       "artist": "The Static"
     },
     {
-      "kind": "liner",
-      "key": "liners/we-ll-be-right-back-4b1e9d.mp3",
+      "kind": "break_liner",
+      "key": "break_liners/we-ll-be-right-back-4b1e9d.mp3",
       "durationSeconds": 4.8,
       "text": "We'll be right back after this."
     }
@@ -57,8 +57,8 @@ next deploy.
 3. The next deploy reads the manifest, copies the audio into the production
    bucket and writes the rows.
 
-Liner clips are the exception: their words are already in
-`src/media/liner-pool.ts`, so they are spoken rather than supplied, and their
+BreakLiner clips are the exception: their words are already in
+`library/break-liner-lines.json`, so they are spoken rather than supplied, and their
 entries are produced by the side that spoke them.
 
 ## Seeding, on the command line
@@ -73,7 +73,7 @@ notices instead of shipping a station that is quietly emptier than its manifest.
 
 ## The commands, by hand
 
-Liner clips are spoken rather than supplied, so they have their own command:
+BreakLiner clips are spoken rather than supplied, so they have their own command:
 
 ```sh
 npm run media -- speak --dry-run      # which lines have no clip yet

@@ -28,7 +28,7 @@ account that can exist is the admin seeded at boot from `ADMIN_EMAIL` / `ADMIN_P
 
 ### 1.2 No media library write path
 
-`src/media/` has a service and three tables (`music_track`, `liner`, `jingle`), and no controller.
+`src/media/` has a service and three tables (`music_track`, `break liner`, `jingle`), and no controller.
 Library contents are operator-managed by hand.
 
 Seeding the *rows* now exists: `media-cli` reads a manifest (`library/manifest.json`)
@@ -40,7 +40,7 @@ a stale row degrades into "that part of the break is dropped" instead of a 404 m
 
 What is still missing is content rather than machinery:
 
-- **Liner clips.** `media-cli speak` will speak the hundred lines in `library/liner-lines.json`, but
+- **BreakLiner clips.** `media-cli speak` will speak the hundred lines in `library/break-liner-lines.json`, but
   nobody has run it against a real speech service, so the inventory starts empty.
 - **Songs and jingles.** `media-cli add` measures a file and records it, but the files themselves are
   not in the repository and no source is chosen for them.
@@ -49,7 +49,7 @@ What is still missing is content rather than machinery:
   break drops whatever it cannot draw (`queue.service.ts`, "a break pool is empty, leaving that part of
   the break out") - but every break and every filler comes out shorter than it should be. Nothing
   falls back to a placeholder key: the fixture's `jingles/station-id.mp3` is a test row, not a default.
-- **Done means**: a command that speaks the liner pool into the bucket and records what it produced,
+- **Done means**: a command that speaks the break liner pool into the bucket and records what it produced,
   plus a way to put songs and jingles there and describe them. Uploading audio through the API is a
   separate decision: the app only ever writes what it generated itself, so a user-supplied file would
   be the first untrusted object in the bucket.
@@ -101,12 +101,12 @@ aggregates it.
 
 There is no advertising anywhere in the system: the advert type, its table and its picker were removed
 when the media phase was rewritten, and the station now says "we'll be right back" in its own voice over
-music it owns (`src/media/liner-pool.ts`).
+music it owns (`src/media/media.service.ts`).
 
 - **Blocks**: selling anything. No campaigns, no targeting, no scheduling, no reporting, no proof a slot
   ever aired, and no place to put one.
 - **Done means**: this is product scope rather than a defect — it needs a decision about whether ads are
-  a feature at all before it needs code, and the seam it would return through is the `liner` segment.
+  a feature at all before it needs code, and the seam it would return through is the break liner segment.
 
 ### 2.5 Production shape
 

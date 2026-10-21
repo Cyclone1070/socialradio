@@ -8,7 +8,7 @@
  */
 export const LIBRARY_MANIFEST_VERSION = 1;
 
-export type LibraryKind = 'music' | 'liner' | 'jingle';
+export type LibraryKind = 'music' | 'break_liner' | 'jingle';
 
 export interface MusicLibraryEntry {
   kind: 'music';
@@ -18,8 +18,8 @@ export interface MusicLibraryEntry {
   artist: string;
 }
 
-export interface LinerLibraryEntry {
-  kind: 'liner';
+export interface BreakLinerLibraryEntry {
+  kind: 'break_liner';
   key: string;
   durationSeconds: number;
   text: string;
@@ -33,7 +33,7 @@ export interface JingleLibraryEntry {
 }
 
 export type LibraryEntry =
-  MusicLibraryEntry | LinerLibraryEntry | JingleLibraryEntry;
+  MusicLibraryEntry | BreakLinerLibraryEntry | JingleLibraryEntry;
 
 function fail(message: string): never {
   throw new Error(`library manifest: ${message}`);
@@ -75,9 +75,9 @@ function entryOf(value: unknown, index: number): LibraryEntry {
         title: text(source.title, `${where} title`),
         artist: text(source.artist, `${where} artist`),
       };
-    case 'liner':
+    case 'break_liner':
       return {
-        kind: 'liner',
+        kind: 'break_liner',
         key,
         durationSeconds,
         text: text(source.text, `${where} text`),
@@ -91,7 +91,7 @@ function entryOf(value: unknown, index: number): LibraryEntry {
       };
     default:
       fail(
-        `${where} kind must be music, liner or jingle, got ${JSON.stringify(source.kind)}`,
+        `${where} kind must be music, break liner or jingle, got ${JSON.stringify(source.kind)}`,
       );
   }
 }

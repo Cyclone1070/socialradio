@@ -4,7 +4,7 @@
  * A key is the row's identity, so it carries a fingerprint of what the file
  * holds: replacing a song produces a new key instead of overwriting the old one,
  * which is what stops a cache or a CDN from serving audio that is no longer
- * there. Liners are named after their words instead, because the words are the
+ * there. BreakLiners are named after their words instead, because the words are the
  * thing being spoken - edit the line and it is a different line.
  */
 import { createHash } from 'crypto';
@@ -33,6 +33,6 @@ export function contentKey(
   return `${shelf}/${slug(name)}-${fingerprint}.mp3`;
 }
 
-export function linerKey(text: string): string {
-  return `liners/${slug(text)}.mp3`;
+export function breakLinerKey(text: string): string {
+  return `break_liners/${slug(text)}.mp3`;
 }

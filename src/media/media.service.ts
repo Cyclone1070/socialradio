@@ -3,13 +3,18 @@ import { InjectRepository } from '@mikro-orm/nestjs';
 import { EntityRepository } from '@mikro-orm/postgresql';
 import { MusicTrack } from './entities/music-track.entity';
 import { Jingle } from './entities/jingle.entity';
-import { Liner } from './entities/liner.entity';
+import { BreakLiner } from './entities/break-liner.entity';
 import {
   MusicTrackSchema,
   JingleSchema,
-  LinerSchema,
+  BreakLinerSchema,
 } from '../infrastructure/database/schemas/media.schema';
-import { MusicData, JingleData, LinerData, MediaContract } from '../domain';
+import {
+  MusicData,
+  JingleData,
+  BreakLinerData,
+  MediaContract,
+} from '../domain';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
 import { StorageService } from '../infrastructure/storage/storage.service';
 
@@ -32,8 +37,8 @@ export class MediaService implements MediaContract {
     private readonly musicRepo: EntityRepository<MusicTrack>,
     @InjectRepository(JingleSchema)
     private readonly jingleRepo: EntityRepository<Jingle>,
-    @InjectRepository(LinerSchema)
-    private readonly linerRepo: EntityRepository<Liner>,
+    @InjectRepository(BreakLinerSchema)
+    private readonly breakLinerRepo: EntityRepository<BreakLiner>,
     private readonly storageService: StorageService,
   ) {}
 
@@ -51,16 +56,16 @@ export class MediaService implements MediaContract {
     };
   }
 
-  async getRandomLiner(): Promise<LinerData> {
-    const liner = await this.draw(
-      'liner',
-      await this.linerRepo.findAll(),
+  async getRandomBreakLiner(): Promise<BreakLinerData> {
+    const breakLiner = await this.draw(
+      'break_liner',
+      await this.breakLinerRepo.findAll(),
       (row) => row.filePath,
     );
     return {
-      filePath: liner.filePath,
-      durationSeconds: liner.durationSeconds,
-      text: liner.text,
+      filePath: breakLiner.filePath,
+      durationSeconds: breakLiner.durationSeconds,
+      text: breakLiner.text,
     };
   }
 

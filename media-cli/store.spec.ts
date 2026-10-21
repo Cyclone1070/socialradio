@@ -1,5 +1,5 @@
 import { Jingle } from '../src/media/entities/jingle.entity';
-import { Liner } from '../src/media/entities/liner.entity';
+import { BreakLiner } from '../src/media/entities/break-liner.entity';
 import { MusicTrack } from '../src/media/entities/music-track.entity';
 import { entryOf } from './store';
 
@@ -21,10 +21,10 @@ describe('entryOf', () => {
     });
   });
 
-  it('reads a stored liner and a stored jingle back as themselves', () => {
-    const liner = new Liner(
+  it('reads a stored break liner and a stored jingle back as themselves', () => {
+    const breakLiner = new BreakLiner(
       "We'll be right back after this.",
-      'liners/we-ll-be-right-back-4b1e9d.mp3',
+      'break_liners/we-ll-be-right-back-4b1e9d.mp3',
       4.8,
     );
     const jingle = new Jingle(
@@ -33,9 +33,9 @@ describe('entryOf', () => {
       6.1,
     );
 
-    expect(entryOf(liner)).toEqual({
-      kind: 'liner',
-      key: 'liners/we-ll-be-right-back-4b1e9d.mp3',
+    expect(entryOf(breakLiner)).toEqual({
+      kind: 'break_liner',
+      key: 'break_liners/we-ll-be-right-back-4b1e9d.mp3',
       durationSeconds: 4.8,
       text: "We'll be right back after this.",
     });

@@ -2,7 +2,7 @@ import {
   MusicSegment,
   TalkSegment,
   JingleSegment,
-  LinerSegment,
+  BreakLinerSegment,
 } from './segment.entity';
 
 describe('Segment Entities Invariants & Encapsulation', () => {
@@ -131,10 +131,10 @@ describe('Segment Entities Invariants & Encapsulation', () => {
   });
 });
 
-describe('LinerSegment', () => {
-  it('is a liner and keeps the shared segment invariants', () => {
-    const segment = new LinerSegment();
-    expect(segment.type).toBe('liner');
+describe('BreakLinerSegment', () => {
+  it('is a break liner and keeps the shared segment invariants', () => {
+    const segment = new BreakLinerSegment();
+    expect(segment.type).toBe('break_liner');
 
     segment.playOrder = 7;
     segment.durationSeconds = 4.2;

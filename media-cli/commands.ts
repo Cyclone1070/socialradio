@@ -12,7 +12,7 @@ import { MikroORM } from '@mikro-orm/postgresql';
 import mikroOrmConfig from '../src/infrastructure/database/mikro-orm.config';
 import { StorageService } from '../src/infrastructure/storage/storage.service';
 import { AudioService } from '../src/voice/audio.service';
-import { contentKey, linerKey } from './keys';
+import { contentKey, breakLinerKey } from './keys';
 import { LibraryEntry, withEntry } from './manifest';
 import { LibraryPlan, LibrarySeeder } from './seeder';
 import { MikroLibraryStore } from './store';
@@ -35,7 +35,7 @@ export function speakPlan(
 ): { lines: string[]; recorded: number } {
   const recorded = new Set(
     entries.flatMap((entry) =>
-      entry.kind === 'liner' ? [entry.text.trim().toLowerCase()] : [],
+      entry.kind === 'break_liner' ? [entry.text.trim().toLowerCase()] : [],
     ),
   );
   return {
@@ -205,13 +205,13 @@ export async function speakLibrary(argv: string[]): Promise<void> {
   const audio = new AudioService(config, storageFor());
   let recorded = entries;
   for (const line of unspoken) {
-    const key = linerKey(line);
+    const key = breakLinerKey(line);
     const track = await audio.synthesizeScript(
       { postId: key, turns: [{ speaker: 'Dave', text: line }] },
       key,
     );
     recorded = withEntry(recorded, {
-      kind: 'liner',
+      kind: 'break_liner',
       key,
       durationSeconds: track.durationSeconds,
       text: line,

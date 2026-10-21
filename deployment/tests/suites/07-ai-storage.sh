@@ -166,8 +166,8 @@ esac
 # And the break that closes the block carries no jingle of its own: it cannot know
 # whether the watchdog will append another filler behind it.
 case "$BLOCK_SHAPE" in
-  *liner,music) echo "  ✓ the block closes with its break: announcement, then a song" ;;
-  *talk,music)  echo "  ✓ the block closes with a song (no liner pool in this fixture)" ;;
+  *break_liner,music) echo "  ✓ the block closes with its break: announcement, then a song" ;;
+  *talk,music)  echo "  ✓ the block closes with a song (no break liner pool in this fixture)" ;;
   *) fail "the block does not end with its break: $BLOCK_SHAPE" ;;
 esac
 
@@ -218,7 +218,7 @@ fi
 echo "  ✓ every one of the $AIRED_TALK conversation(s) that aired is recorded ($MARKED_ROWS post row(s))"
 
 echo "51e. No filler inside a block: a song or an announcement never interrupts the conversations"
-INTERLEAVED=$(psql_run -t -A -c "SELECT COUNT(*) FROM segment s WHERE s.\"channel_id\" = '$AI_CHAN_ID' AND s.type IN ('music', 'liner', 'jingle') AND EXISTS (SELECT 1 FROM segment a WHERE a.\"channel_id\" = s.\"channel_id\" AND a.type = 'talk' AND a.play_order < s.play_order) AND EXISTS (SELECT 1 FROM segment b WHERE b.\"channel_id\" = s.\"channel_id\" AND b.type = 'talk' AND b.play_order > s.play_order);")
+INTERLEAVED=$(psql_run -t -A -c "SELECT COUNT(*) FROM segment s WHERE s.\"channel_id\" = '$AI_CHAN_ID' AND s.type IN ('music', 'break_liner', 'jingle') AND EXISTS (SELECT 1 FROM segment a WHERE a.\"channel_id\" = s.\"channel_id\" AND a.type = 'talk' AND a.play_order < s.play_order) AND EXISTS (SELECT 1 FROM segment b WHERE b.\"channel_id\" = s.\"channel_id\" AND b.type = 'talk' AND b.play_order > s.play_order);")
 if [ "$INTERLEAVED" != "0" ]; then
   fail "$INTERLEAVED piece(s) of filler landed between two conversations"
 fi
@@ -251,8 +251,8 @@ if [ "$STATUS" != "200" ]; then
 fi
 FILLER_BEHIND_TALK=$(psql_run -t -A -c "SELECT string_agg(type, ',' ORDER BY play_order) FROM segment WHERE \"channel_id\" = '$AI_CHAN_ID' AND play_order > $((LAST_ORDER + 1));")
 case "$FILLER_BEHIND_TALK" in
-  liner,music,music) echo "  ✓ behind a conversation the filler announces itself, then two songs ($FILLER_BEHIND_TALK)" ;;
-  *) fail "the filler behind a conversation should be liner,music,music - got: $FILLER_BEHIND_TALK" ;;
+  break_liner,music,music) echo "  ✓ behind a conversation the filler announces itself, then two songs ($FILLER_BEHIND_TALK)" ;;
+  *) fail "the filler behind a conversation should be break_liner,music,music - got: $FILLER_BEHIND_TALK" ;;
 esac
 
 echo "51h. A run in flight keeps the other instance out of the station"

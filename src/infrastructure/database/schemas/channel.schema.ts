@@ -5,7 +5,7 @@ import {
   MusicSegment,
   TalkSegment,
   JingleSegment,
-  LinerSegment,
+  BreakLinerSegment,
 } from '../../../channel/entities/segment.entity';
 import { Subreddit } from '../../../content/entities/subreddit.entity';
 import { Post } from '../../../content/entities/post.entity';
@@ -118,7 +118,7 @@ export const SegmentSchema = new EntitySchema<Segment>({
     },
     {
       name: 'segment_type_check',
-      expression: "type in ('music', 'talk', 'jingle', 'liner')",
+      expression: "type in ('music', 'talk', 'jingle', 'break_liner')",
     },
     {
       name: 'segment_status_check',
@@ -166,9 +166,12 @@ export const JingleSegmentSchema = new EntitySchema<JingleSegment, Segment>({
   properties: {},
 });
 
-export const LinerSegmentSchema = new EntitySchema<LinerSegment, Segment>({
-  class: LinerSegment,
+export const BreakLinerSegmentSchema = new EntitySchema<
+  BreakLinerSegment,
+  Segment
+>({
+  class: BreakLinerSegment,
   extends: SegmentSchema,
-  discriminatorValue: 'liner',
+  discriminatorValue: 'break_liner',
   properties: {},
 });

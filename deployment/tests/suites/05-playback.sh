@@ -149,10 +149,10 @@ echo "  ✓ DB check constraint rejected talk segment with missing cluster_id"
 if psql_run -c "INSERT INTO segment (id, \"channel_id\", play_order, type, duration_seconds, audio_url, advertiser) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', 9995, 'ad', 30, 'ads/acme.mp3', 'Acme');" 2>/dev/null; then
   fail "DB still accepts an advert segment"
 fi
-if psql_run -c "INSERT INTO segment (id, \"channel_id\", play_order, type, duration_seconds, audio_url) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', 9994, 'liner', 5, 'liners/seed-back-01.mp3');" 2>/dev/null; then
-  echo "  ✓ DB accepts a liner segment (the replacement for the advert)"
+if psql_run -c "INSERT INTO segment (id, \"channel_id\", play_order, type, duration_seconds, audio_url) VALUES (gen_random_uuid(), '$PLAY_CHAN_ID', 9994, 'break_liner', 5, 'break_liners/seed-back-01.mp3');" 2>/dev/null; then
+  echo "  ✓ DB accepts a break liner segment (the replacement for the advert)"
 else
-  fail "DB refused a liner segment"
+  fail "DB refused a break liner segment"
 fi
 
 echo "37g. Issue 5: Concurrent manifest requests must not deadlock or fail"
