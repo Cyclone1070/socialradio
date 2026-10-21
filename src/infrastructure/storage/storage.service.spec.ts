@@ -47,10 +47,6 @@ describe('StorageService', () => {
     service = module.get<StorageService>(StorageService);
   });
 
-  it('should be defined', () => {
-    expect(service).toBeDefined();
-  });
-
   it('should write object to S3 bucket using PutObjectCommand', async () => {
     mockS3Send.mockResolvedValue({});
 

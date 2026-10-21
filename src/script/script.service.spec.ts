@@ -51,10 +51,6 @@ Sarah: Unbelievable roommate, honestly.`;
     jest.clearAllMocks();
   });
 
-  it('should be defined', () => {
-    expect(service).toBeDefined();
-  });
-
   describe('validateOutline', () => {
     it('should return true for valid outline containing all 4 STEP headers', () => {
       expect(service.validateOutline(validOutlineMarkdown)).toBe(true);

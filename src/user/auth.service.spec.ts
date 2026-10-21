@@ -30,10 +30,6 @@ describe('AuthService', () => {
     jest.clearAllMocks();
   });
 
-  it('should be defined', () => {
-    expect(service).toBeDefined();
-  });
-
   describe('login', () => {
     it('should return access token if credentials are valid', async () => {
       const loginDto = {

@@ -22,10 +22,6 @@ describe('JwtStrategy', () => {
     jest.clearAllMocks();
   });
 
-  it('should be defined', () => {
-    expect(strategy).toBeDefined();
-  });
-
   describe('validate', () => {
     it('should return user payload if user is found', async () => {
       const payload = { sub: 'uuid-123' };

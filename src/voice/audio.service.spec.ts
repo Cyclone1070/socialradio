@@ -78,10 +78,6 @@ describe('AudioService', () => {
     fetchMock.mockRestore();
   });
 
-  it('should be defined', () => {
-    expect(service).toBeDefined();
-  });
-
   it('sends the script to the voice service and stores the audio it answers with', async () => {
     respondWith({ ok: true, duration: '4.632' });
 

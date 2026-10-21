@@ -44,10 +44,6 @@ describe('LlmService', () => {
     mockConfigService.get.mockImplementation(defaultConfigGet);
   });
 
-  it('should be defined', () => {
-    expect(service).toBeDefined();
-  });
-
   it('should stream text via streamText with firstChunkMs, chunkMs, and totalMs timeouts', async () => {
     async function* fakeStream() {
       await Promise.resolve();

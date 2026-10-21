@@ -70,10 +70,6 @@ describe('PlaybackService', () => {
     jest.useRealTimers();
   });
 
-  it('should be defined', () => {
-    expect(service).toBeDefined();
-  });
-
   describe('getLiveManifest', () => {
     describe('Cycle 3.1: Non-Existent Channel Guard', () => {
       it('throws NotFoundException when channel does not exist', async () => {

@@ -46,10 +46,6 @@ describe('ChannelService', () => {
     mockEntityManager.persist.mockReturnThis();
   });
 
-  it('should be defined', () => {
-    expect(service).toBeDefined();
-  });
-
   describe('configureChannel', () => {
     it('should create and return a private channel', async () => {
       const dto = { name: 'My Radio', visibility: 'private' as const };

@@ -25,10 +25,6 @@ describe('AuthController', () => {
     jest.clearAllMocks();
   });
 
-  it('should be defined', () => {
-    expect(controller).toBeDefined();
-  });
-
   describe('login', () => {
     it('should login user and return token response', async () => {
       const loginDto: LoginDto = {

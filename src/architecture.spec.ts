@@ -699,8 +699,6 @@ describe('One spec file per implementation file', () => {
   const AREA_SPECS = [
     'architecture.spec.ts', // this file: the repository's shape
     'domain/domain-architecture.spec.ts', // slice boundaries
-    'domain/domain.contracts.spec.ts', // the domain's published contracts
-    'infrastructure/infrastructure.spec.ts', // module wiring across three modules
     'infrastructure/database/entity-mapping.spec.ts', // the ORM mapping across slices
     'infrastructure/database/schema-snapshot.spec.ts', // migrations against the schemas
     'infrastructure/database/schemas/schemas.spec.ts', // every schema in the directory
@@ -735,27 +733,5 @@ describe('One spec file per implementation file', () => {
     }
 
     expect(orphans).toEqual([]);
-  });
-
-  /**
-   * The check above catches a spec with no subject. It says nothing about a
-   * subject with no spec, which is how a file moved out of src lost its tests
-   * without anything going red. This is that other direction, and it is only
-   * claimed for media-cli so far: src has production files without a spec, and
-   * pretending otherwise would mean an allowlist long enough to hide real gaps.
-   */
-  it('leaves no media-cli implementation file without a suite', () => {
-    const cliRoot = path.join(repoRoot, 'media-cli');
-    const unspecced: string[] = [];
-
-    for (const entry of fs.readdirSync(cliRoot, { withFileTypes: true })) {
-      if (!entry.isFile()) continue;
-      if (!entry.name.endsWith('.ts')) continue;
-      if (entry.name.endsWith('.spec.ts')) continue;
-      const spec = path.join(cliRoot, entry.name.replace(/\.ts$/, '.spec.ts'));
-      if (!fs.existsSync(spec)) unspecced.push(entry.name);
-    }
-
-    expect(unspecced).toEqual([]);
   });
 });

@@ -40,10 +40,6 @@ describe('ChannelController', () => {
     jest.clearAllMocks();
   });
 
-  it('should be defined', () => {
-    expect(controller).toBeDefined();
-  });
-
   describe('getUserChannels', () => {
     it('should return user channels', async () => {
       const channels = [

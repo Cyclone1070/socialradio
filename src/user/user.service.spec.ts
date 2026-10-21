@@ -52,10 +52,6 @@ describe('UserService', () => {
     mockEntityManager.persist.mockReturnThis();
   });
 
-  it('should be defined', () => {
-    expect(service).toBeDefined();
-  });
-
   describe('create', () => {
     it('should successfully create a new user', async () => {
       const email = 'test@example.com';

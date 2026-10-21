@@ -90,10 +90,6 @@ describe('ScraperService', () => {
     mockSubredditRepo.nativeUpdate.mockResolvedValue(1);
   });
 
-  it('should be defined', () => {
-    expect(service).toBeDefined();
-  });
-
   describe('scrapeSubreddit', () => {
     it('writes a post and its comments as one unit', async () => {
       const subEntity = Object.assign(new Subreddit(), {

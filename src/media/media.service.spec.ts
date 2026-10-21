@@ -49,10 +49,6 @@ describe('MediaService', () => {
     mockStorage.exists.mockResolvedValue(true);
   });
 
-  it('should be defined', () => {
-    expect(service).toBeDefined();
-  });
-
   describe('getRandomMusic', () => {
     it('should return a random music track as a AudioFileRef', async () => {
       const tracks = [

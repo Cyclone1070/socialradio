@@ -12,10 +12,6 @@ describe('HealthcheckController', () => {
     controller = module.get<HealthcheckController>(HealthcheckController);
   });
 
-  it('should be defined', () => {
-    expect(controller).toBeDefined();
-  });
-
   describe('getHealthcheck', () => {
     it('should return status ok and ISO timestamp', () => {
       const result = controller.getHealthcheck();

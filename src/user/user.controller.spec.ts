@@ -25,10 +25,6 @@ describe('UserController', () => {
     jest.clearAllMocks();
   });
 
-  it('should be defined', () => {
-    expect(controller).toBeDefined();
-  });
-
   describe('getMe', () => {
     it('should return the current user response DTO', async () => {
       const user = {

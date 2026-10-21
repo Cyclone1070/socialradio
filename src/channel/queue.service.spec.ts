@@ -186,10 +186,6 @@ describe('QueueService', () => {
     return channel;
   }
 
-  it('should be defined', () => {
-    expect(service).toBeDefined();
-  });
-
   describe('bufferAhead (Lazy & Reactive Scraping)', () => {
     it('should trigger scraping if subreddit lastScrapedAt is null', async () => {
       const channelId = 'chan-1';
