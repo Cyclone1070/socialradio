@@ -1,24 +1,32 @@
 /**
- * The media library's command surface. One subject - the inventory in
- * `library/manifest.json`, the audio it points at, and the rows that project
- * it - so the four operations live together rather than in four scripts.
+ * The authoring tool for the station's media: songs, jingles and break liner
+ * announcements.
+ *
+ * This is a dev tool, not part of the station. The library the station plays is a
+ * row in the database plus an object in the bucket; the application reads those
+ * two and nothing else, and would work with this folder deleted. What lives here
+ * is the way media gets into that library.
  *
  *   npm run media -- add <file> --kind music --title ... --artist ...
  *   npm run media -- add <file> --kind jingle --name ...
- *   npm run media -- speak [--dry-run] [--count N]
- *   npm run media -- publish [--dry-run]      local mirror -> the bucket
- *   npm run media -- promote --from a --to b  bucket -> bucket, by manifest
- *   npm run media -- seed [--dry-run]         the manifest -> the database
+ *   npm run media -- speak [--dry-run] [--count N]   line -> clip + row
+ *   npm run media -- publish [--dry-run]             local mirror -> the bucket
+ *   npm run media -- promote --from a --to b         bucket -> bucket, by manifest
+ *   npm run media -- seed [--prune] [--dry-run]      the manifest -> the database
+ *   npm run media -- remove --key <key> [--object] [--dry-run]
  *
- * Authoring (`add`, `speak`) happens when the library changes. `publish` and
- * `promote` move audio. `seed` writes rows. Nothing here runs as part of the
- * station: the app only ever draws from what has already been seeded.
+ * The manifest under `library/` is the desired inventory and the database is the
+ * actual one, which is what makes `seed` a reconcile: it writes what the manifest
+ * lists and deletes rows it no longer lists. `speak` is the whole authoring flow
+ * for a break liner, because a clip nobody can play is not added yet.
+ *
  */
 import 'reflect-metadata';
 import * as dotenv from 'dotenv';
 import {
   addMedia,
   promoteLibrary,
+  removeMedia,
   publishLibrary,
   printSeedReport,
   seedLibrary,
@@ -34,7 +42,8 @@ export const USAGE = `usage: npm run media -- <command>
   speak [--dry-run] [--count <n>]
   publish [--dry-run]
   promote --from <source bucket> --to <target bucket> [--dry-run]
-  seed [--dry-run]`;
+  seed [--prune] [--dry-run]
+  remove --key <key> [--object] [--dry-run]`;
 
 export interface Routed {
   command: string;
@@ -46,7 +55,7 @@ export function route(argv: string[]): Routed {
   const [command, ...rest] = argv;
   if (
     !command ||
-    !['add', 'speak', 'publish', 'promote', 'seed'].includes(command)
+    !['add', 'speak', 'publish', 'promote', 'seed', 'remove'].includes(command)
   ) {
     throw new Error(USAGE);
   }
@@ -65,6 +74,8 @@ async function main(argv: string[]): Promise<void> {
       return publishLibrary(rest);
     case 'promote':
       return promoteLibrary(rest);
+    case 'remove':
+      return removeMedia(rest);
     default:
       return printSeedReport(await seedLibrary(rest));
   }

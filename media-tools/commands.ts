@@ -21,6 +21,7 @@ import {
   manifestPath,
   readLines,
   readManifest,
+  writeLines,
   writeManifest,
 } from './lib';
 
@@ -86,13 +87,16 @@ export function entryFor(
 
 export function seedReport(plan: LibraryPlan): string[] {
   const lines = [
-    `${plan.add.length} to add, ${plan.update.length} to correct, ${plan.unchanged.length} already there`,
+    `${plan.add.length} to add, ${plan.update.length} to correct, ${plan.unchanged.length} already there, ${plan.remove.length} to remove`,
   ];
   for (const entry of plan.add) {
     lines.push(`  + ${entry.key} (${entry.kind}, ${entry.durationSeconds}s)`);
   }
   for (const entry of plan.update) {
     lines.push(`  ~ ${entry.key} (${entry.kind}, ${entry.durationSeconds}s)`);
+  }
+  for (const entry of plan.remove) {
+    lines.push(`  - ${entry.key} (${entry.kind}) is no longer in the manifest`);
   }
   for (const entry of plan.missing) {
     lines.push(`  ! ${entry.key} has no audio in the bucket, leaving it out`);
@@ -177,6 +181,87 @@ export function addMedia(argv: string[]): void {
   );
 }
 
+/**
+ * Where library audio lives in a bucket. Generated talk audio is under `audio/`,
+ * so these prefixes are what separates media the manifest owns from the show's
+ * own output - sweeping the whole bucket would delete the programme.
+ */
+export const LIBRARY_PREFIXES = ['music/', 'jingles/', 'break_liners/'];
+
+/** Objects under the library prefixes that no manifest entry claims. */
+export function orphanKeys(
+  entries: readonly LibraryEntry[],
+  keys: readonly string[],
+): string[] {
+  const claimed = new Set(entries.map((entry) => entry.key));
+  return keys.filter((key) => !claimed.has(key));
+}
+
+/** An entry to delete, and the inventory without it. */
+export interface RemovalPlan {
+  entry: LibraryEntry;
+  remaining: LibraryEntry[];
+}
+
+/**
+ * Deleting is removing the manifest entry; the reconcile then removes the row and
+ * the object. Resolving the key here means a typo fails before anything is
+ * touched, rather than deleting nothing and reporting success.
+ */
+export function removePlan(
+  entries: readonly LibraryEntry[],
+  key: string,
+): RemovalPlan {
+  const entry = entries.find((candidate) => candidate.key === key);
+  if (!entry) throw new Error(`${key} is not in the manifest`);
+  return {
+    entry,
+    remaining: entries.filter((candidate) => candidate.key !== key),
+  };
+}
+
+/**
+ * The words without the retired line. A break liner's clip is named after its
+ * words, so leaving the line in the pool would speak it straight back on the
+ * next run - deleting the row would look like it had been ignored.
+ */
+export function withoutLine(lines: readonly string[], text: string): string[] {
+  return lines.filter((line) => line.trim() !== text.trim());
+}
+
+/** What speaking a line produces, and what has to be written for it. */
+export interface LinerDeps {
+  speak(text: string): Promise<{ key: string; durationSeconds: number }>;
+  record(entry: LibraryEntry): Promise<void>;
+}
+
+/**
+ * One line becomes one clip and one row, in that order, together.
+ *
+ * The station plays from rows, so a clip without a row is invisible and a row
+ * without a clip is a 404 in the middle of a break. Sequencing them here means a
+ * caller cannot do the one without the other, and a failure to speak records
+ * nothing rather than a row pointing at audio that never uploaded.
+ */
+export async function addBreakLiners(
+  lines: readonly string[],
+  deps: LinerDeps,
+): Promise<LibraryEntry[]> {
+  const added: LibraryEntry[] = [];
+  for (const line of lines) {
+    const track = await deps.speak(line);
+    const entry: LibraryEntry = {
+      kind: 'break_liner',
+      key: track.key,
+      durationSeconds: track.durationSeconds,
+      text: line,
+    };
+    await deps.record(entry);
+    added.push(entry);
+  }
+  return added;
+}
+
 /** Speaks the lines that have no clip yet. The words are the identity. */
 export async function speakLibrary(argv: string[]): Promise<void> {
   const dryRun = argv.includes('--dry-run');
@@ -203,23 +288,37 @@ export async function speakLibrary(argv: string[]): Promise<void> {
 
   const config = new ConfigService();
   const audio = new AudioService(config, storageFor());
-  let recorded = entries;
-  for (const line of unspoken) {
-    const key = breakLinerKey(line);
-    const track = await audio.synthesizeScript(
-      { postId: key, turns: [{ speaker: 'Dave', text: line }] },
-      key,
-    );
-    recorded = withEntry(recorded, {
-      kind: 'break_liner',
-      key,
-      durationSeconds: track.durationSeconds,
-      text: line,
+  const orm = await MikroORM.init(mikroOrmConfig);
+  try {
+    const store = new MikroLibraryStore(orm.em.fork());
+    const added = await addBreakLiners(unspoken, {
+      // The station's voice, not a host's: a break announcement is the station
+      // talking, and it should not sound like the person who just left the room.
+      speak: async (line) => {
+        const key = breakLinerKey(line);
+        const track = await audio.synthesizeScript(
+          { postId: key, turns: [{ speaker: 'Station', text: line }] },
+          key,
+        );
+        return { key, durationSeconds: track.durationSeconds };
+      },
+      // The row is what the station plays from, so it is written in the same run
+      // as the clip. The manifest records the same fact for the next deploy.
+      record: (entry) => store.write(entry),
     });
-    process.stdout.write(`  ${key} (${track.durationSeconds}s)\n`);
+
+    let recorded = entries;
+    for (const entry of added) {
+      recorded = withEntry(recorded, entry);
+      process.stdout.write(`  ${entry.key} (${entry.durationSeconds}s)\n`);
+    }
+    writeManifest(recorded);
+    process.stdout.write(
+      `${added.length} clip(s) and row(s) written, manifest updated\n`,
+    );
+  } finally {
+    await orm.close(true);
   }
-  writeManifest(recorded);
-  process.stdout.write('manifest updated\n');
 }
 
 /**
@@ -313,9 +412,19 @@ export async function promoteLibrary(argv: string[]): Promise<void> {
   }
 }
 
-/** Makes the database a projection of the manifest. */
+/**
+ * Makes the library agree with the manifest: rows in the database, and - with
+ * `--prune` - objects in the bucket.
+ *
+ * The manifest is the desired inventory and the database is the actual one, so
+ * this reconciles rather than projects: entries it lists are written, rows it no
+ * longer lists are removed. Pruning is a separate flag because deleting audio is
+ * destructive, and it is scoped by prefix so the show's own output is never
+ * touched.
+ */
 export async function seedLibrary(argv: string[]): Promise<LibraryPlan> {
   const dryRun = argv.includes('--dry-run');
+  const prune = argv.includes('--prune');
   const entries = readManifest();
   const orm = await MikroORM.init(mikroOrmConfig);
   try {
@@ -323,10 +432,68 @@ export async function seedLibrary(argv: string[]): Promise<LibraryPlan> {
       new MikroLibraryStore(orm.em.fork()),
       storageFor(),
     );
-    return await seeder.run(entries, { dryRun });
+    const plan = await seeder.run(entries, { dryRun });
+    if (prune) await pruneLibrary(entries, { dryRun });
+    return plan;
   } finally {
     await orm.close(true);
   }
+}
+
+/** Deletes library audio no manifest entry claims. */
+async function pruneLibrary(
+  entries: readonly LibraryEntry[],
+  options: { dryRun: boolean },
+): Promise<void> {
+  const storage = storageFor();
+  for (const prefix of LIBRARY_PREFIXES) {
+    const keys = await storage.listKeys(prefix);
+    const orphans = orphanKeys(entries, keys);
+    for (const key of orphans) {
+      process.stdout.write(`  - ${key} (no manifest entry)\n`);
+      if (!options.dryRun) await storage.delete(key);
+    }
+  }
+}
+
+/**
+ * Retires a clip: the manifest entry, the row, and - if asked - the object.
+ *
+ * The row goes first because it is what the station plays from, so the clip stops
+ * airing even if a later step fails. The words go too when the clip is a break
+ * liner: the pool is the authoring input, and a line left in it would be spoken
+ * straight back on the next run.
+ */
+export async function removeMedia(argv: string[]): Promise<void> {
+  const key = argument(argv, '--key');
+  if (!key) throw new Error('--key is required');
+  const dryRun = argv.includes('--dry-run');
+  const withObject = argv.includes('--object');
+
+  const plan = removePlan(readManifest(), key);
+  const lines =
+    plan.entry.kind === 'break_liner'
+      ? withoutLine(readLines(), plan.entry.text)
+      : null;
+
+  process.stdout.write(`- ${plan.entry.key} (${plan.entry.kind})\n`);
+  if (lines) process.stdout.write(`  its line leaves the pool of words\n`);
+  if (withObject) process.stdout.write(`  the object goes from the bucket\n`);
+  if (dryRun) {
+    process.stdout.write('dry run: nothing deleted\n');
+    return;
+  }
+
+  const orm = await MikroORM.init(mikroOrmConfig);
+  try {
+    await new MikroLibraryStore(orm.em.fork()).remove(key);
+  } finally {
+    await orm.close(true);
+  }
+  if (withObject) await storageFor().delete(key);
+  writeManifest(plan.remaining);
+  if (lines) writeLines(lines);
+  process.stdout.write('row deleted, manifest updated\n');
 }
 
 export function printSeedReport(plan: LibraryPlan): void {

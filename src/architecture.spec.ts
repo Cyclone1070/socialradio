@@ -688,7 +688,7 @@ describe('One spec file per implementation file', () => {
   const sourceRoots = [
     __dirname,
     path.join(repoRoot, 'reddit-fetcher', 'src'),
-    path.join(repoRoot, 'media-cli'),
+    path.join(repoRoot, 'media-tools'),
   ];
 
   /**

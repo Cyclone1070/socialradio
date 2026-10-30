@@ -95,6 +95,25 @@ describe('StorageService', () => {
     expect(mockS3Send).toHaveBeenCalledWith(expect.any(DeleteObjectCommand));
   });
 
+  it('should list every key under a prefix, following the continuation token', async () => {
+    mockS3Send
+      .mockResolvedValueOnce({
+        Contents: [{ Key: 'music/a.mp3' }],
+        IsTruncated: true,
+        NextContinuationToken: 'page-2',
+      })
+      .mockResolvedValueOnce({
+        Contents: [{ Key: 'music/b.mp3' }, {}],
+        IsTruncated: false,
+      });
+
+    await expect(service.listKeys('music/')).resolves.toEqual([
+      'music/a.mp3',
+      'music/b.mp3',
+    ]);
+    expect(mockS3Send).toHaveBeenCalledTimes(2);
+  });
+
   it('should construct correct public CDN URL', () => {
     const url = service.getPublicUrl('channels/1/chunk_001.ts');
     expect(url).toBe(

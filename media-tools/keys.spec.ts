@@ -19,6 +19,14 @@ describe('contentKey', () => {
     expect(key).toMatch(/^music\/neon-waves-[0-9a-f]{6}\.mp3$/);
   });
 
+  it('shelves a jingle beside the songs it plays between', () => {
+    // The folder is part of the library's namespace, and the fixtures, the seed
+    // rows and the prune list all spell it `jingles/`.
+    const key = contentKey('jingle', 'Station ID', Buffer.from('id'));
+
+    expect(key).toMatch(/^jingles\/station-id-[0-9a-f]{6}\.mp3$/);
+  });
+
   it('gives a replaced file a new key, never the same one over new audio', () => {
     const before = contentKey('music', 'Neon Waves', Buffer.from('one'));
     const after = contentKey('music', 'Neon Waves', Buffer.from('two'));

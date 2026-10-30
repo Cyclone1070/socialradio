@@ -14,10 +14,10 @@
     "migration:create": "mikro-orm migration:create",
     "migration:up": "mikro-orm migration:up",
     "migration:down": "mikro-orm migration:down",
-    "media": "ts-node media-cli/index.ts",
-    "test:cli": "jest --config media-cli/jest.config.js",
-    "lint:cli": "eslint \"media-cli/**/*.ts\"",
-    "typecheck:cli": "tsc -p media-cli/tsconfig.json"
+    "media": "ts-node media-tools/index.ts",
+    "test:cli": "jest --config media-tools/jest.config.js",
+    "lint:cli": "eslint \"media-tools/**/*.ts\"",
+    "typecheck:cli": "tsc -p media-tools/tsconfig.json"
   },
   "dependencies": {
     "@ai-sdk/deepseek": "^3.0.28",

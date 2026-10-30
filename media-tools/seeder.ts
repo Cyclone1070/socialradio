@@ -1,11 +1,16 @@
 /**
- * Puts the library manifest into the database, and only what the bucket can
- * actually serve.
+ * Makes the database agree with the library manifest: rows the manifest lists are
+ * written, rows it no longer lists are removed.
  *
- * The row is a projection of the manifest, so running this twice writes nothing
- * the second time. It refuses to write a row for an object the bucket does not
- * hold: a row pointing at missing audio looks perfectly healthy until a listener
- * reaches the break it belongs to.
+ * The manifest is the desired inventory and the rows are the actual one, so this
+ * is a reconcile rather than a projection - running it twice changes nothing, and
+ * a line deleted from the manifest stops being playable on the next run. Only the
+ * rows are touched here; the object store is pruned separately, by namespace, so
+ * that generated talk audio (which no row owns) is never swept up with it.
+ *
+ * It refuses to write a row for an object the bucket does not hold: a row
+ * pointing at missing audio looks perfectly healthy until a listener reaches the
+ * break it belongs to.
  */
 import { LibraryEntry } from './manifest';
 
@@ -13,6 +18,7 @@ import { LibraryEntry } from './manifest';
 export interface LibraryStore {
   stored(): Promise<LibraryEntry[]>;
   write(entry: LibraryEntry): Promise<void>;
+  remove(key: string): Promise<void>;
 }
 
 /** What the seeder needs from the object store. */
@@ -29,6 +35,8 @@ export interface LibraryPlan {
   unchanged: LibraryEntry[];
   /** Entries the bucket has no audio for, so no row is written. */
   missing: LibraryEntry[];
+  /** Rows the manifest no longer lists, so the next run deletes them. */
+  remove: LibraryEntry[];
 }
 
 const same = (a: LibraryEntry, b: LibraryEntry): boolean =>
@@ -53,6 +61,7 @@ export class LibrarySeeder {
       update: [],
       unchanged: [],
       missing: [],
+      remove: [],
     };
     for (const entry of entries) {
       if (!(await this.audio.exists(entry.key))) {
@@ -66,9 +75,16 @@ export class LibrarySeeder {
       else plan.update.push(entry);
     }
 
+    // A row whose key the manifest has dropped is a clip the library retired.
+    const wanted = new Set(entries.map((entry) => entry.key));
+    plan.remove = [...stored.values()].filter((row) => !wanted.has(row.key));
+
     if (!options.dryRun) {
       for (const entry of [...plan.add, ...plan.update]) {
         await this.store.write(entry);
+      }
+      for (const entry of plan.remove) {
+        await this.store.remove(entry.key);
       }
     }
     return plan;

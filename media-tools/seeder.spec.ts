@@ -12,11 +12,18 @@ describe('LibrarySeeder', () => {
 
   class FakeStore implements LibraryStore {
     readonly written: LibraryEntry[] = [];
+    readonly removed: string[] = [];
 
     constructor(private rows: LibraryEntry[] = []) {}
 
     stored(): Promise<LibraryEntry[]> {
       return Promise.resolve(this.rows);
+    }
+
+    remove(key: string): Promise<void> {
+      this.removed.push(key);
+      this.rows = this.rows.filter((row) => row.key !== key);
+      return Promise.resolve();
     }
 
     write(entry: LibraryEntry): Promise<void> {
@@ -25,6 +32,13 @@ describe('LibrarySeeder', () => {
       return Promise.resolve();
     }
   }
+
+  const retired: LibraryEntry = {
+    kind: 'break_liner',
+    key: 'break_liners/retired-1f2e3d.mp3',
+    durationSeconds: 5.2,
+    text: 'A line we no longer want.',
+  };
 
   const audioWith = (...keys: string[]) => ({
     exists: (key: string) => Promise.resolve(keys.includes(key)),
@@ -68,5 +82,25 @@ describe('LibrarySeeder', () => {
 
     expect(plan.add).toEqual([music]);
     expect(store.written).toEqual([]);
+  });
+
+  it('removes the rows the manifest no longer lists', async () => {
+    const store = new FakeStore([music, retired]);
+    const seeder = new LibrarySeeder(store, audioWith(music.key));
+
+    const plan = await seeder.run([music], { dryRun: false });
+
+    expect(plan.remove).toEqual([retired]);
+    expect(store.removed).toEqual([retired.key]);
+  });
+
+  it('shows a removal on a dry run without doing it', async () => {
+    const store = new FakeStore([music, retired]);
+    const seeder = new LibrarySeeder(store, audioWith(music.key));
+
+    const plan = await seeder.run([music], { dryRun: true });
+
+    expect(plan.remove).toEqual([retired]);
+    expect(store.removed).toEqual([]);
   });
 });

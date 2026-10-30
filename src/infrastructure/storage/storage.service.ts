@@ -5,6 +5,7 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   DeleteObjectCommand,
   HeadBucketCommand,
   CreateBucketCommand,
@@ -153,6 +154,32 @@ export class StorageService implements OnModuleInit {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Every key under a prefix, paginated to the end.
+   *
+   * Used by the media tool to find library audio the manifest no longer lists;
+   * the prefix is what keeps it away from generated talk audio, which lives under
+   * a different one and belongs to no row.
+   */
+  async listKeys(prefix: string): Promise<string[]> {
+    const keys: string[] = [];
+    let token: string | undefined;
+    do {
+      const response = await this.s3Client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucketName,
+          Prefix: prefix,
+          ContinuationToken: token,
+        }),
+      );
+      for (const object of response.Contents ?? []) {
+        if (object.Key) keys.push(object.Key);
+      }
+      token = response.IsTruncated ? response.NextContinuationToken : undefined;
+    } while (token);
+    return keys;
   }
 
   async delete(key: string): Promise<void> {

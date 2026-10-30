@@ -9,7 +9,7 @@
 import { readFileSync } from 'node:fs';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
-const manifest = JSON.parse(readFileSync('/usr/src/app/library/manifest.json', 'utf8'));
+const manifest = JSON.parse(readFileSync('/usr/src/app/media-tools/library/manifest.json', 'utf8'));
 const audio = readFileSync('/audio/track.mp3');
 const s3 = new S3Client({
   endpoint: process.env.STORAGE_ENDPOINT,

@@ -1,11 +1,11 @@
 /**
- * The database side of seeding: reads what is stored and writes what the
- * manifest says should be.
+ * The database side of reconciling: reads what is stored, writes what the
+ * manifest says should be, and deletes rows it no longer lists.
  *
- * Rows are a projection of the manifest, keyed by the object key, so seeding is
- * an upsert rather than an insert. Nothing else in the schema points at these
- * tables - a segment carries its own copy of what it needs - which is what makes
- * correcting a row safe.
+ * Rows are keyed by the object key, so writing is an upsert rather than an
+ * insert. Nothing else in the schema points at these tables - a segment carries
+ * its own copy of what it needs - which is what makes correcting or deleting a
+ * row safe mid-show: the queue has already copied what it needs.
  */
 import { EntityManager } from '@mikro-orm/postgresql';
 import { Jingle } from '../src/media/entities/jingle.entity';
@@ -77,6 +77,16 @@ export class MikroLibraryStore implements LibraryStore {
       this.em.find(Jingle, {}),
     ]);
     return [...tracks, ...breakLiners, ...jingles].map(entryOf);
+  }
+
+  async remove(key: string): Promise<void> {
+    // A key belongs to one kind, but which one is not encoded in the argument.
+    // Deleting across the three tables is safe: only one of them can hold it.
+    await this.em.transactional(async (em) => {
+      for (const entity of Object.values(ROWS)) {
+        await em.nativeDelete(entity, { filePath: key });
+      }
+    });
   }
 
   async write(entry: LibraryEntry): Promise<void> {

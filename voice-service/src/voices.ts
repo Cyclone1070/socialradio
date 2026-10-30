@@ -9,6 +9,10 @@ export const SPEAKER_VOICE_MAP: Record<string, string> = {
   Dave: 'en-US-GuyNeural',
   Sarah: 'en-US-JennyNeural',
   Caller: 'en-AU-NatashaNeural',
+  // The station itself. A break announcement is not one of the hosts speaking,
+  // so it needs a voice that has never been in the conversation - otherwise the
+  // liner sounds like Dave saying goodbye to himself.
+  Station: 'en-GB-SoniaNeural',
 };
 
 export const DEFAULT_VOICE = 'en-US-GuyNeural';

@@ -140,10 +140,10 @@ services:
       - "-c"
       - >
         node /usr/src/app/upload-library.mjs
-        && npx ts-node media-cli/index.ts promote --from socialradio-media --to socialradio-staging
-        && STORAGE_BUCKET=socialradio-staging npx ts-node media-cli/index.ts seed
+        && npx ts-node media-tools/index.ts promote --from socialradio-media --to socialradio-staging
+        && STORAGE_BUCKET=socialradio-staging npx ts-node media-tools/index.ts seed
     volumes:
-      - ../tests/fixtures/library-manifest.json:/usr/src/app/library/manifest.json:ro
+      - ../tests/fixtures/library-manifest.json:/usr/src/app/media-tools/library/manifest.json:ro
       - ../tests/fixtures:/fixtures:ro
       # Inside the app directory, not under /fixtures: an ES module resolves its
       # imports from its own location, and only /usr/src/app has node_modules.

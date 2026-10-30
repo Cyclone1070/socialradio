@@ -7,7 +7,7 @@ describe('the library files on disk', () => {
   let dir: string;
 
   beforeEach(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'media-cli-'));
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'media-tools-'));
   });
 
   afterEach(() => {
