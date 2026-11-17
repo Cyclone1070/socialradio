@@ -6,7 +6,7 @@ import {
   BreakLinerSchema,
 } from '../infrastructure/database/schemas/media.schema';
 import { MediaService } from './media.service';
-import { MediaContract } from '../domain';
+import { MediaContract } from './media.contract';
 import { StorageModule } from '../infrastructure/storage/storage.module';
 
 @Module({

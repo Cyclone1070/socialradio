@@ -10,12 +10,10 @@ import {
   ChannelSchema,
   SegmentSchema,
 } from '../infrastructure/database/schemas/channel.schema';
-import {
-  ContentContract,
-  ScriptContract,
-  VoiceContract,
-  MediaContract,
-} from '../domain/contracts';
+import { ContentContract } from '../content/content.contract';
+import { ScriptContract } from '../script/script.contract';
+import { VoiceContract } from '../voice/voice.contract';
+import { MediaContract } from '../media/media.contract';
 
 describe('QueueService', () => {
   let service: QueueService;

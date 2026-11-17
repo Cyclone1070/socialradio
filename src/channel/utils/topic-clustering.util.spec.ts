@@ -1,4 +1,4 @@
-import { PostData } from '../../domain';
+import { PostData } from '../../content/types/post.types';
 import { clusterPosts } from './topic-clustering.util';
 
 describe('TopicClustering Utility', () => {

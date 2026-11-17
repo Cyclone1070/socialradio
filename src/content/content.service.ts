@@ -10,9 +10,9 @@ import {
   CommentSchema,
 } from '../infrastructure/database/schemas/content.schema';
 import { ScraperService } from './scraper.service';
-import { ContentContract } from '../domain/contracts';
-import { PostData, CommentData } from '../domain/types/post.types';
-import { SubredditData } from '../domain/types/subreddit.types';
+import { ContentContract } from './content.contract';
+import { PostData, CommentData } from './types/post.types';
+import { SubredditData } from './types/subreddit.types';
 
 @Injectable()
 export class ContentService implements ContentContract {

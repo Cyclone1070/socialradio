@@ -20,9 +20,8 @@ requests, and the audio is static files served from object storage.
 | `src/channel` | Stations, the queue, the playhead, the HLS manifest, topic clustering |
 | `src/script` | Two-stage call-in script generation (LLM) |
 | `src/voice` | HTTP client for the speech service |
-| `src/media` | Music, ad and jingle pools the queue draws filler from |
+| `src/media` | Music, break liner and jingle pools the queue draws filler from |
 | `src/user` | Login, identity, roles, the boot-time admin seed |
-| `src/domain` | Shared contracts and payload types — no logic |
 | `src/infrastructure` | Database, storage, logging, auth guards, healthcheck, the shared claim lease |
 | `reddit-fetcher/` | Sidecar: browserless, reddit browsing, the pacing queue |
 | `voice-service/` | Sidecar: TTS engine, voice casting, concatenation, measured duration |
@@ -38,7 +37,7 @@ docker compose -f deployment/docker/docker-compose.yml up --build
 
 Migrations run as their own compose service, never on app boot. Ports: app `:3000`, SeaweedFS `:9000`
 (console `:9001`), browserless `:4000`, speech service `:3002`; the fetcher is reachable only inside the
-compose network. A station needs rows in the music, ad and jingle tables before it sounds like anything
+compose network. A station needs rows in the music, break liner and jingle tables before it sounds like anything
 — with an empty library the queue still fills, but every filler points at the placeholder key
 `jingles/station-id.mp3`, which nothing uploads.
 

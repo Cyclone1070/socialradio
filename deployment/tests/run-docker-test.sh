@@ -3,7 +3,10 @@ set -e
 
 cd "$(dirname "$0")"
 PROJECT="socialradio_e2e"
-COMPOSE="docker compose -p $PROJECT -f ../docker/docker-compose.yml -f docker-compose.test.yml"
+# The engine is overridable so the same suites can run elsewhere:
+#   COMPOSE_BIN="podman compose" deployment/tests/run-docker-test.sh
+COMPOSE_BIN="${COMPOSE_BIN:-docker compose}"
+COMPOSE="$COMPOSE_BIN -p $PROJECT -f ../docker/docker-compose.yml -f docker-compose.test.yml"
 export COMPOSE_PROGRESS=auto
 
 cleanup() {
@@ -12,6 +15,12 @@ cleanup() {
   if [ $STATUS -ne 0 ]; then
     echo "=== App Container Logs (Failure Diagnosis) ==="
     $COMPOSE logs app 2>&1 | grep -v '"/healthcheck"' | tail -100 || true
+    # The one-shot services run before the app is up, and their output is the
+    # only evidence of why the stack failed to come up.
+    for SERVICE in promote-fixture migration bucket-init; do
+      echo "=== $SERVICE Logs ==="
+      $COMPOSE logs "$SERVICE" 2>&1 | tail -40 || true
+    done
   fi
   echo "=== Clean Up ==="
   $COMPOSE down -v >/dev/null 2>&1 || true

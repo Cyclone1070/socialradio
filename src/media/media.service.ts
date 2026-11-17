@@ -9,12 +9,8 @@ import {
   JingleSchema,
   BreakLinerSchema,
 } from '../infrastructure/database/schemas/media.schema';
-import {
-  MusicData,
-  JingleData,
-  BreakLinerData,
-  MediaContract,
-} from '../domain';
+import { MusicData, JingleData, BreakLinerData } from './types/audio.types';
+import { MediaContract } from './media.contract';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
 import { StorageService } from '../infrastructure/storage/storage.service';
 

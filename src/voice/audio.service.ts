@@ -2,9 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { StorageService } from '../infrastructure/storage/storage.service';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
-import { VoiceContract } from '../domain/contracts';
-import { ScriptData } from '../domain/types/script.types';
-import { TalkData } from '../domain/types/audio.types';
+import { VoiceContract } from './voice.contract';
+import { ScriptData } from '../script/types/script.types';
+import { TalkData } from './types/audio.types';
 
 /**
  * The app's side of the voice boundary: send the script, store the audio that comes

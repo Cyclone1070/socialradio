@@ -1,4 +1,4 @@
-import { PostData } from '../../domain';
+import { PostData } from '../../content/types/post.types';
 import { TalkCluster } from '../interfaces/talk-cluster.interface';
 
 const STOP_WORDS = new Set([

@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PinoLogger } from 'nestjs-pino';
 import { ScriptService } from './script.service';
 import { LlmService } from './llm.service';
-import { PostData, CommentData } from '../domain';
+import { PostData, CommentData } from '../content/types/post.types';
 
 describe('ScriptService (2-Stage Script Generation)', () => {
   let service: ScriptService;

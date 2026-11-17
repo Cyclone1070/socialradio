@@ -1,4 +1,4 @@
-import { ScriptTurn } from '../../domain/types/script.types';
+import { ScriptTurn } from '../../script/types/script.types';
 
 export abstract class Segment {
   private _id!: string;

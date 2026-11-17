@@ -1,12 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { LlmService } from './llm.service';
-import { ScriptContract } from '../domain/contracts';
-import { PostData, CommentData } from '../domain/types/post.types';
-import {
-  ScriptData,
-  ScriptRejection,
-  ScriptTurn,
-} from '../domain/types/script.types';
+import { ScriptContract } from './script.contract';
+import { PostData, CommentData } from '../content/types/post.types';
+import { ScriptData, ScriptRejection, ScriptTurn } from './types/script.types';
 import { ContinuityKind, describeOpeningProblem } from './opening';
 
 const CASE_MARKER = /^\s*\[([a-z-]+)\]\s*/;

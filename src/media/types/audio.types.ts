@@ -1,14 +1,9 @@
+/** The three kinds of station media this slice hands out. */
 export interface MusicData {
   filePath: string;
   durationSeconds: number;
   title: string;
   artist: string;
-}
-
-export interface TalkData {
-  filePath: string;
-  durationSeconds: number;
-  postIds: string[];
 }
 
 export interface BreakLinerData {

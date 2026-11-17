@@ -19,20 +19,18 @@ import {
 import { clusterPosts } from './utils/topic-clustering.util';
 import { TalkCluster } from './interfaces/talk-cluster.interface';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
-import {
-  ContentContract,
-  ScriptContract,
-  VoiceContract,
-  MediaContract,
-} from '../domain/contracts';
-import { PostData } from '../domain/types/post.types';
+import { ContentContract } from '../content/content.contract';
+import { ScriptContract } from '../script/script.contract';
+import { VoiceContract } from '../voice/voice.contract';
+import { MediaContract } from '../media/media.contract';
+import { PostData } from '../content/types/post.types';
 import {
   ScriptData,
   ScriptRejection,
   ScriptTurn,
-} from '../domain/types/script.types';
-import { TalkData } from '../domain/types/audio.types';
-import { SubredditData } from '../domain/types/subreddit.types';
+} from '../script/types/script.types';
+import { TalkData } from '../voice/types/audio.types';
+import { SubredditData } from '../content/types/subreddit.types';
 import { randomUUID } from 'crypto';
 import { buildDirective, continuityFor } from './continuity';
 import { ClaimLease, ClaimStore } from '../infrastructure/lease/claim-lease';

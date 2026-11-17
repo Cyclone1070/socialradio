@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScriptService } from './script.service';
 import { LlmService } from './llm.service';
-import { ScriptContract } from '../domain/contracts';
+import { ScriptContract } from './script.contract';
 
 @Module({
   imports: [ConfigModule],

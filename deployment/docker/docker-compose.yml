@@ -118,8 +118,12 @@ services:
     # collection per bucket without a ceiling: a second bucket (what `media
     # promote` copies into) is a second collection, and the default ceiling
     # answers writes with "no free volumes left".
+    # A volume is 30 GB by default, and the slot count SeaweedFS reports is
+    # free disk / volume size: on an 89 GB VM disk that is two slots for three
+    # collections. 128 MB keeps the ceiling out of the way of a local disk;
+    # the flag is `-master.volumeSizeLimitMB`, the size the master hands out.
     command:
-      - "weed server -s3 -dir=/data -s3.port=9000 -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0 -volume.max=0"
+      - "weed server -s3 -dir=/data -s3.port=9000 -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0 -volume.max=0 -master.volumeSizeLimitMB=128"
     volumes:
       - ./seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
       - seaweedfs_data:/data

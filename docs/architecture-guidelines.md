@@ -7,32 +7,30 @@ This document provides decision rules for file placement, code organization, str
 ## Core Architectural Rules
 
 1. **Feature Slices (`src/<feature>/`)**
-   - Modules are organized strictly by **Domain**, not by technical or functional concern (e.g. `channel/` domain contains `playback.service.ts` and `queue.service.ts`; `user/` domain contains auth and registration; `content/` domain contains scraping and feed storage).
-   - Each domain feature is an isolated, independent slice.
-   - Slices MUST NOT import concrete files (entities, services, helpers) directly from peer feature slices.
-   - Cross-slice entity references use scalar string IDs (`<name>Id: string`) instead of ORM relation objects.
+   - Modules are organized strictly by **Domain**, not by technical or functional concern (e.g. `channel/` contains `playback.service.ts` and `queue.service.ts`; `user/` contains auth and registration; `content/` contains scraping and feed storage).
+   - Slices **may** import each other, but only along the edges declared in `src/architecture.spec.ts` (`SLICE_EDGES`). An edge is one-directional; adding one is a one-line diff in that list, which is what keeps the graph acyclic by construction instead of by memory.
+   - A contract lives in the slice that **implements** it (`content/content.contract.ts`), never in a shared folder. A caller that imports it creates a visible `channel -> content` edge.
+   - A payload type lives in the slice that **produces** it (`content/types/post.types.ts`). There is no `src/domain/` package: sharing a type is just an import along an allowed edge.
+   - Cross-slice entity references use scalar string IDs (`<name>Id: string`) instead of ORM relation objects, and an entity file never imports a peer slice's entity.
 
-2. **Domain Package (`src/domain/`)**
-   - `src/domain/` is a shared type-and-contract package.
-   - Contains ONLY pure TypeScript interfaces (`*Data`) and abstract class tokens (`*Contract`).
-   - ZERO concrete logic, ZERO ORM decorators such as `@Entity` and `@Column`, ZERO NestJS decorators.
-   - Put a type or contract here ONLY if it is consumed by 2 or more feature slices (anti-dumping guardrail).
+2. **Infrastructure (`src/infrastructure/`)**
+   - Infrastructure sits **below** every slice: slices import it freely, it imports no slice.
+   - The one exception is `infrastructure/database/schemas/`, which must name the entity classes it maps; it may import entity files and nothing else.
 
 3. **Architecture Guardrails (Enforced via `src/architecture.spec.ts`)**
-   - **Rule 1: Domain Isolation**: `src/domain/` has zero dependencies on feature slices or infrastructure.
-   - **Rule 2: Zero Cross-Slice Concrete Imports**: Feature slices only import from `src/domain/` or own directory.
-   - **Rule 3: Pure POCOs & Scalar Foreign IDs**: Entity classes across slices are plain classes with zero ORM decorators, and they do not import peer entity models.
-   - **Rule 4: Domain Anti-Dumping**: Contracts and interfaces in `src/domain/` must be cross-slice (consumed by 2 or more slices).
-   - **Rule 5: Zero Bidirectional Slice Coupling**: Slices must have an acyclic dependency graph (no direct circular imports or contract cycles).
-   - **Rule 6: Single Entity Table Ownership**: Every database table/entity is owned exclusively by a single domain slice.
-   - **Rule 7: Route Domain Ownership**: Controllers only declare routes belonging to their owning domain slice.
-   - **Rule 8: Entity Encapsulation**: an entity's array and date getters must not hand out mutable references, and a public setter must either be used by production code or be private.
-   - **Rule 9: Entity Class Placement**: every schema's entity class is declared inside its slice's `entities/` directory.
-   - **Rule 10: Persistence Goes Through the ORM**: production code must not execute raw SQL.
-   - **Rule 13: Module Registration Matches Injections**: `MikroOrmModule.forFeature` registers exactly the schemas that are injected.
-   - **Rule 14: No Type-System Bypasses**: production code must not use `as unknown as` double casts.
+   - **Rule 1: Slice Edge Allowlist**: every cross-slice import must appear in `SLICE_EDGES`.
+   - **Rule 2: Infrastructure Is Below**: infrastructure imports no slice; the schema mapping imports only entity files.
+   - **Rule 3: One Package**: production code never imports past `src/` by relative path.
+   - **Rule 4: No Peer Entities**: an entity file imports no entity from another slice.
+   - **Rule 5: One Table, One Schema, One Class**: every schema class owns one table and is declared in `<slice>/entities/<name>.entity.ts`.
+   - **Rule 6: Plain Entities**: entity files contain no ORM decorators.
+   - **Rule 7: Entity Encapsulation**: Date getters clone, array getters cannot leak.
+   - **Rule 8: Registration Matches Injection**: `MikroOrmModule.forFeature` registers exactly the schemas that are injected.
+   - **Rule 9: Persistence Goes Through the ORM**: no `getConnection`, no `.raw(`.
+   - **Rule 10: No Type-System Bypasses**: production code uses no `as unknown as`.
+   - Every spec is named after the file it tests; a suite may not outlive its subject.
 
-   Rule numbers are historical — 11 and 12 are unused — and the spec file is the authority, not this list.
+   The spec file is the authority, not this list.
 
 4. **Live Audio Streaming Architecture (Native HLS & Lazy Virtual Clock)**
    - RFC 8216-compliant HLS playlists served dynamically via `GET /channels/:channelId/live.m3u8`.
@@ -57,8 +55,8 @@ This document provides decision rules for file placement, code organization, str
 | **Database entity (MikroORM `EntitySchema`)** | `src/<feature>/entities/` | `<entity>.entity.ts` | `[Name]` (POCO entity class) |
 | **Feature Service** | `src/<feature>/` | `<service>.service.ts` | `[Name]Service` |
 | **Feature-Internal Interface/Helper** | `src/<feature>/interfaces/` or `src/<feature>/utils/` | `<name>.interface.ts` or `<name>.util.ts` | `[Name]` |
-| **Cross-Slice Service Contract** | `src/domain/contracts/` | `index.ts` | `export abstract class [Feature]Contract` |
-| **Cross-Slice Domain Payload** | `src/domain/types/` | `<concept>.types.ts` | `export interface [Concept]Data` |
+| **Cross-Slice Service Contract** | `src/<feature>/` (the implementer) | `<name>.contract.ts` | `export abstract class [Feature]Contract` |
+| **Payload type read by another slice** | `src/<feature>/types/` (the producer) | `<concept>.types.ts` | `export interface [Concept]Data` |
 | **Root-Level Sidecar Service** | `<service>/` | `Dockerfile`, `src/`, `package.json` | Containerized daemon |
 | **Docker Compose Services** | `deployment/docker/` | `docker-compose.yml` | `[Service]` container |
 
@@ -75,8 +73,8 @@ This document provides decision rules for file placement, code organization, str
 3. **Is it feature business logic?**
    → Put in `src/<feature>/`.
 
-4. **Is it a contract or payload shared by 2+ feature slices?**
-   → Put in `src/domain/contracts/` (`*Contract`) or `src/domain/types/` (`*Data`).
+4. **Is it used by 2+ feature slices?**
+   → Put it in the slice that owns or produces it, and import it from there. If that would create an edge back, the slice is either the wrong shape or the code belongs to neither: add a slice that owns it.
 
 5. **Is it reusable technical infrastructure (Storage, DB connection, Logger)?**
    → Put in `src/infrastructure/<service>/`.

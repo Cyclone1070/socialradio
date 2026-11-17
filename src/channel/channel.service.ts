@@ -6,7 +6,7 @@ import { ChannelSchema } from '../infrastructure/database/schemas/channel.schema
 import { SubredditSchema } from '../infrastructure/database/schemas/content.schema';
 import { ConfigureChannelDto } from './dto/configure-channel.dto';
 import { ChannelResponseDto } from './dto/channel-response.dto';
-import { ContentContract } from '../domain/contracts';
+import { ContentContract } from '../content/content.contract';
 import { createServiceLogger } from '../infrastructure/logging/logging.module';
 
 @Injectable()

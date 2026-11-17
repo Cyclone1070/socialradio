@@ -11,7 +11,7 @@ import { ScraperService } from './scraper.service';
 import { ContentService } from './content.service';
 import { ContentController } from './content.controller';
 import { UserModule } from '../user/user.module';
-import { ContentContract } from '../domain/contracts';
+import { ContentContract } from './content.contract';
 
 @Module({
   imports: [

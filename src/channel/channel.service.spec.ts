@@ -5,7 +5,7 @@ import { NotFoundException } from '@nestjs/common';
 import { ChannelService } from './channel.service';
 import { Channel, SubredditRef } from './entities/channel.entity';
 import { ChannelSchema } from '../infrastructure/database/schemas/channel.schema';
-import { ContentContract } from '../domain/contracts';
+import { ContentContract } from '../content/content.contract';
 
 describe('ChannelService', () => {
   let service: ChannelService;

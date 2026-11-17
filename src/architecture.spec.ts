@@ -2,692 +2,740 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as ts from 'typescript';
 
-describe('True Peer Decoupling Architecture Guardrails', () => {
-  const rootSrcDir = __dirname;
-  const domainDir = path.join(rootSrcDir, 'domain');
-  const featureSlices = fs
-    .readdirSync(rootSrcDir, { withFileTypes: true })
-    .filter(
-      (entry) =>
-        entry.isDirectory() &&
-        !['domain', 'infrastructure'].includes(entry.name),
-    )
-    .map((entry) => entry.name);
+const rootSrcDir = __dirname;
+const repoRoot = path.join(__dirname, '..');
+const schemasDir = path.join(
+  rootSrcDir,
+  'infrastructure',
+  'database',
+  'schemas',
+);
 
-  function getAllProductionTsFiles(dir: string): string[] {
-    const files: string[] = [];
-    if (!fs.existsSync(dir)) return files;
+/**
+ * The only slice-to-slice imports allowed.
+ *
+ * Slices may import each other, but only along these edges and only in this
+ * direction. An edge is a decision: adding one here is a one-line diff that says
+ * "this slice now needs that one, on purpose". The list is acyclic, which is what
+ * keeps the graph from growing a cycle nobody meant.
+ */
+const SLICE_EDGES: Record<string, string[]> = {
+  channel: ['content', 'script', 'voice', 'media', 'user'],
+  content: ['user'],
+  script: ['content'],
+  voice: ['script'],
+};
 
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        files.push(...getAllProductionTsFiles(fullPath));
-      } else if (
-        entry.isFile() &&
-        entry.name.endsWith('.ts') &&
-        !entry.name.endsWith('.spec.ts')
-      ) {
-        files.push(fullPath);
+const slices = fs
+  .readdirSync(rootSrcDir, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory() && entry.name !== 'infrastructure')
+  .map((entry) => entry.name)
+  .sort();
+
+function isProductionFile(file: string): boolean {
+  return file.endsWith('.ts') && !file.endsWith('.spec.ts');
+}
+
+function productionFiles(dir: string): string[] {
+  const files: string[] = [];
+  if (!fs.existsSync(dir)) return files;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...productionFiles(fullPath));
+    } else if (entry.isFile() && isProductionFile(entry.name)) {
+      files.push(fullPath);
+    }
+  }
+  return files;
+}
+
+function relative(file: string): string {
+  return path.relative(rootSrcDir, file).split(path.sep).join('/');
+}
+
+/** The slice a file belongs to, or null for the composition root. */
+function sliceOf(file: string): string | null {
+  const rel = path.relative(rootSrcDir, file);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
+  const [first] = rel.split(path.sep);
+  return slices.includes(first) ? first : null;
+}
+
+/**
+ * Every module specifier a file pulls in: static imports and re-exports, plus
+ * `import()` and `require()`. A dependency the guard cannot see is a dependency
+ * the guard cannot stop.
+ */
+function importsOf(file: string): string[] {
+  const source = ts.createSourceFile(
+    file,
+    fs.readFileSync(file, 'utf-8'),
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  const specifiers: string[] = [];
+
+  const visit = (node: ts.Node): void => {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteral(node.moduleSpecifier)
+    ) {
+      specifiers.push(node.moduleSpecifier.text);
+    } else if (ts.isCallExpression(node) && node.arguments.length > 0) {
+      const isDynamicImport =
+        node.expression.kind === ts.SyntaxKind.ImportKeyword;
+      const isRequire =
+        ts.isIdentifier(node.expression) && node.expression.text === 'require';
+      const argument = node.arguments[0];
+      if ((isDynamicImport || isRequire) && ts.isStringLiteral(argument)) {
+        specifiers.push(argument.text);
       }
     }
-    return files;
+    ts.forEachChild(node, visit);
+  };
+
+  visit(source);
+  return specifiers;
+}
+
+/**
+ * Where a specifier points, or null when it is not an in-repo module.
+ *
+ * `tsconfig.json` sets `baseUrl: "./"`, so `src/channel/...` compiles as well as
+ * `../channel/...` does. Both have to resolve to the same place here, or one of
+ * them is a blind spot.
+ */
+function resolveSpecifier(file: string, specifier: string): string | null {
+  if (specifier.startsWith('.')) {
+    return path.resolve(path.dirname(file), specifier);
   }
 
-  describe('Rule 1: Domain Isolation (src/domain)', () => {
-    it('src/domain/ must not import from any feature slice or infrastructure', () => {
-      const files = getAllProductionTsFiles(domainDir);
-      for (const file of files) {
-        const content = fs.readFileSync(file, 'utf8');
-        for (const slice of featureSlices) {
-          const sliceImport = new RegExp(
-            `from\\s+['"].*\\/${slice}(\\/.*)?['"]`,
-          );
-          expect(content).not.toMatch(sliceImport);
-        }
-        expect(content).not.toMatch(/from\s+['"].*\/infrastructure(\/.*)?['"]/);
+  const candidate = path.resolve(repoRoot, specifier);
+  const insideRepo = candidate.startsWith(repoRoot + path.sep);
+  const insideSrc = candidate.startsWith(rootSrcDir + path.sep);
+  return insideRepo && insideSrc ? candidate : null;
+}
+
+function escapesSrc(file: string, specifier: string): boolean {
+  if (!specifier.startsWith('.')) return false;
+  const resolved = resolveSpecifier(file, specifier);
+  if (!resolved) return false;
+  const rel = path.relative(rootSrcDir, resolved);
+  return rel.startsWith('..') || path.isAbsolute(rel);
+}
+
+interface Edge {
+  from: string;
+  to: string;
+  file: string;
+}
+
+function unlistedEdges(
+  edges: Edge[],
+  allowed: Record<string, string[]>,
+): string[] {
+  return edges
+    .filter((edge) => !(allowed[edge.from] ?? []).includes(edge.to))
+    .map((edge) => `${edge.file}: ${edge.from} -> ${edge.to}`);
+}
+
+/** The first cycle in the allowlist, as the path that closes it. */
+function cyclePath(edges: Record<string, string[]>): string[] | null {
+  const state = new Map<string, 'visiting' | 'done'>();
+  const stack: string[] = [];
+
+  const visit = (slice: string): string[] | null => {
+    if (state.get(slice) === 'done') return null;
+    if (state.get(slice) === 'visiting') {
+      return [...stack.slice(stack.indexOf(slice)), slice];
+    }
+
+    state.set(slice, 'visiting');
+    stack.push(slice);
+    for (const next of edges[slice] ?? []) {
+      const found = visit(next);
+      if (found) return found;
+    }
+    stack.pop();
+    state.set(slice, 'done');
+    return null;
+  };
+
+  for (const slice of Object.keys(edges)) {
+    const found = visit(slice);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** Every cross-slice import in src, as edges of the slice graph. */
+function sliceEdges(): Edge[] {
+  const edges: Edge[] = [];
+
+  for (const slice of slices) {
+    for (const file of productionFiles(path.join(rootSrcDir, slice))) {
+      for (const specifier of importsOf(file)) {
+        const target = resolveSpecifier(file, specifier);
+        if (!target) continue;
+        const targetSlice = sliceOf(target);
+        if (!targetSlice || targetSlice === slice) continue;
+        edges.push({ from: slice, to: targetSlice, file: relative(file) });
       }
-    });
+    }
+  }
 
-    it('src/domain/ must contain ZERO ORM or NestJS decorators', () => {
-      const files = getAllProductionTsFiles(domainDir);
-      const forbiddenDecorators = [
-        /@Entity\s*\(/,
-        /@Injectable\s*\(/,
-        /@Module\s*\(/,
-        /@Controller\s*\(/,
-        /@Column\s*\(/,
-        /@ManyToOne\s*\(/,
-        /@OneToMany\s*\(/,
-        /from\s+['"]typeorm['"]/,
-        /from\s+['"]@nestjs\/typeorm['"]/,
-      ];
+  return edges;
+}
 
-      for (const file of files) {
-        const content = fs.readFileSync(file, 'utf8');
-        for (const pattern of forbiddenDecorators) {
-          expect(content).not.toMatch(pattern);
-        }
-      }
-    });
+describe('Rule 1: the slice graph is an allowlist', () => {
+  it('cross-slice imports flow only along the declared edges', () => {
+    const edges = sliceEdges();
 
-    it('src/domain/ must contain ZERO concrete class definitions or executable functions', () => {
-      const files = getAllProductionTsFiles(domainDir);
-
-      for (const file of files) {
-        const content = fs.readFileSync(file, 'utf8');
-        // No non-abstract export class allowed
-        expect(content).not.toMatch(/export\s+class\s+\w+/);
-        // No function implementations
-        expect(content).not.toMatch(/export\s+function\s+/);
-      }
-    });
+    // Without this, an empty collector or a renamed folder would make the rule
+    // pass by having nothing to check.
+    expect(slices.length).toBeGreaterThanOrEqual(6);
+    expect(edges.length).toBeGreaterThanOrEqual(8);
+    expect(unlistedEdges(edges, SLICE_EDGES)).toEqual([]);
   });
 
-  describe('Rule 2: Zero Cross-Slice Concrete Imports', () => {
-    it('Feature slices must NOT import concrete non-module files from peer slices', () => {
-      for (const slice of featureSlices) {
-        const peerSlices = featureSlices.filter((s) => s !== slice);
-        const sliceDir = path.join(rootSrcDir, slice);
-        const files = getAllProductionTsFiles(sliceDir);
+  it('reports an edge that is not on the list', () => {
+    expect(
+      unlistedEdges(
+        [{ from: 'user', to: 'channel', file: 'user/user.service.ts' }],
+        SLICE_EDGES,
+      ),
+    ).toEqual(['user/user.service.ts: user -> channel']);
+  });
+});
 
-        for (const file of files) {
-          // NestJS modules wiring (.module.ts) are allowed to import peer modules
-          if (file.endsWith('.module.ts')) continue;
-
-          const content = fs.readFileSync(file, 'utf8');
-          for (const peer of peerSlices) {
-            const crossSliceImport = new RegExp(
-              `from\\s+['"](\\.\\./)+${peer}(/.*)?['"]`,
-            );
-            expect(content).not.toMatch(crossSliceImport);
-          }
-        }
-      }
-    });
+describe('Rule 1b: the allowlist is a graph, not a wish', () => {
+  it('names only real slices and contains no cycle', () => {
+    for (const [from, targets] of Object.entries(SLICE_EDGES)) {
+      expect(slices).toContain(from);
+      for (const target of targets) expect(slices).toContain(target);
+    }
+    expect(cyclePath(SLICE_EDGES)).toBeNull();
   });
 
-  describe('Rule 3: Pure POCOs & Scalar ID Foreign Entities across Slices', () => {
-    it('Entity files across feature slices must NOT import entity classes from peer slices', () => {
-      for (const slice of featureSlices) {
-        const peerSlices = featureSlices.filter((s) => s !== slice);
-        const sliceDir = path.join(rootSrcDir, slice);
-        const files = getAllProductionTsFiles(sliceDir).filter((f) =>
-          f.endsWith('.entity.ts'),
-        );
+  it('finds a cycle when one exists', () => {
+    expect(cyclePath({ content: ['script'], script: ['content'] })).toEqual([
+      'content',
+      'script',
+      'content',
+    ]);
+  });
+});
 
-        for (const file of files) {
-          const content = fs.readFileSync(file, 'utf8');
-          for (const peer of peerSlices) {
-            const crossEntityImport = new RegExp(
-              `from\\s+['"](\\.\\./)+${peer}/.*entity['"]`,
-            );
-            expect(content).not.toMatch(crossEntityImport);
-          }
-        }
+describe('Rule 2: infrastructure is below every slice', () => {
+  // The ORM mapping is the one place that has to name the classes it maps, so
+  // `database/schemas` is allowed to see entities - and nothing else.
+  const mappingDir = schemasDir;
+
+  it('infrastructure imports no slice', () => {
+    const offenders: string[] = [];
+
+    for (const file of productionFiles(
+      path.join(rootSrcDir, 'infrastructure'),
+    )) {
+      if (file.startsWith(mappingDir + path.sep)) continue;
+      for (const specifier of importsOf(file)) {
+        const target = resolveSpecifier(file, specifier);
+        if (!target) continue;
+        const targetSlice = sliceOf(target);
+        if (targetSlice) offenders.push(`${relative(file)} -> ${targetSlice}`);
       }
-    });
+    }
 
-    it('Entity files across feature slices must be pure POCOs with ZERO ORM decorators', () => {
-      for (const slice of featureSlices) {
-        const sliceDir = path.join(rootSrcDir, slice);
-        const files = getAllProductionTsFiles(sliceDir).filter((f) =>
-          f.endsWith('.entity.ts'),
-        );
-
-        for (const file of files) {
-          const content = fs.readFileSync(file, 'utf8');
-          expect(content).not.toMatch(/@Entity\s*\(/);
-          expect(content).not.toMatch(/@Column\s*\(/);
-          expect(content).not.toMatch(/@PrimaryGeneratedColumn\s*\(/);
-          expect(content).not.toMatch(/@ManyToOne\s*\(/);
-          expect(content).not.toMatch(/@OneToMany\s*\(/);
-          expect(content).not.toMatch(/@ManyToMany\s*\(/);
-          expect(content).not.toMatch(/from\s+['"]typeorm['"]/);
-        }
-      }
-    });
+    expect(offenders).toEqual([]);
   });
 
-  describe('Rule 4: Domain Anti-Dumping Guardrail', () => {
-    it('Contracts and data interfaces in src/domain/ must be cross-slice (consumed across feature slices)', () => {
-      const domainFiles = getAllProductionTsFiles(domainDir);
-      const domainExports = new Set<string>();
+  it('the schema mapping imports only entity files', () => {
+    const offenders: string[] = [];
 
-      for (const file of domainFiles) {
-        const content = fs.readFileSync(file, 'utf8');
-        const exportMatch =
-          /export\s+(?:abstract\s+class|interface|type|const)\s+([A-Za-z0-9_]+)/g;
-        let m: RegExpExecArray | null;
-        while ((m = exportMatch.exec(content)) !== null) {
-          domainExports.add(m[1]);
+    for (const file of productionFiles(mappingDir)) {
+      for (const specifier of importsOf(file)) {
+        const target = resolveSpecifier(file, specifier);
+        if (!target) continue;
+        if (!sliceOf(target)) continue;
+        if (!target.endsWith('.entity')) {
+          offenders.push(`${relative(file)} -> ${relative(target)}`);
         }
       }
+    }
 
-      expect(domainExports.size).toBeGreaterThan(0);
+    expect(offenders).toEqual([]);
+  });
+});
 
-      const contractsFile = path.join(domainDir, 'contracts', 'index.ts');
-      const contractsContent = fs.existsSync(contractsFile)
-        ? fs.readFileSync(contractsFile, 'utf8')
-        : '';
+describe('Rule 3: the app is one package', () => {
+  it('production code never imports past src by relative path', () => {
+    const offenders: string[] = [];
 
-      for (const symbol of domainExports) {
-        const consumingSlices = new Set<string>();
-        for (const slice of featureSlices) {
-          const sliceDir = path.join(rootSrcDir, slice);
-          const files = getAllProductionTsFiles(sliceDir);
-          for (const file of files) {
-            const content = fs.readFileSync(file, 'utf8');
-            if (content.includes(symbol)) {
-              consumingSlices.add(slice);
-            }
-          }
+    for (const file of productionFiles(rootSrcDir)) {
+      for (const specifier of importsOf(file)) {
+        if (escapesSrc(file, specifier)) {
+          offenders.push(`${relative(file)} -> ${specifier}`);
         }
+      }
+    }
 
-        const isPartOfContract = contractsContent.includes(symbol);
-        const isCrossSlice = consumingSlices.size >= 2;
+    expect(offenders).toEqual([]);
+  });
+});
 
-        if (!isCrossSlice && !isPartOfContract) {
-          const errorMsg = `🚨 Anti-Dumping Violation: Symbol "${symbol}" in src/domain/ is only consumed by ${consumingSlices.size} slice(s) ([${Array.from(consumingSlices).join(', ')}]) and is not part of any Domain Contract signature. Move private types into the owning feature slice.`;
-          expect(errorMsg).toBe('');
+describe('Rule 4: entities do not reference peer entities', () => {
+  function entityFiles(): string[] {
+    return productionFiles(rootSrcDir).filter((f) => f.endsWith('.entity.ts'));
+  }
+
+  it('an entity file imports no entity from another slice', () => {
+    const offenders: string[] = [];
+
+    for (const file of entityFiles()) {
+      const source = sliceOf(file);
+      for (const specifier of importsOf(file)) {
+        const target = resolveSpecifier(file, specifier);
+        if (!target) continue;
+        const targetSlice = sliceOf(target);
+        if (!targetSlice || targetSlice === source) continue;
+        if (target.includes(`${path.sep}entities${path.sep}`)) {
+          offenders.push(`${relative(file)} -> ${targetSlice}`);
         }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe('Rule 5: one table, one schema, one class', () => {
+  interface SchemaRecord {
+    table: string | null;
+    className: string;
+    file: string;
+  }
+
+  /** Local names bound to `EntitySchema`, including `... as EntitySchema`. */
+  function entitySchemaLocals(source: ts.SourceFile): Set<string> {
+    const locals = new Set<string>();
+
+    source.forEachChild((node) => {
+      if (
+        !ts.isImportDeclaration(node) ||
+        !node.moduleSpecifier ||
+        !ts.isStringLiteral(node.moduleSpecifier) ||
+        node.moduleSpecifier.text !== '@mikro-orm/core'
+      ) {
+        return;
+      }
+      const bindings = node.importClause?.namedBindings;
+      if (!bindings || !ts.isNamedImports(bindings)) return;
+      for (const element of bindings.elements) {
+        const imported = element.propertyName?.text ?? element.name.text;
+        if (imported === 'EntitySchema') locals.add(element.name.text);
       }
     });
-  });
 
-  describe('Rule 5: Zero Bidirectional Slice Coupling (Acyclic Dependency Graph)', () => {
-    it('Feature slices must NOT have bidirectional circular dependency cycles with each other', () => {
-      const dependencies = new Map<string, Set<string>>();
+    return locals;
+  }
 
-      // 1. Map contract providers
-      const contractProviders = new Map<string, string>(); // ContractName -> SliceName
-      for (const slice of featureSlices) {
-        dependencies.set(slice, new Set<string>());
-        const sliceDir = path.join(rootSrcDir, slice);
-        const files = getAllProductionTsFiles(sliceDir);
+  function schemaRecords(): SchemaRecord[] {
+    const records: SchemaRecord[] = [];
 
-        for (const file of files) {
-          const content = fs.readFileSync(file, 'utf8');
-          // Match provide: XContract, useClass/useExisting: ...
-          const provideMatch = /provide:\s*([A-Za-z0-9_]*Contract)/g;
-          let m: RegExpExecArray | null;
-          while ((m = provideMatch.exec(content)) !== null) {
-            contractProviders.set(m[1], slice);
-          }
-        }
-      }
-
-      // 2. Map direct slice imports and contract consumption
-      for (const slice of featureSlices) {
-        const sliceDir = path.join(rootSrcDir, slice);
-        const files = getAllProductionTsFiles(sliceDir);
-
-        for (const file of files) {
-          const content = fs.readFileSync(file, 'utf8');
-          // Direct imports
-          for (const otherSlice of featureSlices) {
-            if (otherSlice === slice) continue;
-            const sliceImportRegex = new RegExp(
-              `from\\s+['"](\\.\\./)+${otherSlice}(/.*)?['"]`,
-            );
-            if (sliceImportRegex.test(content)) {
-              dependencies.get(slice)!.add(otherSlice);
-            }
-          }
-          // Contract consumption
-          for (const [contract, providerSlice] of contractProviders.entries()) {
-            if (providerSlice === slice) continue;
-            if (content.includes(contract)) {
-              dependencies.get(slice)!.add(providerSlice);
-            }
-          }
-        }
-      }
-
-      // Detect 2-slice bidirectional cycles (A -> B and B -> A)
-      for (const [sliceA, depsA] of dependencies.entries()) {
-        for (const sliceB of depsA) {
-          const depsB = dependencies.get(sliceB);
-          if (depsB && depsB.has(sliceA)) {
-            const errorMsg = `🚨 Architecture Violation: Bidirectional dependency cycle detected between slices [${sliceA}] and [${sliceB}]. This indicates an artificial functional split of a single domain. Consolidate into a single domain slice or enforce strict unidirectional contracts.`;
-            expect(errorMsg).toBe('');
-          }
-        }
-      }
-    });
-  });
-
-  describe('Rule 6: Single Entity Table Ownership (No Duplicate Entities Across Slices)', () => {
-    it('Every database entity must be owned exclusively by a single domain slice', () => {
-      const tableToSlices = new Map<string, Set<string>>();
-
-      for (const slice of featureSlices) {
-        const sliceDir = path.join(rootSrcDir, slice);
-        const files = getAllProductionTsFiles(sliceDir).filter((f) =>
-          f.endsWith('.entity.ts'),
-        );
-
-        for (const file of files) {
-          const content = fs.readFileSync(file, 'utf8');
-          // Match @Entity() or class name
-          const hasEntity = /@Entity\((?:['"]([^'"]+)['"])?\)/.test(content);
-          if (hasEntity) {
-            const classMatch = /export\s+(?:abstract\s+)?class\s+(\w+)/.exec(
-              content,
-            );
-            if (classMatch) {
-              const explicitTableMatch = /@Entity\(['"]([^'"]+)['"]\)/.exec(
-                content,
-              );
-              const tableName = (
-                explicitTableMatch ? explicitTableMatch[1] : classMatch[1]
-              ).toLowerCase();
-              if (!tableToSlices.has(tableName)) {
-                tableToSlices.set(tableName, new Set<string>());
-              }
-              tableToSlices.get(tableName)!.add(slice);
-            }
-          }
-        }
-      }
-
-      for (const [table, slices] of tableToSlices.entries()) {
-        if (slices.size > 1) {
-          const errorMsg = `🚨 Architecture Violation: Duplicate entity mapping detected for table "${table}" in slices [${Array.from(slices).join(', ')}]. Every entity must be owned exclusively by a single domain slice.`;
-          expect(errorMsg).toBe('');
-        }
-      }
-    });
-  });
-
-  describe('Rule 7: Route Domain Ownership (No Cross-Domain Controller Routes)', () => {
-    it('Controllers must only declare routes for their owning domain slice', () => {
-      for (const slice of featureSlices) {
-        const sliceDir = path.join(rootSrcDir, slice);
-        const files = getAllProductionTsFiles(sliceDir).filter((f) =>
-          f.endsWith('.controller.ts'),
-        );
-
-        for (const file of files) {
-          const content = fs.readFileSync(file, 'utf8');
-          const controllerMatch = /@Controller\(['"]([^'"]+)['"]\)/g;
-          let match: RegExpExecArray | null;
-          while ((match = controllerMatch.exec(content)) !== null) {
-            const route = match[1];
-            // Check if route specifies admin/<otherSlice> or <otherSlice>
-            for (const otherSlice of featureSlices) {
-              if (otherSlice === slice) continue;
-              const belongsToOther =
-                route === otherSlice ||
-                route === `${otherSlice}s` ||
-                route.startsWith(`${otherSlice}/`) ||
-                route.startsWith(`${otherSlice}s/`) ||
-                route.startsWith(`admin/${otherSlice}`) ||
-                route.startsWith(`admin/${otherSlice}s`);
-
-              if (belongsToOther) {
-                const errorMsg = `🚨 Architecture Violation: Controller in slice "${slice}" declares route "/${route}" which belongs to domain "${otherSlice}". Controllers must only declare routes for their owning domain.`;
-                expect(errorMsg).toBe('');
-              }
-            }
-          }
-        }
-      }
-    });
-  });
-
-  describe('Rule 8: Entity Encapsulation Guardrails', () => {
-    let ls: ts.LanguageService;
-    let program: ts.Program;
-    let entityFiles: string[];
-
-    beforeAll(() => {
-      const configPath = ts.findConfigFile(
-        path.resolve(__dirname, '..'),
-        (f) => ts.sys.fileExists(f),
-        'tsconfig.json',
-      )!;
-      const configFile = ts.readConfigFile(configPath, (f) =>
-        ts.sys.readFile(f),
+    for (const file of productionFiles(schemasDir)) {
+      const source = ts.createSourceFile(
+        file,
+        fs.readFileSync(file, 'utf-8'),
+        ts.ScriptTarget.Latest,
+        true,
       );
-      const parsed = ts.parseJsonConfigFileContent(
-        configFile.config,
-        ts.sys,
-        path.dirname(configPath),
-      );
+      const locals = entitySchemaLocals(source);
 
-      const host: ts.LanguageServiceHost = {
-        getScriptFileNames: () => parsed.fileNames,
-        getScriptVersion: () => '1',
-        getScriptSnapshot: (f) =>
-          ts.sys.fileExists(f)
-            ? ts.ScriptSnapshot.fromString(ts.sys.readFile(f)!)
-            : undefined,
-        getCurrentDirectory: () => path.dirname(configPath),
-        getCompilationSettings: () => parsed.options,
-        getDefaultLibFileName: (opts) => ts.getDefaultLibFilePath(opts),
-        fileExists: (f) => ts.sys.fileExists(f),
-        readFile: (f) => ts.sys.readFile(f),
-        readDirectory: (dir, extensions, excludes, includes, depth) =>
-          ts.sys.readDirectory(dir, extensions, excludes, includes, depth),
-        directoryExists: (dir) => ts.sys.directoryExists?.(dir) ?? false,
-        getDirectories: (dir) => ts.sys.getDirectories(dir),
+      const visit = (node: ts.Node): void => {
+        if (
+          ts.isNewExpression(node) &&
+          ts.isIdentifier(node.expression) &&
+          locals.has(node.expression.text) &&
+          node.arguments?.[0] &&
+          ts.isObjectLiteralExpression(node.arguments[0])
+        ) {
+          let className = '';
+          let table: string | null = null;
+
+          for (const property of node.arguments[0].properties) {
+            if (
+              !ts.isPropertyAssignment(property) ||
+              !ts.isIdentifier(property.name)
+            ) {
+              continue;
+            }
+            if (
+              property.name.text === 'class' &&
+              ts.isIdentifier(property.initializer)
+            ) {
+              className = property.initializer.text;
+            }
+            if (
+              property.name.text === 'tableName' &&
+              ts.isStringLiteral(property.initializer)
+            ) {
+              table = property.initializer.text;
+            }
+          }
+
+          records.push({ table, className, file: relative(file) });
+        }
+        ts.forEachChild(node, visit);
       };
 
-      ls = ts.createLanguageService(host, ts.createDocumentRegistry());
-      program = ls.getProgram()!;
+      visit(source);
+    }
 
-      function findEntities(dir: string): string[] {
-        const res: string[] = [];
-        if (!fs.existsSync(dir)) return res;
-        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-          const full = path.join(dir, entry.name);
-          if (entry.isDirectory()) res.push(...findEntities(full));
-          else if (entry.name.endsWith('.entity.ts')) res.push(full);
+    return records;
+  }
+
+  function classDeclarations(): Map<string, string[]> {
+    const declared = new Map<string, string[]>();
+
+    for (const file of productionFiles(rootSrcDir)) {
+      const source = ts.createSourceFile(
+        file,
+        fs.readFileSync(file, 'utf-8'),
+        ts.ScriptTarget.Latest,
+        true,
+      );
+
+      const visit = (node: ts.Node): void => {
+        if (ts.isClassDeclaration(node) && node.name) {
+          const paths = declared.get(node.name.text) ?? [];
+          paths.push(relative(file));
+          declared.set(node.name.text, paths);
         }
-        return res;
-      }
-      entityFiles = findEntities(rootSrcDir);
-    }, 30000);
+        ts.forEachChild(node, visit);
+      };
 
-    it('Public setters on domain entities must be exercised in production code or declared private set', () => {
-      const unusedSetters: string[] = [];
+      visit(source);
+    }
 
-      for (const entityFile of entityFiles) {
-        const sf = program.getSourceFile(entityFile);
-        if (!sf) continue;
+    return declared;
+  }
 
-        sf.forEachChild((node) => {
-          if (ts.isClassDeclaration(node) && node.name) {
-            const className = node.name.text;
-            node.members.forEach((member) => {
-              if (ts.isSetAccessor(member)) {
-                const isPrivate = member.modifiers?.some(
-                  (m) =>
-                    m.kind === ts.SyntaxKind.PrivateKeyword ||
-                    m.kind === ts.SyntaxKind.ProtectedKeyword,
-                );
-                if (!isPrivate) {
-                  const name = member.name.getText(sf);
-                  const refs =
-                    ls.findReferences(entityFile, member.name.getStart(sf)) ||
-                    [];
-                  const allEntries = refs.flatMap((r) => r.references);
-                  const externalWrites = allEntries.filter(
-                    (e) =>
-                      !e.isDefinition &&
-                      !e.fileName.endsWith('.spec.ts') &&
-                      e.isWriteAccess,
-                  );
-                  if (externalWrites.length === 0) {
-                    unusedSetters.push(
-                      `${className}.${name} (${path.relative(rootSrcDir, entityFile)})`,
-                    );
-                  }
-                }
-              }
-            });
-          }
-        });
+  // An entity belongs to a slice, and `infrastructure` is not one.
+  const entitiesPattern = new RegExp(
+    `^(?:${slices.join('|')})/entities/[a-z0-9-]+\\.entity\\.ts$`,
+  );
+
+  function ownershipProblems(
+    records: SchemaRecord[],
+    declared: Map<string, string[]>,
+  ): string[] {
+    const problems: string[] = [];
+    const byTable = new Map<string, string[]>();
+
+    for (const record of records) {
+      if (record.table !== null) {
+        const files = byTable.get(record.table) ?? [];
+        files.push(record.file);
+        byTable.set(record.table, files);
       }
 
-      expect(unusedSetters).toEqual([]);
-    });
-
-    it('Entity Date and Array getters must prevent mutable reference leaks', () => {
-      const mutableLeaks: string[] = [];
-
-      for (const entityFile of entityFiles) {
-        const sf = program.getSourceFile(entityFile);
-        if (!sf) continue;
-
-        sf.forEachChild((node) => {
-          if (ts.isClassDeclaration(node) && node.name) {
-            const className = node.name.text;
-            node.members.forEach((member) => {
-              if (ts.isGetAccessor(member) && member.type) {
-                const returnTypeStr = member.type.getText(sf);
-                const name = member.name.getText(sf);
-                const bodyStr = member.body?.getText(sf) || '';
-
-                if (returnTypeStr.includes('Date')) {
-                  if (!bodyStr.includes('new Date(')) {
-                    mutableLeaks.push(
-                      `Date leak: ${className}.${name} returns Date directly without defensive clone (new Date(...))`,
-                    );
-                  }
-                }
-
-                if (
-                  returnTypeStr.includes('[]') ||
-                  returnTypeStr.startsWith('Array<')
-                ) {
-                  if (
-                    !returnTypeStr.includes('readonly') &&
-                    !bodyStr.includes('Object.freeze') &&
-                    !returnTypeStr.includes('Collection')
-                  ) {
-                    mutableLeaks.push(
-                      `Array leak: ${className}.${name} returns mutable array without readonly/Object.freeze or Collection`,
-                    );
-                  }
-                }
-              }
-            });
-          }
-        });
+      const files = declared.get(record.className);
+      if (!files || files.length === 0) {
+        problems.push(
+          `${record.className} -> not declared in any production file`,
+        );
+        continue;
       }
+      if (files.length > 1) {
+        problems.push(`${record.className} -> declared in ${files.join(', ')}`);
+        continue;
+      }
+      if (!entitiesPattern.test(files[0])) {
+        problems.push(`${record.className} -> ${files[0]}`);
+      }
+    }
 
-      expect(mutableLeaks).toEqual([]);
-    });
+    for (const [table, files] of byTable.entries()) {
+      if (files.length > 1) {
+        problems.push(`table "${table}" -> ${files.join(', ')}`);
+      }
+    }
+
+    return [...new Set(problems)];
+  }
+
+  function declaredTableCount(): number {
+    return (
+      productionFiles(schemasDir)
+        .map((file) => fs.readFileSync(file, 'utf-8'))
+        .join('\n')
+        .match(/tableName\s*:/g)?.length ?? 0
+    );
+  }
+
+  it('every schema class owns one table and lives in its slice entities directory', () => {
+    const records = schemaRecords();
+
+    // Every `tableName:` in the mapping must have been parsed: a schema the
+    // parser does not recognise would otherwise be neither owned nor checked.
+    expect(records.filter((record) => record.table !== null).length).toBe(
+      declaredTableCount(),
+    );
+    expect(ownershipProblems(records, classDeclarations())).toEqual([]);
   });
 
-  describe('Rule 13: MikroORM module registration matches injected repositories', () => {
-    it('registers exactly the schemas that repositories are injected for', () => {
-      const files = getAllProductionTsFiles(rootSrcDir);
-      const registered = new Map<string, string>();
-      const injected = new Map<string, string>();
-
-      for (const file of files) {
-        const relative = path.relative(rootSrcDir, file);
-        const source = fs.readFileSync(file, 'utf-8');
-
-        for (const match of source.matchAll(
-          /MikroOrmModule\.forFeature\(\s*\[([^\]]*)\]/g,
-        )) {
-          for (const name of match[1]
-            .split(',')
-            .map((entry) => entry.trim())
-            .filter(Boolean)) {
-            if (!registered.has(name)) registered.set(name, relative);
-          }
-        }
-
-        for (const match of source.matchAll(
-          /@InjectRepository\(\s*([A-Za-z0-9_]+)\s*\)/g,
-        )) {
-          if (!injected.has(match[1])) injected.set(match[1], relative);
-        }
-      }
-
-      const registeredWithoutRepository = [...registered]
-        .filter(([name]) => !injected.has(name))
-        .map(([name, file]) => `${name} (${file})`);
-      const repositoryWithoutRegistration = [...injected]
-        .filter(([name]) => !registered.has(name))
-        .map(([name, file]) => `${name} (${file})`);
-
-      expect({
-        registeredWithoutRepository,
-        repositoryWithoutRegistration,
-      }).toEqual({
-        registeredWithoutRepository: [],
-        repositoryWithoutRegistration: [],
-      });
-    });
-  });
-
-  describe('Rule 14: no casts that bypass the type system', () => {
-    it('production code must not use `as unknown as` double casts', () => {
-      const offenders: string[] = [];
-
-      for (const file of getAllProductionTsFiles(rootSrcDir)) {
-        const source = fs.readFileSync(file, 'utf-8');
-        source.split('\n').forEach((line, index) => {
-          if (line.includes('as unknown as')) {
-            offenders.push(`${path.relative(rootSrcDir, file)}:${index + 1}`);
-          }
-        });
-      }
-
-      expect(offenders).toEqual([]);
-    });
-  });
-
-  describe('Rule 9: entity class placement', () => {
-    const schemasDir = path.join(
-      rootSrcDir,
-      'infrastructure',
-      'database',
-      'schemas',
+  it('reports a duplicate table and a misplaced class', () => {
+    const problems = ownershipProblems(
+      [
+        { table: 'job', className: 'Ghost', file: 'a.schema.ts' },
+        { table: 'job', className: 'Ghost', file: 'b.schema.ts' },
+      ],
+      new Map([['Ghost', ['sharing/models/ghost.ts']]]),
     );
 
-    // Rules 3, 6 and 8 only inspect files named *.entity.ts inside an entities
-    // directory, so a class placed anywhere else is invisible to them. This rule
-    // closes that hole from the other side: start from the classes the schemas
-    // actually persist and require each one to sit where those rules can see it.
-    function schemaEntityClasses(): string[] {
-      const names = new Set<string>();
-
-      for (const file of getAllProductionTsFiles(schemasDir)) {
-        const source = ts.createSourceFile(
-          file,
-          fs.readFileSync(file, 'utf-8'),
-          ts.ScriptTarget.Latest,
-          true,
-        );
-
-        const visit = (node: ts.Node): void => {
-          if (
-            ts.isPropertyAssignment(node) &&
-            ts.isIdentifier(node.name) &&
-            node.name.text === 'class' &&
-            ts.isIdentifier(node.initializer)
-          ) {
-            names.add(node.initializer.text);
-          }
-          ts.forEachChild(node, visit);
-        };
-
-        visit(source);
-      }
-
-      return [...names].sort();
-    }
-
-    function classDeclarations(): Map<string, string[]> {
-      const declared = new Map<string, string[]>();
-
-      for (const file of getAllProductionTsFiles(rootSrcDir)) {
-        const relative = path
-          .relative(rootSrcDir, file)
-          .split(path.sep)
-          .join('/');
-        const source = ts.createSourceFile(
-          file,
-          fs.readFileSync(file, 'utf-8'),
-          ts.ScriptTarget.Latest,
-          true,
-        );
-
-        const visit = (node: ts.Node): void => {
-          if (ts.isClassDeclaration(node) && node.name) {
-            declared.set(node.name.text, [
-              ...(declared.get(node.name.text) ?? []),
-              relative,
-            ]);
-          }
-          ts.forEachChild(node, visit);
-        };
-
-        visit(source);
-      }
-
-      return declared;
-    }
-
-    function misplacedEntityClasses(
-      referenced: string[],
-      declared: Map<string, string[]>,
-    ): string[] {
-      const offenders: string[] = [];
-
-      for (const name of referenced) {
-        const files = declared.get(name);
-        if (!files || files.length === 0) {
-          offenders.push(`${name} -> not declared in any production file`);
-          continue;
-        }
-
-        const inEntitiesDir = files.some((file) =>
-          /^[a-z-]+\/entities\/[a-z0-9-]+\.entity\.ts$/.test(file),
-        );
-        if (!inEntitiesDir) {
-          offenders.push(`${name} -> ${files.join(', ')}`);
-        }
-      }
-
-      return offenders;
-    }
-
-    it('declares every schema entity class inside its slice entities directory', () => {
-      const referenced = schemaEntityClasses();
-
-      // If the scan matched nothing the rule would pass for the wrong reason.
-      expect(referenced.length).toBeGreaterThanOrEqual(9);
-      expect(misplacedEntityClasses(referenced, classDeclarations())).toEqual(
-        [],
-      );
-    });
-
-    it('reports a class declared outside the entities directory', () => {
-      const offenders = misplacedEntityClasses(
-        ['Ghost'],
-        new Map([['Ghost', ['channel/models/ghost.ts']]]),
-      );
-
-      expect(offenders).toEqual(['Ghost -> channel/models/ghost.ts']);
-    });
+    expect(problems).toEqual([
+      'Ghost -> sharing/models/ghost.ts',
+      'table "job" -> a.schema.ts, b.schema.ts',
+    ]);
   });
 
-  describe('Rule 10: persistence goes through the ORM', () => {
-    it('production code must not execute raw SQL', () => {
-      const offenders: string[] = [];
+  it('rejects an entity declared outside a slice', () => {
+    const problems = ownershipProblems(
+      [{ table: 'ghost', className: 'Ghost', file: 'ghost.schema.ts' }],
+      new Map([['Ghost', ['infrastructure/entities/ghost.entity.ts']]]),
+    );
 
-      for (const file of getAllProductionTsFiles(rootSrcDir)) {
-        const source = fs.readFileSync(file, 'utf-8');
-        source.split('\n').forEach((line, index) => {
-          // Raw SQL cannot be checked by a repository mock, and the column names
-          // it hardcodes are the first thing a rename breaks - silently, if the
-          // failure is swallowed. The ORM already knows the schema; use it.
-          if (/getConnection/.test(line) || /\.execute\(/.test(line)) {
-            offenders.push(`${path.relative(rootSrcDir, file)}:${index + 1}`);
+    expect(problems).toEqual([
+      'Ghost -> infrastructure/entities/ghost.entity.ts',
+    ]);
+  });
+});
+
+describe('Rule 6: entity files are plain objects', () => {
+  const entityFiles = (): string[] =>
+    productionFiles(rootSrcDir).filter((f) => f.endsWith('.entity.ts'));
+
+  it('finds the entities to check', () => {
+    expect(entityFiles().length).toBeGreaterThanOrEqual(9);
+  });
+
+  it('carries no decorator and imports no mapper', () => {
+    const offenders: string[] = [];
+
+    for (const file of entityFiles()) {
+      const content = fs.readFileSync(file, 'utf-8');
+      content.split('\n').forEach((line, index) => {
+        const at = `${relative(file)}:${index + 1}`;
+        // Any decorator, not a list of known ones: MikroORM maps with `@Property`,
+        // `@ManyToOne` and friends, and a new one must not slip through.
+        if (/^\s*@[A-Za-z_$]/.test(line)) offenders.push(`${at} decorator`);
+        if (/from\s+['"]typeorm['"]/.test(line))
+          offenders.push(`${at} mapper import`);
+      });
+    }
+
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe('Rule 7: entities do not leak their internals', () => {
+  let program: ts.Program;
+  let entityFiles: string[];
+
+  beforeAll(() => {
+    const configPath = ts.findConfigFile(
+      repoRoot,
+      (f) => ts.sys.fileExists(f),
+      'tsconfig.json',
+    )!;
+    const configFile = ts.readConfigFile(configPath, (f) => ts.sys.readFile(f));
+    const parsed = ts.parseJsonConfigFileContent(
+      configFile.config,
+      ts.sys,
+      path.dirname(configPath),
+    );
+
+    const host = {
+      getScriptFileNames: () => parsed.fileNames,
+      getScriptVersion: () => '1',
+      getScriptSnapshot: (f: string) =>
+        ts.sys.fileExists(f)
+          ? ts.ScriptSnapshot.fromString(ts.sys.readFile(f)!)
+          : undefined,
+      getCurrentDirectory: () => path.dirname(configPath),
+      getCompilationSettings: () => parsed.options,
+      getDefaultLibFileName: (opts: ts.CompilerOptions) =>
+        ts.getDefaultLibFilePath(opts),
+      fileExists: (f: string) => ts.sys.fileExists(f),
+      readFile: (f: string) => ts.sys.readFile(f),
+      readDirectory: (
+        dir: string,
+        extensions?: readonly string[],
+        excludes?: readonly string[],
+        includes?: readonly string[],
+        depth?: number,
+      ) => ts.sys.readDirectory(dir, extensions, excludes, includes, depth),
+      directoryExists: (dir: string) => ts.sys.directoryExists?.(dir) ?? false,
+      getDirectories: (dir: string) => ts.sys.getDirectories(dir),
+    };
+
+    const languageService = ts.createLanguageService(
+      host,
+      ts.createDocumentRegistry(),
+    );
+    program = languageService.getProgram()!;
+    entityFiles = productionFiles(rootSrcDir).filter((f) =>
+      f.endsWith('.entity.ts'),
+    );
+  }, 30000);
+
+  it('loads every entity into the program', () => {
+    const unresolved = entityFiles.filter(
+      (file) => !program.getSourceFile(file),
+    );
+    expect(unresolved.map(relative)).toEqual([]);
+  });
+
+  it('Date and array getters hand back no mutable references', () => {
+    const leaks: string[] = [];
+    const checker = program.getTypeChecker();
+
+    for (const entityFile of entityFiles) {
+      const source = program.getSourceFile(entityFile);
+      if (!source) continue;
+
+      source.forEachChild((node) => {
+        if (!ts.isClassDeclaration(node) || !node.name) return;
+        const className = node.name.text;
+
+        node.members.forEach((member) => {
+          if (!ts.isGetAccessor(member)) return;
+
+          const name = member.name.getText(source);
+          // An unannotated getter is the common style; skipping it would let a
+          // Date leak through just by leaving the type off.
+          const returnType =
+            member.type?.getText(source) ??
+            checker.typeToString(
+              checker.getTypeOfSymbolAtLocation(
+                checker.getSymbolAtLocation(member.name)!,
+                member,
+              ),
+            );
+          const body = member.body?.getText(source) ?? '';
+
+          if (returnType.includes('Date') && !body.includes('new Date(')) {
+            leaks.push(`${className}.${name} returns a Date it does not clone`);
+          }
+
+          if (
+            (returnType.includes('[]') || returnType.startsWith('Array<')) &&
+            !returnType.includes('readonly') &&
+            !body.includes('Object.freeze') &&
+            !returnType.includes('Collection')
+          ) {
+            leaks.push(`${className}.${name} returns a mutable array`);
           }
         });
+      });
+    }
+
+    expect(leaks).toEqual([]);
+  });
+});
+
+describe('Rule 8: registered schemas match injected repositories', () => {
+  it('registers exactly the schemas that repositories are injected for', () => {
+    const files = productionFiles(rootSrcDir);
+    const registered = new Map<string, string>();
+    const injected = new Map<string, string>();
+    const scopeOf = (file: string): string =>
+      relative(file).split('/')[0] ?? '';
+
+    for (const file of files) {
+      const relativePath = relative(file);
+      const scope = scopeOf(file);
+      const source = fs.readFileSync(file, 'utf-8');
+
+      for (const match of source.matchAll(
+        /MikroOrmModule\.forFeature\(\s*\[([^\]]*)\]/g,
+      )) {
+        for (const name of match[1]
+          .split(',')
+          .map((entry) => entry.trim())
+          .filter(Boolean)) {
+          registered.set(`${scope}:${name}`, relativePath);
+        }
       }
 
-      expect(offenders).toEqual([]);
+      for (const match of source.matchAll(
+        /@InjectRepository\(\s*([A-Za-z0-9_]+)\s*\)/g,
+      )) {
+        injected.set(`${scope}:${match[1]}`, relativePath);
+      }
+    }
+
+    expect(registered.size).toBeGreaterThanOrEqual(8);
+
+    const registeredWithoutRepository = [...registered]
+      .filter(([name]) => !injected.has(name))
+      .map(([name, file]) => `${name} (${file})`);
+    const repositoryWithoutRegistration = [...injected]
+      .filter(([name]) => !registered.has(name))
+      .map(([name, file]) => `${name} (${file})`);
+
+    expect({
+      registeredWithoutRepository,
+      repositoryWithoutRegistration,
+    }).toEqual({
+      registeredWithoutRepository: [],
+      repositoryWithoutRegistration: [],
     });
   });
 });
 
+describe('Rule 9: persistence goes through the ORM', () => {
+  it('production code does not open connections or write raw SQL', () => {
+    const offenders: string[] = [];
+
+    for (const file of productionFiles(rootSrcDir)) {
+      const source = fs.readFileSync(file, 'utf-8');
+      source.split('\n').forEach((line, index) => {
+        if (/getConnection/.test(line) || /\.raw\(/.test(line)) {
+          offenders.push(`${relative(file)}:${index + 1}`);
+        }
+      });
+    }
+
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe('Rule 10: no casts that bypass the type system', () => {
+  it('production code does not use `as unknown as`', () => {
+    const offenders: string[] = [];
+
+    for (const file of productionFiles(rootSrcDir)) {
+      const source = fs.readFileSync(file, 'utf-8');
+      source.split('\n').forEach((line, index) => {
+        if (line.includes('as unknown as')) {
+          offenders.push(`${relative(file)}:${index + 1}`);
+        }
+      });
+    }
+
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe('One spec file per implementation file', () => {
-  const repoRoot = path.join(__dirname, '..');
-  // The library's management code was moved out of src, so this rule has to
-  // follow it out: a file that leaves src does not stop needing a spec.
+  // A file that leaves src does not stop needing a spec.
   const sourceRoots = [
-    __dirname,
+    rootSrcDir,
     path.join(repoRoot, 'reddit-fetcher', 'src'),
+    path.join(repoRoot, 'voice-service', 'src'),
     path.join(repoRoot, 'media-tools'),
   ];
 
@@ -698,7 +746,6 @@ describe('One spec file per implementation file', () => {
    */
   const AREA_SPECS = [
     'architecture.spec.ts', // this file: the repository's shape
-    'domain/domain-architecture.spec.ts', // slice boundaries
     'infrastructure/database/entity-mapping.spec.ts', // the ORM mapping across slices
     'infrastructure/database/schema-snapshot.spec.ts', // migrations against the schemas
     'infrastructure/database/schemas/schemas.spec.ts', // every schema in the directory
@@ -708,9 +755,9 @@ describe('One spec file per implementation file', () => {
     const found: string[] = [];
     if (!fs.existsSync(dir)) return found;
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) found.push(...specFiles(full));
-      else if (entry.name.endsWith('.spec.ts')) found.push(full);
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) found.push(...specFiles(fullPath));
+      else if (entry.name.endsWith('.spec.ts')) found.push(fullPath);
     }
     return found;
   }
@@ -720,14 +767,17 @@ describe('One spec file per implementation file', () => {
 
     for (const root of sourceRoots) {
       for (const spec of specFiles(root)) {
-        const relative = path.relative(root, spec).split(path.sep).join('/');
-        if (AREA_SPECS.includes(relative)) continue;
+        const relativePath = path
+          .relative(root, spec)
+          .split(path.sep)
+          .join('/');
+        if (AREA_SPECS.includes(relativePath)) continue;
 
         const implementation = spec.replace(/\.spec\.ts$/, '.ts');
         if (!fs.existsSync(implementation)) {
           // A suite named after an aspect ("outline", "watchdog-lock") outlives the
           // file it describes and quietly becomes a second home for one file's tests.
-          orphans.push(relative);
+          orphans.push(relativePath);
         }
       }
     }

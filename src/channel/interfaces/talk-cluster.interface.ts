@@ -1,4 +1,4 @@
-import { PostData } from '../../domain';
+import { PostData } from '../../content/types/post.types';
 
 export interface TalkCluster {
   id: string;
