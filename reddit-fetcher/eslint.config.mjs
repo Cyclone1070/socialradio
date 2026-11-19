@@ -25,6 +25,13 @@ export default tseslint.config(
     },
   },
   {
+    files: ['src/dom.ts'],
+    rules: {
+      // Page scripts are serialized into the browser; imports would break them.
+      'no-restricted-imports': ['error', { patterns: ['*'] }],
+    },
+  },
+  {
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-floating-promises': 'warn',

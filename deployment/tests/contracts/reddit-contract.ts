@@ -50,11 +50,8 @@ const get = async (path: string): Promise<unknown> => {
   } catch (err) {
     return skip(`fetcher or reddit unreachable (${(err as Error).message})`);
   }
-  if (res.status === 429 || res.status === 503 || res.status >= 500) {
-    return skip(`fetcher says provider unavailable (${res.status})`);
-  }
   if (!res.ok) {
-    return skip(`fetcher answered ${res.status} for ${path}`);
+    throw new Error(`fetcher answered ${res.status} for ${path}`);
   }
   return res.json();
 };
@@ -63,6 +60,16 @@ const get = async (path: string): Promise<unknown> => {
   if (!base) {
     skip('REDDIT_FETCHER_URL is not set — point it at a running fetcher');
   }
+
+  const present = parseFetcherPayload(
+    existsResponseSchema,
+    await get(`/exists/${SUBREDDIT}`),
+    '/exists',
+  );
+  check(
+    present.valid,
+    `r/${SUBREDDIT} reports valid=${present.valid}`,
+  );
 
   const absent = parseFetcherPayload(
     existsResponseSchema,
@@ -100,10 +107,13 @@ const get = async (path: string): Promise<unknown> => {
     0,
   );
   const ids = new Set(comments.map((comment) => comment.id));
-  // Reaching this line means the backend's own schema accepted the payload: a
-  // mismatch would have thrown above and failed the run.
-  process.stdout.write(
-    `  .. measured, not asserted: comments matched the schema, ${comments.length} comments, ${ids.size} distinct ids\n`,
+  check(
+    comments.length > 0,
+    `r/${SUBREDDIT} post ${first.id} returned ${comments.length} comments`,
+  );
+  check(
+    ids.size === comments.length,
+    `comment ids are distinct (${ids.size}/${comments.length})`,
   );
   process.stdout.write(
     `  .. measured, not asserted: this thread is ${words} words (the scraper keeps a post at 2500+)\n`,

@@ -1,228 +1,40 @@
-import { chromium } from 'playwright-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { FingerprintGenerator } from 'fingerprint-generator';
-import type { Browser, BrowserContext, Page } from 'playwright-core';
-import { z } from 'zod';
+import type { Page } from 'playwright-core';
+import { collectComments } from './comment-collection';
+import {
+  clickMoreRepliesBatch,
+  findContinuationLinks,
+  readCommentTree,
+  readPostFeed,
+  scrollForMorePosts,
+  isForbiddenPage,
+  waitForCommentGrowth,
+  waitForPostGrowth,
+  waitForStableTree,
+} from './dom';
+import type { PostFeedSnapshot } from './dom';
+import { parseTopPosts } from './posts';
+import {
+  planContinuationOpen,
+  planSelectorWait,
+  planSubCollection,
+} from './continuation-budget';
+import { BrowserSession } from './browser-session';
+import { withTimeout } from './timeout';
 import type { RedditCommentData, RedditPostData } from './types';
 import pino from 'pino';
 
-// ── Zod schemas for Reddit JSON API ──────────────────────────────────
-const ListingChildDataSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  selftext: z.string(),
-  author: z.string(),
-  score: z.number(),
-  num_comments: z.number(),
-  created_utc: z.number(),
-});
-
-const ListingChildSchema = z.object({
-  kind: z.string(),
-  data: ListingChildDataSchema,
-});
-
-const ListingResponseSchema = z.object({
-  data: z.object({
-    after: z.string().nullable(),
-    children: z.array(ListingChildSchema),
-  }),
-});
-
-const InternalCommentNodeSchema: z.ZodType<unknown> = z.lazy(() =>
-  z.object({
-    kind: z.string(),
-    data: z.object({
-      id: z.string().optional(),
-      body: z.string().optional(),
-      author: z.string().optional(),
-      score: z.number().optional(),
-      parent_id: z.string().optional(),
-      created_utc: z.number().optional(),
-      replies: z
-        .union([
-          z.object({
-            data: z.object({
-              children: z.array(InternalCommentNodeSchema).optional(),
-            }),
-          }),
-          z.string(),
-        ])
-        .optional(),
-    }),
-  }),
-);
-
-type InternalCommentNode = {
-  kind: string;
-  data: {
-    id?: string;
-    body?: string;
-    author?: string;
-    score?: number;
-    parent_id?: string;
-    created_utc?: number;
-    replies?: { data: { children?: InternalCommentNode[] } } | string;
-  };
-};
-
-const CommentResponseSchema = z.object({
-  data: z.object({
-    children: z.array(
-      InternalCommentNodeSchema as z.ZodType<InternalCommentNode>,
-    ),
-  }),
-});
-
-// Cache eviction TTL: idle per-subreddit contexts closed after 10 minutes
-const CONTEXT_IDLE_MS = 10 * 60 * 1000;
-
 export class RedditScraper {
-  private browser: Browser | null = null;
-  private readonly fingerprintGenerator = new FingerprintGenerator();
-  private readonly contexts = new Map<string, BrowserContext>();
-  private readonly lastUsedAt = new Map<string, number>();
+  private readonly session: BrowserSession;
+  private readonly logger: pino.Logger;
 
   constructor(
-    private readonly wsEndpoint: string,
-    private readonly logger: pino.Logger = pino({
+    wsEndpoint: string,
+    logger: pino.Logger = pino({
       level: process.env.LOG_LEVEL ?? 'info',
     }),
   ) {
-    // Register the canon stealth plugin
-    chromium.use(StealthPlugin());
-  }
-
-  private async connect(): Promise<Browser> {
-    if (!this.browser) {
-      this.browser = await chromium.connect(this.wsEndpoint);
-      this.logger.info({}, 'browser connected');
-    }
-    return this.browser;
-  }
-
-  private getFingerprintContextOptions() {
-    const { fingerprint } = this.fingerprintGenerator.getFingerprint({
-      browsers: ['chrome'],
-      devices: ['desktop'],
-      operatingSystems: ['macos'],
-    });
-
-    return {
-      userAgent: fingerprint.navigator.userAgent,
-      viewport: {
-        width: fingerprint.screen.width,
-        height: fingerprint.screen.height,
-      },
-      locale: fingerprint.navigator.language,
-    };
-  }
-
-  /** Context affinity: same subreddit → same context; different sub → fresh. */
-  private async getContext(subredditName: string): Promise<BrowserContext> {
-    const existing = this.contexts.get(subredditName);
-    if (existing) {
-      this.lastUsedAt.set(subredditName, Date.now());
-      return existing;
-    }
-
-    const now = Date.now();
-    for (const [sub, context] of this.contexts) {
-      const lastUsed = this.lastUsedAt.get(sub) ?? 0;
-      if (now - lastUsed > CONTEXT_IDLE_MS) {
-        this.logger.debug({ subreddit: sub }, 'idle context evicted');
-        await context.close().catch(() => {});
-        this.contexts.delete(sub);
-        this.lastUsedAt.delete(sub);
-      }
-    }
-
-    const browser = await this.connect();
-    const context = await browser.newContext(
-      this.getFingerprintContextOptions(),
-    );
-    this.contexts.set(subredditName, context);
-    this.lastUsedAt.set(subredditName, now);
-    return context;
-  }
-
-  /**
-   * Runs an operation, retrying ONCE after reconnecting when the browser
-   * session was killed out from under us (browserless job timeouts close the
-   * WebSocket; a persistent connection then holds only dead references).
-   * Non-connection failures propagate unchanged.
-   */
-  private async withRetryOnDeadBrowser<T>(
-    subredditName: string,
-    fn: (page: Page) => Promise<T>,
-  ): Promise<T> {
-    try {
-      return await this.withPage(subredditName, fn);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!/closed|connection/i.test(message)) throw err;
-      this.logger.warn(
-        { subreddit: subredditName },
-        'browser session died, reconnecting and retrying',
-      );
-      await this.invalidateConnection();
-      return this.withPage(subredditName, fn);
-    }
-  }
-
-  /** Drop the dead browser + all contexts so the next op reconnects fresh. */
-  private async invalidateConnection(): Promise<void> {
-    if (this.browser) {
-      await this.browser.close().catch(() => {});
-    }
-    this.browser = null;
-    await Promise.all(
-      [...this.contexts.values()].map((c) => c.close().catch(() => {})),
-    );
-    this.contexts.clear();
-    this.lastUsedAt.clear();
-    this.logger.info({}, 'browser connection invalidated');
-  }
-
-  private async withPage<T>(
-    subredditName: string,
-    fn: (page: Page) => Promise<T>,
-  ): Promise<T> {
-    const context = await this.getContext(subredditName);
-    const page = await context.newPage();
-    try {
-      return await fn(page);
-    } finally {
-      await page.close().catch(() => {});
-    }
-  }
-
-  /**
-   * Reddit's SPA reloads the document right after domcontentloaded (redirect
-   * chains, param normalization), which destroys an in-flight evaluate
-   * context. Retry the whole evaluate after the navigation settles;
-   * connection-killed errors still bubble up to withRetryOnDeadBrowser,
-   * which reconnects the browser and retries the operation once.
-   */
-  private async evaluateSafely<T>(
-    page: Page,
-    fn: (arg: any) => unknown,
-    arg?: unknown,
-  ): Promise<T> {
-    let lastError: unknown;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        return await page.evaluate(fn as never, arg);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (/closed|connection/i.test(message)) {
-          throw error; // let withRetryOnDeadBrowser reconnect the browser
-        }
-        lastError = error;
-        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
-      }
-    }
-    throw lastError;
+    this.logger = logger;
+    this.session = new BrowserSession(wsEndpoint, logger);
   }
 
   async fetchTopPosts(
@@ -233,182 +45,240 @@ export class RedditScraper {
     after: string | null;
     isInvalid: boolean;
   }> {
-    return this.withRetryOnDeadBrowser(subredditName, async (page) => {
-      const url = `https://www.reddit.com/r/${subredditName}/`;
+    const limit = opts.limit ?? 100;
+    return this.session.withRetryOnDeadBrowser(subredditName, async (page) => {
+      const startedAt = Date.now();
+      const deadline = startedAt + 20_000;
+      const remaining = () => Math.max(1_000, deadline - Date.now());
+      await page.goto(`https://www.reddit.com/r/${subredditName}/top/?t=week`, {
+        waitUntil: 'domcontentloaded',
+        timeout: remaining(),
+      });
+      await page
+        .waitForSelector('shreddit-post', { timeout: remaining() })
+        .catch(() => {});
 
-      const startMs = Date.now();
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      this.logger.debug(
-        { subreddit: subredditName, ms: Date.now() - startMs },
-        'page loaded',
-      );
-
-      const limit = opts.limit ?? 100;
-      const feedUrl = `./.json?limit=${limit}&t=week${opts.after ? `&after=${opts.after}` : ''}`;
-      const result = await this.evaluateSafely<{ ok: boolean; json?: unknown }>(
+      let snapshot = await this.session.evaluateSafely<PostFeedSnapshot>(
         page,
-        async (pageUrl: string): Promise<{ ok: boolean; json?: unknown }> => {
-          for (let attempt = 0; attempt < 3; attempt++) {
-            try {
-              const res = await fetch(pageUrl);
-              if (res.ok) return { ok: true, json: await res.json() };
-              if (res.status === 404) return { ok: false };
-            } catch {
-              // transient network/parse blips — retry
-            }
-            await new Promise((r) => setTimeout(r, 750 * (attempt + 1)));
-          }
-          return { ok: false };
-        },
-        feedUrl,
+        readPostFeed,
       );
-
-      if (!result.ok) {
+      if (!snapshot.valid) {
         return { posts: [], after: null, isInvalid: true };
       }
 
-      const listing = ListingResponseSchema.parse(result.json);
-      const children = listing.data.children || [];
-      const posts: RedditPostData[] = children
-        .filter((child) => {
-          const d = child.data;
-          return d && Number(d.num_comments) >= 40;
-        })
-        .map((child) => {
-          const d = child.data;
-          return {
-            id: d.id || '',
-            title: d.title || '',
-            selftext: d.selftext || '',
-            author: d.author || '',
-            score: Number(d.score) || 0,
-            created_utc: Number(d.created_utc) || 0,
-          };
-        });
+      let count = snapshot.count;
+      let stale = 0;
+      while (count < limit && Date.now() < deadline && stale < 3) {
+        await this.session
+          .evaluateSafely<number>(page, scrollForMorePosts)
+          .catch(() => count);
+        await this.session
+          .evaluateSafely<boolean>(page, waitForPostGrowth, {
+            previousCount: count,
+            timeoutMs: 1_500,
+          })
+          .catch(() => false);
+        const next = await this.session
+          .evaluateSafely<PostFeedSnapshot>(page, readPostFeed)
+          .catch(() => null);
+        if (!next) break;
+        snapshot = next;
+        if (next.count > count) {
+          count = next.count;
+          stale = 0;
+        } else {
+          stale += 1;
+        }
+      }
 
       return {
-        posts: posts.slice(0, limit),
-        after: posts.length > 0 ? (listing.data.after ?? null) : null,
+        posts: parseTopPosts(snapshot.html).slice(0, limit),
+        after: null,
         isInvalid: false,
       };
     });
   }
 
   async exists(subredditName: string): Promise<boolean> {
-    return this.withRetryOnDeadBrowser(subredditName, async (page) => {
-      const url = `https://www.reddit.com/r/${subredditName}/`;
-      const startMs = Date.now();
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      this.logger.debug(
-        { subreddit: subredditName, ms: Date.now() - startMs },
-        'exists page loaded',
-      );
-
-      const feedUrl = './.json?limit=1';
-      const valid = await this.evaluateSafely<boolean>(
+    return this.session.withRetryOnDeadBrowser(subredditName, async (page) => {
+      await page.goto(`https://www.reddit.com/r/${subredditName}/`, {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000,
+      });
+      let snapshot = await this.session.evaluateSafely<PostFeedSnapshot>(
         page,
-        async (pageUrl: string): Promise<boolean> => {
-          for (let attempt = 0; attempt < 3; attempt++) {
-            try {
-              const res = await fetch(pageUrl);
-              if (res.ok) {
-                const json = (await res.json()) as {
-                  data?: { children?: unknown[] };
-                };
-                return (
-                  Array.isArray(json?.data?.children) &&
-                  json.data.children.length > 0
-                );
-              }
-              if (res.status === 404) return false;
-            } catch {
-              // retry on transient error
-            }
-            await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
-          }
-          return false;
-        },
-        feedUrl,
-      ).catch(() => false);
-
-      this.logger.info(
-        { subreddit: subredditName, valid },
-        'subreddit exists check',
+        readPostFeed,
       );
-      return valid;
+      if (!snapshot.valid) {
+        await page
+          .waitForSelector('shreddit-feed, shreddit-subreddit-header', {
+            timeout: 5_000,
+          })
+          .catch(() => {});
+        snapshot = await this.session.evaluateSafely<PostFeedSnapshot>(
+          page,
+          readPostFeed,
+        );
+      }
+      return snapshot.valid;
     });
+  }
+
+  /** Reader over a rendered thread page: read the tree, click expansions. */
+  private commentReader(page: Page) {
+    return {
+      readTree: () =>
+        this.session.evaluateSafely<{ html: string; count: number }>(
+          page,
+          readCommentTree,
+        ),
+      clickMoreBatch: (maxClicks: number) =>
+        this.session.evaluateSafely<number>(page, clickMoreRepliesBatch, {
+          maxClicks,
+        }),
+      waitForGrowth: (previousCount: number, timeoutMs: number) =>
+        this.session
+          .evaluateSafely<boolean>(page, waitForCommentGrowth, {
+            previousCount,
+            timeoutMs,
+          })
+          .catch(() => false),
+    };
+  }
+
+  /**
+   * Collects the subtrees that only exist behind "continue this thread" links.
+   * Each link opens in its own page; the linked comment is already in the main
+   * tree, so it is dropped from the continuation result.
+   */
+  private async collectContinuations(
+    page: Page,
+    postRedditId: string,
+    deadline: number,
+  ): Promise<RedditCommentData[]> {
+    const links = await this.session.evaluateSafely<
+      { href: string; ownerId: string }[]
+    >(page, findContinuationLinks);
+
+    const merged: RedditCommentData[] = [];
+    const context = page.context();
+
+    for (const link of links.slice(0, 8)) {
+      const openPlan = planContinuationOpen(deadline, Date.now());
+      if (!openPlan.open) break;
+      const continuation = await withTimeout(
+        context.newPage(),
+        10_000,
+        'newPage',
+      );
+      try {
+        await continuation.goto(`https://www.reddit.com${link.href}`, {
+          waitUntil: 'domcontentloaded',
+          timeout: openPlan.gotoTimeoutMs,
+        });
+        const waitPlan = planSelectorWait(deadline, Date.now());
+        if (!waitPlan.wait) break;
+        await continuation
+          .waitForSelector('shreddit-comment', { timeout: waitPlan.timeoutMs })
+          .catch(() => {});
+        const subPlan = planSubCollection(deadline, Date.now());
+        if (!subPlan.collect) break;
+        const result = await collectComments(this.commentReader(continuation), {
+          postId: postRedditId,
+          cap: 200,
+          budgetMs: subPlan.budgetMs,
+        });
+        const ownerId = link.ownerId.replace(/^t1_/, '');
+        merged.push(...result.comments.filter((c) => c.id !== ownerId));
+      } catch {
+        // a failed continuation never fails the extraction
+      } finally {
+        await continuation.close().catch(() => {});
+      }
+    }
+
+    return merged;
   }
 
   async fetchPostComments(
     subredditName: string,
     postRedditId: string,
   ): Promise<RedditCommentData[]> {
-    return this.withRetryOnDeadBrowser(subredditName, async (page) => {
+    return this.session.withRetryOnDeadBrowser(subredditName, async (page) => {
       const url = `https://www.reddit.com/r/${subredditName}/comments/${postRedditId}/`;
       const startMs = Date.now();
+      const totalBudgetMs = 80_000;
+
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      this.logger.debug(
-        { subreddit: subredditName, ms: Date.now() - startMs },
-        'page loaded',
-      );
+      await page
+        .waitForSelector('shreddit-comment', { timeout: 15000 })
+        .catch(() => {});
 
-      const commentsUrl = './.json?sort=top&limit=500&showmore=false';
-      const rawJson = await this.evaluateSafely<unknown>(
+      const finalUrl = page.url().toLowerCase();
+      const expected = `/r/${subredditName.toLowerCase()}/comments/${postRedditId.toLowerCase()}`;
+      if (!finalUrl.includes(expected)) {
+        throw new Error(
+          `reddit redirected away from the requested thread: ${page.url()}`,
+        );
+      }
+
+      const forbidden = await this.session.evaluateSafely<boolean>(
         page,
-        async (commentsPageUrl: string): Promise<unknown> => {
-          for (let attempt = 0; attempt < 3; attempt++) {
-            try {
-              const res = await fetch(commentsPageUrl);
-              if (res.ok) return await res.json();
-            } catch {
-              // transient 403/429/network blips — retry
-            }
-            await new Promise((r) => setTimeout(r, 750 * (attempt + 1)));
-          }
-          throw new Error('Failed to fetch comments JSON');
+        isForbiddenPage,
+      );
+      if (forbidden) {
+        throw new Error('reddit returned a forbidden page');
+      }
+      await this.session
+        .evaluateSafely<number>(page, waitForStableTree, {
+          quietMs: 250,
+          maxMs: 3_000,
+        })
+        .catch(() => 0);
+
+      const reader = this.commentReader(page);
+      const deadline = startMs + totalBudgetMs;
+      const remainingBudgetMs = deadline - Date.now() - 10_000;
+      const loadMs = Date.now() - startMs;
+      let continuationMs = 0;
+
+      const result = await collectComments(reader, {
+        postId: postRedditId,
+        budgetMs: Math.max(
+          5_000,
+          Math.min(remainingBudgetMs, 36_000 - (Date.now() - startMs)),
+        ),
+        minInlineForContinuations: 200,
+        continuationsOnlyBelowChainDepth: 5,
+        collectContinuations: () =>
+          this.collectContinuations(
+            page,
+            postRedditId,
+            Math.min(deadline, startMs + 45_000),
+          ),
+        onPhase: (phase, ms) => {
+          if (phase === 'continuation') continuationMs = ms;
         },
-        commentsUrl,
+      });
+      const totalMs = Date.now() - startMs;
+      const expansionMs = Math.max(0, totalMs - loadMs - continuationMs);
+
+      this.logger.info(
+        {
+          subreddit: subredditName,
+          postId: postRedditId,
+          renderedCount: result.renderedCount,
+          expandedCount: result.expandedCount,
+          returnedCount: result.comments.length,
+          loadMs,
+          expansionMs,
+          continuationMs,
+          ms: totalMs,
+        },
+        'comments collected',
       );
 
-      const parsed = z.tuple([z.any(), CommentResponseSchema]).parse(rawJson);
-      const commentsListing = parsed[1];
-
-      const flattenComments = (
-        children: InternalCommentNode[] | undefined,
-      ): RedditCommentData[] => {
-        const results: RedditCommentData[] = [];
-        if (!children) return results;
-
-        for (const child of children) {
-          if (child.kind !== 't1') continue;
-          const d: InternalCommentNode['data'] = child.data;
-          if (!d) continue;
-
-          // Strip prefixes for standard IDs
-          const cleanId = (d.id || '').replace(/^t1_|^t3_/, '');
-          const cleanParentId = (d.parent_id || '').replace(/^t1_|^t3_/, '');
-
-          results.push({
-            id: cleanId,
-            body: (d.body || '').trim(),
-            author: d.author || '',
-            score: Number(d.score) || 0,
-            parent_id: cleanParentId,
-            created_utc: Number(d.created_utc) || 0,
-          });
-
-          if (
-            d.replies &&
-            typeof d.replies === 'object' &&
-            d.replies.data?.children
-          ) {
-            results.push(...flattenComments(d.replies.data.children));
-          }
-        }
-        return results;
-      };
-
-      return flattenComments(commentsListing.data.children);
+      return result.comments;
     });
   }
 }

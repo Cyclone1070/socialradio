@@ -11,8 +11,9 @@ jest.mock('./scraper', () => ({
   })),
 }));
 
-const scraper: { fetchTopPosts: jest.Mock } = {
+const scraper: { fetchTopPosts: jest.Mock; fetchPostComments: jest.Mock } = {
   fetchTopPosts: jest.fn(),
+  fetchPostComments: jest.fn(),
 };
 
 describe('GET /top-posts/:subreddit', () => {
@@ -45,6 +46,49 @@ describe('GET /top-posts/:subreddit', () => {
       limit: 10,
       after: 't3_x',
     });
+  });
+});
+
+describe('GET /comments/:subreddit/:postId', () => {
+  it('returns the scraper comments', async () => {
+    const comments = [
+      {
+        id: 'c1',
+        body: 'b',
+        author: 'a',
+        score: 5,
+        parent_id: 'postabc',
+        created_utc: 100,
+      },
+    ];
+    scraper.fetchPostComments.mockResolvedValue(comments);
+
+    const app = createApp(
+      scraper as unknown as RedditScraper,
+      new Pacer({ minDelayMs: 0, maxDelayMs: 0 }),
+    );
+    const res = await request(app).get('/comments/webdev/postabc');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ comments });
+    expect(scraper.fetchPostComments).toHaveBeenCalledWith('webdev', 'postabc');
+  });
+});
+
+describe('GET /comments error handling', () => {
+  it('returns 502 when the scraper fails', async () => {
+    scraper.fetchPostComments.mockRejectedValue(
+      new Error('reddit returned a forbidden page'),
+    );
+
+    const app = createApp(
+      scraper as unknown as RedditScraper,
+      new Pacer({ minDelayMs: 0, maxDelayMs: 0 }),
+    );
+    const res = await request(app).get('/comments/webdev/postabc');
+
+    expect(res.status).toBe(502);
+    expect(res.body).toEqual({ error: 'reddit returned a forbidden page' });
   });
 });
 
