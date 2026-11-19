@@ -8,6 +8,7 @@ import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { collectComments } from '../dist/comment-collection.js';
 import {
   clickMoreRepliesBatch,
+  readCommentCount,
   readCommentTree,
   waitForCommentGrowth,
 } from '../dist/dom.js';
@@ -56,6 +57,7 @@ await page.waitForSelector('shreddit-comment', { timeout: 15000 }).catch(() => {
 
 const reader = {
   readTree: () => page.evaluate(readCommentTree),
+  readCount: () => page.evaluate(readCommentCount),
   clickMoreBatch: (maxClicks) =>
     page.evaluate(clickMoreRepliesBatch, { maxClicks }),
   waitForGrowth: (previousCount, timeoutMs) =>
@@ -68,11 +70,20 @@ await collectComments(reader, { postId, budgetMs: 60_000 });
 const rendered = await page.evaluate(() =>
   Object.fromEntries(
     [...document.querySelectorAll('shreddit-comment')]
-      .map((comment) => [
-        (comment.getAttribute('thingid') || '').replace(/^t1_/, ''),
-        (comment.querySelector('[slot=comment]')?.innerText || '').trim(),
-      ])
-      .filter(([id, body]) => id && body),
+      .map((comment) => {
+        const parent = comment.parentElement?.closest('shreddit-comment');
+        return [
+          (comment.getAttribute('thingid') || '').replace(/^t1_/, ''),
+          {
+            body: (comment.querySelector('[slot=comment]')?.innerText || '').trim(),
+            author: comment.getAttribute('author') || '',
+            parentId: parent
+              ? (parent.getAttribute('thingid') || '').replace(/^t1_/, '')
+              : null,
+          },
+        ];
+      })
+      .filter(([id, record]) => id && record.body),
   ),
 );
 
@@ -81,15 +92,34 @@ const top = [...apiComments].sort((a, b) => b.score - a.score).slice(0, 20);
 const required = Math.min(20, apiComments.length);
 const mismatches = [];
 for (const comment of top) {
-  const pageText = rendered[comment.id];
-  if (pageText === undefined) {
+  const pageComment = rendered[comment.id];
+  if (pageComment === undefined) {
     mismatches.push({ id: comment.id, reason: 'missing in page' });
-  } else if (normalize(pageText) !== normalize(comment.body)) {
+    continue;
+  }
+  if (normalize(pageComment.body) !== normalize(comment.body)) {
     mismatches.push({
       id: comment.id,
       reason: 'text differs',
       api: comment.body.slice(0, 120),
-      page: pageText.slice(0, 120),
+      page: pageComment.body.slice(0, 120),
+    });
+  }
+  const apiParent = comment.parent_id === postId ? null : comment.parent_id;
+  if (pageComment.parentId !== apiParent) {
+    mismatches.push({
+      id: comment.id,
+      reason: 'hierarchy differs',
+      api: apiParent,
+      page: pageComment.parentId,
+    });
+  }
+  if (pageComment.author !== comment.author) {
+    mismatches.push({
+      id: comment.id,
+      reason: 'author differs',
+      api: comment.author,
+      page: pageComment.author,
     });
   }
 }
@@ -110,7 +140,8 @@ console.log(
       sample: top.slice(0, 5).map((comment) => ({
         id: comment.id,
         api: normalize(comment.body).slice(0, 100),
-        page: normalize(rendered[comment.id] ?? '').slice(0, 100),
+        page: normalize(rendered[comment.id]?.body ?? '').slice(0, 100),
+        parent: rendered[comment.id]?.parentId,
       })),
     },
     null,

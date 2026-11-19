@@ -8,6 +8,7 @@ import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { collectComments } from '../dist/comment-collection.js';
 import {
   clickMoreRepliesBatch,
+  readCommentCount,
   findContinuationLinks,
   readCommentTree,
   waitForCommentGrowth,
@@ -59,6 +60,7 @@ await page
 const urlBefore = page.url();
 const growthReader = (target) => ({
   readTree: () => target.evaluate(readCommentTree),
+  readCount: () => target.evaluate(readCommentCount),
   clickMoreBatch: (maxClicks) =>
     target.evaluate(clickMoreRepliesBatch, { maxClicks }),
   waitForGrowth: (previousCount, timeoutMs) =>

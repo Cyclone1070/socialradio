@@ -431,3 +431,97 @@ describe('finalizeComments', () => {
     expect(finalizeComments(comments, 50, 'post123')).toHaveLength(50);
   });
 });
+
+describe('rendered thread extraction', () => {
+  const html = `
+    <div id="comment-tree">
+      <shreddit-comment thingid="t1_a1" author="alice" score="42" created="2026-11-13T10:00:00.000000+0000" depth="0">
+        <div slot="comment">
+          <p>First paragraph — héllo.</p>
+          <p>Second with a <a href="https://example.com">link</a> and <code>code()</code>.</p>
+          <p>emoji 🚀</p>
+        </div>
+        <div id="comment-children">
+          <shreddit-comment thingid="t1_b1" author="bob" score="7" created="2026-11-13T10:01:00.000000+0000" depth="1">
+            <div slot="comment"><p>Reply one.</p></div>
+            <div id="comment-children">
+              <shreddit-comment thingid="t1_c1" author="[deleted]" score="1" created="2026-11-13T10:02:00.000000+0000" depth="2">
+                <div slot="comment"><p>[deleted]</p></div>
+              </shreddit-comment>
+            </div>
+          </shreddit-comment>
+        </div>
+      </shreddit-comment>
+      <shreddit-comment thingid="t1_d1" author="[deleted]" score="0" created="2026-11-13T10:03:00.000000+0000" depth="0">
+        <div slot="comment"><p>[removed]</p></div>
+      </shreddit-comment>
+    </div>`;
+
+  const extracted = parseCommentTree(html).map((raw) =>
+    toRedditComment(raw, 'post1'),
+  );
+
+  it('keeps the exact words, including paragraphs, links, code and non-English', () => {
+    expect(extracted[0]).toEqual({
+      id: 'a1',
+      body: 'First paragraph — héllo. Second with a link and code(). emoji 🚀',
+      author: 'alice',
+      score: 42,
+      parent_id: 'post1',
+      created_utc: 1794564000,
+    });
+  });
+
+  it('keeps the hierarchy from DOM nesting, including deleted and removed replies', () => {
+    expect(extracted.map(({ id, parent_id }) => [id, parent_id])).toEqual([
+      ['a1', 'post1'],
+      ['b1', 'a1'],
+      ['c1', 'b1'],
+      ['d1', 'post1'],
+    ]);
+  });
+
+  it('keeps scores, authors and timestamps for every comment', () => {
+    expect(
+      extracted.map(({ id, author, score, created_utc }) => [
+        id,
+        author,
+        score,
+        created_utc,
+      ]),
+    ).toEqual([
+      ['a1', 'alice', 42, 1794564000],
+      ['b1', 'bob', 7, 1794564060],
+      ['c1', '[deleted]', 1, 1794564120],
+      ['d1', '[deleted]', 0, 1794564180],
+    ]);
+  });
+
+  it('produces a well-formed tree for a long thread', () => {
+    const depth = 30;
+    const chain =
+      Array.from(
+        { length: depth },
+        (_, i) =>
+          `<shreddit-comment thingid="t1_n${i}" author="a${i}" score="${depth - i}" created="2026-11-13T10:00:00.000000+0000" depth="${i}"><div slot="comment">body ${i}</div>${'<div id="comment-children">'}`,
+      ).join('') + '</div>'.repeat(depth);
+
+    const comments = parseCommentTree(chain).map((raw) =>
+      toRedditComment(raw, 'post1'),
+    );
+    const ids = new Set(comments.map((comment) => comment.id));
+
+    expect(comments).toHaveLength(depth);
+    expect(ids.size).toBe(depth);
+    for (const comment of comments) {
+      expect(comment.body.length).toBeGreaterThan(0);
+      expect(comment.parent_id === 'post1' || ids.has(comment.parent_id)).toBe(
+        true,
+      );
+    }
+    expect(comments.map((comment) => comment.parent_id)).toEqual([
+      'post1',
+      ...comments.slice(0, -1).map((comment) => comment.id),
+    ]);
+  });
+});

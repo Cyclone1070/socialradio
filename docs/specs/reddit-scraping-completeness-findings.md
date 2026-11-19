@@ -229,3 +229,29 @@ Implementation notes:
 
 Final gates on the round-4 tree: reddit-fetcher 9 suites / 86 tests, exit 0; repository
 46 suites / 322 tests plus 7 CLI suites / 42 tests, exit 0.
+
+## Single-thread latency pass
+
+Measured on webscraping/1xys320 (33 comments at the time; API and independent page
+expansion agree on 33, 0 text mismatches).
+
+Before: ~12.9 s total, load 7.5 s, expansion 5.3 s.
+
+After:
+- Expansion reads only the comment count per round and serializes the tree once at
+  the end (`readCommentCount`, `comment-collection.ts`).
+- Clicks are gated on the `/svc/shreddit/more-comments` responses via
+  `MoreCommentsTracker`, instead of a fixed growth wait.
+- Growth waits trimmed (800 ms) and the final no-control wait to 300 ms.
+- The page is scrolled once after `body` attaches, which starts Reddit's comment
+  render earlier; navigation uses `commit` and the selector waits for `attached`.
+
+Result: 7.6–10.0 s total, load 5.8–7.0 s (selector 5.0–6.2 s of that is Reddit's own
+comment render), expansion 1.8–3.0 s. The remaining load time is the page's client-side
+render; going below it means leaving the rendered-DOM approach.
+
+Correctness coverage added: golden fixture for exact words (paragraphs, links, inline
+code, emoji, non-English), hierarchy (including deleted/removed replies), and per-comment
+author/score/timestamp; a 30-deep invariant test (unique ids, parent exists, order); a
+count-reader test; and the live verifier now compares body, author and parent id, not
+just text.

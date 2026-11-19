@@ -3,6 +3,7 @@ import {
   clickMoreReplies,
   clickMoreRepliesBatch,
   findContinuationLinks,
+  readCommentCount,
   readCommentTree,
   isForbiddenPage,
   readPostFeed,
@@ -12,6 +13,16 @@ import {
 } from './dom';
 
 const doc = (html: string) => new JSDOM(html).window.document;
+
+describe('readCommentCount', () => {
+  it('counts rendered comments without serializing the tree', () => {
+    const document = doc(
+      '<div id="comment-tree"><shreddit-comment></shreddit-comment><shreddit-comment></shreddit-comment></div>',
+    );
+
+    expect(readCommentCount(document)).toBe(2);
+  });
+});
 
 describe('readCommentTree', () => {
   it('returns the comment tree html and the rendered comment count', () => {

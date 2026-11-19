@@ -28,6 +28,11 @@ export function readCommentTree(doc: Document = document): CommentTreeSnapshot {
   };
 }
 
+/** Counts rendered comments without serializing the tree. */
+export function readCommentCount(doc: Document = document): number {
+  return doc.querySelectorAll('shreddit-comment').length;
+}
+
 /**
  * Clicks the first inline "more replies" control. Buttons expand in place;
  * anchors navigate to a continuation page and are deliberately ignored.

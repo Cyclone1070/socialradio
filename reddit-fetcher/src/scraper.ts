@@ -3,6 +3,7 @@ import { collectComments } from './comment-collection';
 import {
   clickMoreRepliesBatch,
   findContinuationLinks,
+  readCommentCount,
   readCommentTree,
   readPostFeed,
   scrollForMorePosts,
@@ -19,6 +20,7 @@ import {
   planSubCollection,
 } from './continuation-budget';
 import { BrowserSession } from './browser-session';
+import { MoreCommentsTracker } from './more-comments';
 import { withTimeout } from './timeout';
 import type { RedditCommentData, RedditPostData } from './types';
 import pino from 'pino';
@@ -126,16 +128,27 @@ export class RedditScraper {
 
   /** Reader over a rendered thread page: read the tree, click expansions. */
   private commentReader(page: Page) {
+    const responses = new MoreCommentsTracker(page);
+
     return {
       readTree: () =>
         this.session.evaluateSafely<{ html: string; count: number }>(
           page,
           readCommentTree,
         ),
-      clickMoreBatch: (maxClicks: number) =>
-        this.session.evaluateSafely<number>(page, clickMoreRepliesBatch, {
-          maxClicks,
-        }),
+      readCount: () =>
+        this.session.evaluateSafely<number>(page, readCommentCount),
+      clickMoreBatch: async (maxClicks: number) => {
+        const clicked = await this.session.evaluateSafely<number>(
+          page,
+          clickMoreRepliesBatch,
+          { maxClicks },
+        );
+        if (clicked > 0) {
+          await responses.waitFor(clicked, 800);
+        }
+        return clicked;
+      },
       waitForGrowth: (previousCount: number, timeoutMs: number) =>
         this.session
           .evaluateSafely<boolean>(page, waitForCommentGrowth, {
@@ -204,15 +217,27 @@ export class RedditScraper {
     subredditName: string,
     postRedditId: string,
   ): Promise<RedditCommentData[]> {
+    const startMs = Date.now();
     return this.session.withRetryOnDeadBrowser(subredditName, async (page) => {
       const url = `https://www.reddit.com/r/${subredditName}/comments/${postRedditId}/`;
-      const startMs = Date.now();
       const totalBudgetMs = 80_000;
 
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      const pageReadyMs = Date.now() - startMs;
+      await page.goto(url, { waitUntil: 'commit', timeout: 30000 });
       await page
-        .waitForSelector('shreddit-comment', { timeout: 15000 })
+        .waitForSelector('body', { state: 'attached', timeout: 10_000 })
         .catch(() => {});
+      await this.session
+        .evaluateSafely<number>(page, () => window.scrollTo(0, 800))
+        .catch(() => 0);
+      const gotoMs = Date.now() - startMs;
+      await page
+        .waitForSelector('shreddit-comment', {
+          state: 'attached',
+          timeout: 15000,
+        })
+        .catch(() => {});
+      const selectorMs = Date.now() - startMs;
 
       const finalUrl = page.url().toLowerCase();
       const expected = `/r/${subredditName.toLowerCase()}/comments/${postRedditId.toLowerCase()}`;
@@ -229,6 +254,7 @@ export class RedditScraper {
       if (forbidden) {
         throw new Error('reddit returned a forbidden page');
       }
+      const forbiddenMs = Date.now() - startMs;
       await this.session
         .evaluateSafely<number>(page, waitForStableTree, {
           quietMs: 250,
@@ -271,6 +297,10 @@ export class RedditScraper {
           expandedCount: result.expandedCount,
           returnedCount: result.comments.length,
           loadMs,
+          pageReadyMs,
+          gotoMs,
+          selectorMs,
+          forbiddenMs,
           expansionMs,
           continuationMs,
           ms: totalMs,

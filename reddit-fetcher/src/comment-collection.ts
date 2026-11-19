@@ -14,6 +14,8 @@ export interface CollectCommentsResult {
 
 export interface CommentTreeReader {
   readTree(): Promise<{ html: string; count: number }>;
+  /** Counts comments without transferring the tree. */
+  readCount(): Promise<number>;
   clickMoreBatch(maxClicks: number): Promise<number>;
   /** Resolves true when the rendered comment count exceeds `previousCount`. */
   waitForGrowth(previousCount: number, timeoutMs: number): Promise<boolean>;
@@ -37,7 +39,7 @@ export const DEFAULT_COMMENT_CAP = 500;
 export const DEFAULT_COMMENT_BUDGET_MS = 90_000;
 
 const CLICK_BATCH = 16;
-const GROWTH_TIMEOUT_MS = 1_500;
+const GROWTH_TIMEOUT_MS = 800;
 
 /**
  * Expands the rendered comment tree inline, clicking batches of "more replies"
@@ -57,7 +59,7 @@ export async function collectComments(
   const renderedCount = tree.count;
   let lastCount = tree.count;
 
-  while (tree.count < cap && now() < deadline) {
+  while (lastCount < cap && now() < deadline) {
     let clicked: number;
     try {
       clicked = await reader.clickMoreBatch(CLICK_BATCH);
@@ -66,7 +68,7 @@ export async function collectComments(
     }
     if (clicked === 0) {
       const lateGrowth = await reader
-        .waitForGrowth(lastCount, 1_000)
+        .waitForGrowth(lastCount, 300)
         .catch(() => false);
       if (!lateGrowth) break;
     }
@@ -80,13 +82,19 @@ export async function collectComments(
 
     if (now() >= deadline) break;
     try {
-      tree = await reader.readTree();
+      lastCount = await reader.readCount();
     } catch {
       break;
     }
-
-    lastCount = tree.count;
     if (now() >= deadline) break;
+  }
+
+  if (lastCount > tree.count) {
+    try {
+      tree = await reader.readTree();
+    } catch {
+      // keep the initial snapshot rather than losing everything
+    }
   }
 
   const comments = parseCommentTree(tree.html).map((raw) =>

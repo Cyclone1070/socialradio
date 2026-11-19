@@ -268,7 +268,7 @@ describe('RedditScraper.fetchPostComments', () => {
       scraper.fetchPostComments('webdev', 'postabc'),
     ).rejects.toThrow(/timed out/);
 
-    expect(page.evaluate).toHaveBeenCalledTimes(3);
+    expect(page.evaluate).toHaveBeenCalledTimes(4);
   });
 
   it('merges a continuation page and drops the duplicate linked comment', async () => {
@@ -286,6 +286,8 @@ describe('RedditScraper.fetchPostComments', () => {
     const mainPage = makePageMock();
     mainPage.evaluate.mockImplementation((fn: () => unknown) => {
       switch (fn.name) {
+        case 'readCommentCount':
+          return 2;
         case 'readCommentTree':
           return { html: mainHtml, count: 1 };
         case 'clickMoreReplies':
@@ -313,6 +315,8 @@ describe('RedditScraper.fetchPostComments', () => {
     const continuationPage = makePageMock();
     continuationPage.evaluate.mockImplementation((fn: () => unknown) => {
       switch (fn.name) {
+        case 'readCommentCount':
+          return 2;
         case 'readCommentTree':
           return { html: continuationHtml, count: 2 };
         case 'clickMoreReplies':
@@ -421,6 +425,8 @@ describe('RedditScraper.fetchPostComments', () => {
     const page = makePageMock();
     page.evaluate.mockImplementation((fn: () => unknown) => {
       switch (fn.name) {
+        case 'readCommentCount':
+          return 2;
         case 'readCommentTree':
           return { html: treeHtml, count: 2 };
         case 'clickMoreReplies':

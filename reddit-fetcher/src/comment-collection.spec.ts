@@ -12,6 +12,7 @@ const tree = (n: number) => ({
 function makeReader() {
   return {
     readTree: jest.fn(),
+    readCount: jest.fn().mockResolvedValue(2),
     clickMoreBatch: jest.fn().mockResolvedValue(0),
     waitForGrowth: jest.fn().mockResolvedValue(false),
   };
@@ -44,6 +45,7 @@ describe('collectComments', () => {
   it('does not sleep when the click grows the tree immediately', async () => {
     const reader = makeReader();
     reader.readTree.mockResolvedValueOnce(tree(1)).mockResolvedValue(tree(3));
+    reader.readCount.mockResolvedValueOnce(3);
     reader.clickMoreBatch.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
     reader.waitForGrowth
       .mockResolvedValueOnce(true)
@@ -52,16 +54,14 @@ describe('collectComments', () => {
     const startedAt = Date.now();
     await collectComments(reader, opts);
 
-    expect(reader.waitForGrowth).toHaveBeenCalledWith(1, 1500);
+    expect(reader.waitForGrowth).toHaveBeenCalledWith(1, 800);
     expect(Date.now() - startedAt).toBeLessThan(200);
   });
 
   it('follows expansions until the control disappears', async () => {
     const reader = makeReader();
-    reader.readTree
-      .mockResolvedValueOnce(tree(1))
-      .mockResolvedValueOnce(tree(2))
-      .mockResolvedValueOnce(tree(3));
+    reader.readTree.mockResolvedValueOnce(tree(1)).mockResolvedValue(tree(3));
+    reader.readCount.mockResolvedValueOnce(2).mockResolvedValueOnce(3);
     reader.clickMoreBatch
       .mockResolvedValueOnce(1)
       .mockResolvedValueOnce(1)
@@ -263,12 +263,11 @@ describe('collectComments', () => {
 
   it('stops after the read that crosses the deadline', async () => {
     let clock = 0;
-    let reads = 0;
     const reader = makeReader();
-    reader.readTree.mockImplementation(() => {
-      reads += 1;
-      if (reads > 1) clock = 100;
-      return Promise.resolve(tree(2));
+    reader.readTree.mockResolvedValue(tree(2));
+    reader.readCount.mockImplementation(() => {
+      clock = 100;
+      return Promise.resolve(2);
     });
     reader.clickMoreBatch.mockResolvedValue(1);
 
