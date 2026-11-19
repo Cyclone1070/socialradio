@@ -1,4 +1,5 @@
 import { JSDOM } from 'jsdom';
+import { parseCommentTree } from './comments';
 import {
   clickMoreReplies,
   clickMoreRepliesBatch,
@@ -25,6 +26,20 @@ describe('readCommentCount', () => {
 });
 
 describe('readCommentTree', () => {
+  it('reads a continuation page that has comments but no #comment-tree', () => {
+    const document = doc(
+      '<shreddit-comment thingid="t1_a"><div slot="comment">a</div><shreddit-comment thingid="t1_b"><div slot="comment">b</div></shreddit-comment></shreddit-comment>',
+    );
+
+    const snapshot = readCommentTree(document);
+
+    expect(snapshot.count).toBe(2);
+    expect(parseCommentTree(snapshot.html).map((c) => c.thingId)).toEqual([
+      't1_a',
+      't1_b',
+    ]);
+  });
+
   it('returns the comment tree html and the rendered comment count', () => {
     const html =
       '<div id="comment-tree"><shreddit-comment thingid="t1_a"></shreddit-comment><shreddit-comment thingid="t1_b"></shreddit-comment></div>';

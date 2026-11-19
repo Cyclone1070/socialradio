@@ -19,12 +19,20 @@ export interface ContinuationLink {
  */
 export function readCommentTree(doc: Document = document): CommentTreeSnapshot {
   const tree = doc.querySelector('#comment-tree');
-  if (!tree) {
+  const comments = [...doc.querySelectorAll('shreddit-comment')];
+  if (!tree && comments.length === 0) {
     throw new Error('comment tree not rendered');
   }
+  if (tree) {
+    return { html: tree.innerHTML, count: comments.length };
+  }
+  // "Continue this thread" pages render the focused chain without #comment-tree.
+  const roots = comments.filter(
+    (comment) => !comment.parentElement?.closest('shreddit-comment'),
+  );
   return {
-    html: tree.innerHTML,
-    count: doc.querySelectorAll('shreddit-comment').length,
+    html: roots.map((comment) => comment.outerHTML).join(''),
+    count: comments.length,
   };
 }
 

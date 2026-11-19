@@ -20,7 +20,6 @@ import {
   planSubCollection,
 } from './continuation-budget';
 import { BrowserSession } from './browser-session';
-import { MoreCommentsTracker } from './more-comments';
 import { withTimeout } from './timeout';
 import type { RedditCommentData, RedditPostData } from './types';
 import pino from 'pino';
@@ -128,8 +127,6 @@ export class RedditScraper {
 
   /** Reader over a rendered thread page: read the tree, click expansions. */
   private commentReader(page: Page) {
-    const responses = new MoreCommentsTracker(page);
-
     return {
       readTree: () =>
         this.session.evaluateSafely<{ html: string; count: number }>(
@@ -138,17 +135,10 @@ export class RedditScraper {
         ),
       readCount: () =>
         this.session.evaluateSafely<number>(page, readCommentCount),
-      clickMoreBatch: async (maxClicks: number) => {
-        const clicked = await this.session.evaluateSafely<number>(
-          page,
-          clickMoreRepliesBatch,
-          { maxClicks },
-        );
-        if (clicked > 0) {
-          await responses.waitFor(clicked, 800);
-        }
-        return clicked;
-      },
+      clickMoreBatch: (maxClicks: number) =>
+        this.session.evaluateSafely<number>(page, clickMoreRepliesBatch, {
+          maxClicks,
+        }),
       waitForGrowth: (previousCount: number, timeoutMs: number) =>
         this.session
           .evaluateSafely<boolean>(page, waitForCommentGrowth, {

@@ -39,7 +39,7 @@ export const DEFAULT_COMMENT_CAP = 500;
 export const DEFAULT_COMMENT_BUDGET_MS = 90_000;
 
 const CLICK_BATCH = 16;
-const GROWTH_TIMEOUT_MS = 800;
+const GROWTH_TIMEOUT_MS = 2_000;
 
 /**
  * Expands the rendered comment tree inline, clicking batches of "more replies"
@@ -68,7 +68,7 @@ export async function collectComments(
     }
     if (clicked === 0) {
       const lateGrowth = await reader
-        .waitForGrowth(lastCount, 300)
+        .waitForGrowth(lastCount, 1_500)
         .catch(() => false);
       if (!lateGrowth) break;
     }

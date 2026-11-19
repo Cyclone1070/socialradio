@@ -54,7 +54,7 @@ describe('collectComments', () => {
     const startedAt = Date.now();
     await collectComments(reader, opts);
 
-    expect(reader.waitForGrowth).toHaveBeenCalledWith(1, 800);
+    expect(reader.waitForGrowth).toHaveBeenCalledWith(1, 2000);
     expect(Date.now() - startedAt).toBeLessThan(200);
   });
 
