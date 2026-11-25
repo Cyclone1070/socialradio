@@ -115,6 +115,23 @@ services:
       options:
         max-size: "10m"
 
+  # The queue worker is a separate process in production; Tier 1 must run it too,
+  # or enqueued scrapes sit forever and suite 06 times out.
+  scrape-worker:
+    env_file: !override
+      - ../tests/tier1.env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/socialradio
+      REDDIT_FETCHER_URL: http://fetcher-mock:4011
+      REDDIT_FETCHER_TIMEOUT_MS: 180000
+    depends_on:
+      db:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+      fetcher-mock:
+        condition: service_started
+
   # All SQL runs from inside the suite via the single psql_run helper
   # (docker-test.sh) — the seed service below was removed when the suite
   # gained psql access (one pattern, not two).
@@ -196,6 +213,8 @@ services:
         condition: service_healthy
       app2:
         condition: service_healthy
+      scrape-worker:
+        condition: service_started
       # The promote-and-seed path must have completed before the suites run.
       promote-fixture:
         condition: service_completed_successfully
