@@ -8,6 +8,7 @@ import {
 } from '../infrastructure/database/schemas/content.schema';
 import { RedditScraperService } from './reddit-scraper.service';
 import { ScraperService } from './scraper.service';
+import { ScrapeQueueService } from './scrape-queue.service';
 import { ContentService } from './content.service';
 import { ContentController } from './content.controller';
 import { UserModule } from '../user/user.module';
@@ -23,6 +24,7 @@ import { ContentContract } from './content.contract';
   providers: [
     RedditScraperService,
     ScraperService,
+    ScrapeQueueService,
     ContentService,
     {
       provide: ContentContract,
@@ -32,6 +34,7 @@ import { ContentContract } from './content.contract';
   exports: [
     ScraperService,
     RedditScraperService,
+    ScrapeQueueService,
     ContentService,
     ContentContract,
     MikroOrmModule,

@@ -2,14 +2,18 @@
   "name": "reddit-fetcher",
   "version": "1.0.0",
   "private": true,
-  "description": "Dedicated Reddit scraping container — owns browserless config, per-subreddit contexts, and the pacing queue.",
+  "description": "Dedicated Reddit scraping container \u2014 owns browserless config, per-subreddit contexts, and the pacing queue.",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "format": "prettier --write \"src/**/*.ts\"",
     "lint": "eslint \"src/**/*.ts\" --fix && tsc --noEmit",
     "test": "jest",
-    "gate": "npm run format && npm run lint && npm test"
+    "gate": "npm run format && npm run lint && npm test",
+    "live:qa": "node scripts/live-qa.mjs",
+    "regression:record": "node scripts/regression.mjs --record",
+    "regression:check": "node scripts/regression.mjs --check",
+    "smoke:sub": "node scripts/full-sub-smoke.mjs"
   },
   "dependencies": {
     "express": "^4.21.2",
@@ -17,7 +21,7 @@
     "jsdom": "^24.1.3",
     "pino": "^10.3.1",
     "pino-http": "^11.0.0",
-    "playwright-core": "1.41.0",
+    "playwright-core": "1.65.1",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
     "zod": "^3.24.1"

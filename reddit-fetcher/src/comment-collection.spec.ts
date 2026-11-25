@@ -1,4 +1,8 @@
-import { collectComments } from './comment-collection';
+import {
+  collectComments,
+  isPartialCommentRender,
+  shouldResumeForWordGuard,
+} from './comment-collection';
 
 const tree = (n: number) => ({
   html: Array.from(
@@ -20,6 +24,7 @@ function makeReader() {
 
 const opts = {
   postId: 'post1',
+  settleMs: 0,
 };
 
 const chainTree = (n: number) => {
@@ -30,6 +35,55 @@ const chainTree = (n: number) => {
   return { html: build(n - 1), count: n };
 };
 
+describe('isPartialCommentRender', () => {
+  it('flags a 25-comment render of an 853-comment thread', () => {
+    expect(
+      isPartialCommentRender({ collected: 25, expected: 853, softCap: 300 }),
+    ).toBe(true);
+    expect(
+      isPartialCommentRender({ collected: 300, expected: 853, softCap: 300 }),
+    ).toBe(false);
+    expect(
+      isPartialCommentRender({ collected: 25, expected: 50, softCap: 300 }),
+    ).toBe(false);
+    expect(
+      isPartialCommentRender({ collected: 50, expected: 131, softCap: 250 }),
+    ).toBe(false);
+    expect(
+      isPartialCommentRender({ collected: 250, expected: 1_648, softCap: 250 }),
+    ).toBe(false);
+  });
+});
+
+describe('shouldResumeForWordGuard', () => {
+  it('resumes only when the soft cap was hit before the word guard', () => {
+    expect(
+      shouldResumeForWordGuard({
+        collected: 300,
+        softCap: 300,
+        words: 2_000,
+        minWords: 2_500,
+      }),
+    ).toBe(true);
+    expect(
+      shouldResumeForWordGuard({
+        collected: 300,
+        softCap: 300,
+        words: 4_000,
+        minWords: 2_500,
+      }),
+    ).toBe(false);
+    expect(
+      shouldResumeForWordGuard({
+        collected: 120,
+        softCap: 300,
+        words: 2_000,
+        minWords: 2_500,
+      }),
+    ).toBe(false);
+  });
+});
+
 describe('collectComments', () => {
   it('returns the rendered comments when there is no more control', async () => {
     const reader = makeReader();
@@ -39,7 +93,7 @@ describe('collectComments', () => {
     const { comments } = await collectComments(reader, opts);
 
     expect(comments.map((c) => c.id)).toEqual(['c0', 'c1']);
-    expect(reader.clickMoreBatch).toHaveBeenCalledTimes(1);
+    expect(reader.clickMoreBatch).toHaveBeenCalledTimes(4);
   });
 
   it('does not sleep when the click grows the tree immediately', async () => {
@@ -70,6 +124,36 @@ describe('collectComments', () => {
     const { comments } = await collectComments(reader, opts);
 
     expect(comments).toHaveLength(3);
+    expect(reader.clickMoreBatch).toHaveBeenCalledTimes(7);
+  });
+
+  it('stops cleanly when the caller reports quota exhaustion', async () => {
+    const reader = makeReader();
+    reader.readTree.mockResolvedValue(tree(2));
+    reader.clickMoreBatch.mockResolvedValue(0);
+    let checks = 0;
+
+    const result = await collectComments(reader, {
+      ...opts,
+      shouldStop: () => {
+        checks += 1;
+        return checks > 1;
+      },
+    });
+
+    expect(result.comments).toHaveLength(2);
+  });
+
+  it('fails fast when controls exist but the tree never grows', async () => {
+    const reader = makeReader();
+    reader.readTree.mockResolvedValue(tree(1));
+    reader.readCount.mockResolvedValue(1);
+    reader.clickMoreBatch.mockResolvedValue(1);
+    reader.waitForGrowth.mockResolvedValue(false);
+
+    await expect(collectComments(reader, opts)).rejects.toThrow(
+      /stopped expanding/,
+    );
     expect(reader.clickMoreBatch).toHaveBeenCalledTimes(3);
   });
 
@@ -290,7 +374,7 @@ describe('collectComments', () => {
 
     await collectComments(reader, opts);
 
-    expect(reader.clickMoreBatch).toHaveBeenCalledTimes(3);
+    expect(reader.clickMoreBatch).toHaveBeenCalledTimes(5);
   });
 
   it('does not click once the budget is exhausted', async () => {
@@ -300,5 +384,66 @@ describe('collectComments', () => {
     await collectComments(reader, { ...opts, budgetMs: 0 });
 
     expect(reader.clickMoreBatch).not.toHaveBeenCalled();
+  });
+});
+
+describe('collectComments regression guards', () => {
+  it('does not sleep after a growth timeout', async () => {
+    const reader = makeReader();
+    reader.readTree.mockResolvedValue(tree(1));
+    reader.readCount.mockResolvedValue(1);
+    reader.clickMoreBatch.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+    reader.waitForGrowth.mockResolvedValue(false);
+
+    const result = await collectComments(reader, {
+      postId: 'post1',
+      settleMs: 500,
+    });
+
+    expect(result.timings.settleMs).toBe(0);
+  });
+
+  it('does not sleep on rounds where nothing was clicked', async () => {
+    const reader = makeReader();
+    reader.readTree.mockResolvedValue(tree(2));
+    reader.readCount.mockResolvedValue(2);
+    reader.clickMoreBatch.mockResolvedValue(0);
+
+    const result = await collectComments(reader, {
+      postId: 'post1',
+      settleMs: 500,
+    });
+
+    expect(result.timings.settleMs).toBe(0);
+  });
+
+  it('returns every comment from a large batch-driven tree without duplicates', async () => {
+    const total = 260;
+    const reader = makeReader();
+    reader.readTree
+      .mockResolvedValueOnce(tree(25))
+      .mockResolvedValue(tree(total));
+    reader.readCount.mockImplementation(() => {
+      const current = reader.clickMoreBatch.mock.calls.length * 32 + 25;
+      return Promise.resolve(Math.min(total, current));
+    });
+    reader.clickMoreBatch.mockImplementation(() => {
+      const clickedRounds = reader.clickMoreBatch.mock.calls.length;
+      return Promise.resolve(25 + clickedRounds * 32 < total ? 32 : 0);
+    });
+    reader.waitForGrowth.mockResolvedValue(true);
+
+    const result = await collectComments(reader, {
+      postId: 'post1',
+      settleMs: 0,
+      cap: 500,
+    });
+
+    const ids = result.comments.map((comment) => comment.id);
+    expect(result.comments).toHaveLength(total);
+    expect(new Set(ids).size).toBe(total);
+    expect(result.comments.every((comment) => comment.body.length > 0)).toBe(
+      true,
+    );
   });
 });

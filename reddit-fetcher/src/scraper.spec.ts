@@ -13,7 +13,12 @@ jest.mock('puppeteer-extra-plugin-stealth', () => ({
   __esModule: true,
   default: jest.fn(() => ({})),
 }));
-jest.mock('./comment-collection', () => ({ collectComments: jest.fn() }));
+jest.mock('./comment-collection', () => {
+  const actual = jest.requireActual<typeof import('./comment-collection')>(
+    './comment-collection',
+  );
+  return { ...actual, collectComments: jest.fn() };
+});
 jest.mock('fingerprint-generator', () => ({
   FingerprintGenerator: jest.fn().mockImplementation(() => ({
     getFingerprint: jest.fn(() => ({
@@ -25,12 +30,16 @@ jest.mock('fingerprint-generator', () => ({
   })),
 }));
 
+process.env.REDDIT_EMBED_COMMENTS = 'false';
+
 const { chromium } = jest.requireMock<{
   chromium: { use: jest.Mock; connect: jest.Mock };
 }>('playwright-extra');
 
 function makePageMock() {
   const page = {
+    on: jest.fn(),
+    off: jest.fn(),
     goto: jest.fn().mockResolvedValue(undefined),
     waitForSelector: jest.fn().mockResolvedValue(true),
     waitForFunction: jest.fn().mockResolvedValue(undefined),
@@ -79,6 +88,8 @@ describe('RedditScraper.fetchTopPosts', () => {
         case 'waitForPostGrowth':
           return false;
         default:
+          if (fn.name === 'findVisibleContinuationLinks') return [];
+          if (fn.name === 'dismissLoginModal') return 0;
           throw new Error(`unexpected evaluate: ${fn.name}`);
       }
     });
@@ -106,6 +117,78 @@ describe('RedditScraper.fetchTopPosts', () => {
       expect.anything(),
     );
     expect(JSON.stringify(page.evaluate.mock.calls)).not.toContain('.json');
+  });
+
+  it('scrolls the feed and returns posts that render after the first snapshot', async () => {
+    const page = makePageMock();
+    const one = feedHtml;
+    const three = ['abc', 'def', 'ghi']
+      .map(
+        (id) =>
+          `<shreddit-post id="t3_${id}" post-title="Post ${id}" author="u1" score="5" created-timestamp="2026-11-13T00:00:00.000000+0000"></shreddit-post>`,
+      )
+      .join('');
+    let reads = 0;
+    page.evaluate.mockImplementation((fn: () => unknown) => {
+      switch (fn.name) {
+        case 'readPostFeed':
+          reads += 1;
+          return reads === 1
+            ? { html: one, count: 1, valid: true }
+            : { html: three, count: 3, valid: true };
+        case 'scrollForMorePosts':
+          return 3;
+        case 'waitForPostGrowth':
+          return true;
+        default:
+          throw new Error(`unexpected evaluate: ${fn.name}`);
+      }
+    });
+    chromium.connect.mockResolvedValue(makeBrowserMock(page));
+
+    const scraper = new RedditScraper('ws://browserless:3000');
+    const result = await scraper.fetchTopPosts('webdev', { limit: 10 });
+
+    expect(result.posts.map((post) => post.id)).toEqual(['abc', 'def', 'ghi']);
+    expect(
+      page.evaluate.mock.calls.some(
+        ([fn]: [() => unknown]) => fn.name === 'scrollForMorePosts',
+      ),
+    ).toBe(true);
+  });
+
+  it('uses the feed reload-url to fetch the next server-rendered page', async () => {
+    const page = makePageMock();
+    const first =
+      '<shreddit-post id="t3_abc" post-title="Post abc" author="u1" score="5" created-timestamp="2026-11-13T00:00:00.000000+0000"></shreddit-post>';
+    const second =
+      '<shreddit-post id="t3_def" post-title="Post def" author="u1" score="4" created-timestamp="2026-11-13T00:00:00.000000+0000"></shreddit-post>';
+    page.evaluate.mockImplementation((fn: () => unknown) => {
+      switch (fn.name) {
+        case 'readPostFeed':
+          return {
+            html: first,
+            count: 1,
+            valid: true,
+            reloadUrl:
+              '/svc/shreddit/community-more-posts/top/?t=WEEK&name=webdev',
+          };
+        case 'fetchMorePosts':
+          return { ok: true, html: second, count: 1 };
+        default:
+          throw new Error(`unexpected evaluate: ${fn.name}`);
+      }
+    });
+    chromium.connect.mockResolvedValue(makeBrowserMock(page));
+
+    const scraper = new RedditScraper('ws://browserless:3000');
+    const result = await scraper.fetchTopPosts('webdev', { limit: 2 });
+
+    expect(result.posts.map((post) => post.id)).toEqual(['abc', 'def']);
+    expect(page.evaluate).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.stringContaining('after=t3_abc'),
+    );
   });
 
   it('returns isInvalid true when the subreddit shell has no feed', async () => {
@@ -191,7 +274,9 @@ describe('RedditScraper.fetchPostComments', () => {
     collectComments.mockResolvedValue(collected);
 
     const scraper = new RedditScraper('ws://browserless:3000');
-    const result = await scraper.fetchPostComments('webdev', 'postabc');
+    const result = await scraper.fetchPostComments('webdev', 'postabc', {
+      settleMs: 0,
+    });
 
     expect(result).toEqual(collected.comments);
     expect(page.goto).toHaveBeenCalledWith(
@@ -215,6 +300,41 @@ describe('RedditScraper.fetchPostComments', () => {
     expect(optionsArg.postId).toBe('postabc');
     expect(optionsArg.budgetMs).toBeLessThanOrEqual(85_000);
     expect(typeof optionsArg.collectContinuations).toBe('function');
+  });
+
+  it('resumes to the hard cap when the soft cap misses the word guard', async () => {
+    const page = makePageMock();
+    chromium.connect.mockResolvedValue(makeBrowserMock(page));
+    const short = Array.from({ length: 300 }, (_, i) => ({
+      id: `s${i}`,
+      body: 'one',
+      author: 'a',
+      score: 1,
+      parent_id: 'postabc',
+      created_utc: 1,
+    }));
+    const full = Array.from({ length: 500 }, (_, i) => ({
+      ...short[i % short.length],
+      id: `f${i}`,
+      body: 'one two three four five six seven eight',
+    }));
+    collectComments
+      .mockResolvedValueOnce({
+        comments: short,
+        renderedCount: 25,
+        expandedCount: 275,
+      })
+      .mockResolvedValueOnce({
+        comments: full,
+        renderedCount: 300,
+        expandedCount: 200,
+      });
+
+    const scraper = new RedditScraper('ws://browserless:3000');
+    const result = await scraper.fetchPostComments('webdev', 'postabc');
+
+    expect(collectComments).toHaveBeenCalledTimes(2);
+    expect(result).toHaveLength(500);
   });
 
   it('fails when reddit redirects to a different thread', async () => {
@@ -259,6 +379,7 @@ describe('RedditScraper.fetchPostComments', () => {
     const page = makePageMock();
     page.evaluate.mockImplementation((fn: () => unknown) => {
       if (fn.name === 'isForbiddenPage') return false;
+      if (fn.name === 'readExpectedCommentCount') return 0;
       return Promise.reject(new Error('evaluate timed out after 10000 ms'));
     });
     chromium.connect.mockResolvedValue(makeBrowserMock(page));
@@ -268,7 +389,7 @@ describe('RedditScraper.fetchPostComments', () => {
       scraper.fetchPostComments('webdev', 'postabc'),
     ).rejects.toThrow(/timed out/);
 
-    expect(page.evaluate).toHaveBeenCalledTimes(4);
+    expect(page.evaluate).toHaveBeenCalledTimes(6);
   });
 
   it('merges a continuation page and drops the duplicate linked comment', async () => {
@@ -288,10 +409,16 @@ describe('RedditScraper.fetchPostComments', () => {
       switch (fn.name) {
         case 'readCommentCount':
           return 2;
+        case 'readExpectedCommentCount':
+          return 0;
         case 'readCommentTree':
           return { html: mainHtml, count: 1 };
         case 'clickMoreReplies':
           return false;
+        case 'findVisibleContinuationLinks':
+          return [];
+        case 'dismissLoginModal':
+          return 0;
         case 'findContinuationLinks':
           return [
             {
@@ -308,6 +435,8 @@ describe('RedditScraper.fetchPostComments', () => {
         case 'waitForCommentGrowth':
           return false;
         default:
+          if (fn.name === 'findVisibleContinuationLinks') return [];
+          if (fn.name === 'dismissLoginModal') return 0;
           throw new Error(`unexpected evaluate: ${fn.name}`);
       }
     });
@@ -317,10 +446,16 @@ describe('RedditScraper.fetchPostComments', () => {
       switch (fn.name) {
         case 'readCommentCount':
           return 2;
+        case 'readExpectedCommentCount':
+          return 0;
         case 'readCommentTree':
           return { html: continuationHtml, count: 2 };
         case 'clickMoreReplies':
           return false;
+        case 'findVisibleContinuationLinks':
+          return [];
+        case 'dismissLoginModal':
+          return 0;
         case 'findContinuationLinks':
           return [];
         case 'isForbiddenPage':
@@ -332,6 +467,8 @@ describe('RedditScraper.fetchPostComments', () => {
         case 'waitForCommentGrowth':
           return false;
         default:
+          if (fn.name === 'findVisibleContinuationLinks') return [];
+          if (fn.name === 'dismissLoginModal') return 0;
           throw new Error(`unexpected evaluate: ${fn.name}`);
       }
     });
@@ -344,7 +481,9 @@ describe('RedditScraper.fetchPostComments', () => {
     chromium.connect.mockResolvedValue(makeBrowserMock(mainPage));
 
     const scraper = new RedditScraper('ws://browserless:3000');
-    const comments = await scraper.fetchPostComments('webdev', 'postabc');
+    const comments = await scraper.fetchPostComments('webdev', 'postabc', {
+      settleMs: 0,
+    });
 
     expect(comments.map((c) => c.id)).toEqual(['owner', 'child']);
     expect(comments[1].parent_id).toBe('owner');
@@ -363,7 +502,7 @@ describe('RedditScraper.fetchPostComments', () => {
     collectComments.mockResolvedValue(collected);
 
     const scraper = new RedditScraper('ws://browserless:3000');
-    await scraper.fetchPostComments('webdev', 'postabc');
+    await scraper.fetchPostComments('webdev', 'postabc', { settleMs: 0 });
 
     expect(page.evaluate).toHaveBeenCalledWith(waitForStableTree, {
       quietMs: 250,
@@ -381,7 +520,7 @@ describe('RedditScraper.fetchPostComments', () => {
       'ws://browserless:3000',
       logger as unknown as pino.Logger,
     );
-    await scraper.fetchPostComments('webdev', 'postabc');
+    await scraper.fetchPostComments('webdev', 'postabc', { settleMs: 0 });
 
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -427,10 +566,16 @@ describe('RedditScraper.fetchPostComments', () => {
       switch (fn.name) {
         case 'readCommentCount':
           return 2;
+        case 'readExpectedCommentCount':
+          return 0;
         case 'readCommentTree':
           return { html: treeHtml, count: 2 };
         case 'clickMoreReplies':
           return false;
+        case 'findVisibleContinuationLinks':
+          return [];
+        case 'dismissLoginModal':
+          return 0;
         case 'findContinuationLinks':
           return [];
         case 'isForbiddenPage':
@@ -442,13 +587,17 @@ describe('RedditScraper.fetchPostComments', () => {
         case 'waitForCommentGrowth':
           return false;
         default:
+          if (fn.name === 'findVisibleContinuationLinks') return [];
+          if (fn.name === 'dismissLoginModal') return 0;
           throw new Error(`unexpected evaluate: ${fn.name}`);
       }
     });
     chromium.connect.mockResolvedValue(makeBrowserMock(page));
 
     const scraper = new RedditScraper('ws://browserless:3000');
-    const comments = await scraper.fetchPostComments('webdev', 'postabc');
+    const comments = await scraper.fetchPostComments('webdev', 'postabc', {
+      settleMs: 0,
+    });
 
     expect(comments).toEqual([
       {
@@ -498,6 +647,8 @@ describe('RedditScraper dead-connection recovery', () => {
         case 'waitForPostGrowth':
           return false;
         default:
+          if (fn.name === 'findVisibleContinuationLinks') return [];
+          if (fn.name === 'dismissLoginModal') return 0;
           throw new Error(`unexpected evaluate: ${fn.name}`);
       }
     });
@@ -577,5 +728,101 @@ describe('forbidden thread through the route', () => {
 
     expect(res.status).toBe(502);
     expect(res.body).toEqual({ error: 'reddit returned a forbidden page' });
+  });
+});
+
+describe('RedditScraper embedded comment source', () => {
+  const longComment = {
+    id: 'c1',
+    body: 'word '.repeat(2_600),
+    author: 'a1',
+    score: 10,
+    parent_id: 'postabc',
+    created_utc: 1_760_000_000,
+  };
+
+  beforeEach(() => {
+    process.env.REDDIT_EMBED_COMMENTS = 'true';
+    chromium.connect.mockReset();
+  });
+
+  afterEach(() => {
+    process.env.REDDIT_EMBED_COMMENTS = 'false';
+  });
+
+  it('uses the embed response and never opens a browser when it is sufficient', async () => {
+    const embedFetcher = jest.fn().mockResolvedValue({
+      comments: [longComment],
+      remaining: 80,
+    });
+    const scraper = new RedditScraper(
+      'ws://browserless:3000',
+      makeFakeLogger(),
+      embedFetcher,
+    );
+
+    const result = await scraper.fetchPostComments('webdev', 'postabc');
+
+    expect(result).toEqual([longComment]);
+    expect(embedFetcher).toHaveBeenCalledWith(
+      'webdev',
+      'postabc',
+      expect.objectContaining({ cap: 500 }),
+    );
+    expect(chromium.connect).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the browser when the embed request fails', async () => {
+    const embedFetcher = jest.fn().mockRejectedValue(new Error('HTTP 429'));
+    const scraper = new RedditScraper(
+      'ws://browserless:3000',
+      makeFakeLogger(),
+      embedFetcher,
+    );
+    const page = makePageMock();
+    chromium.connect.mockResolvedValue(makeBrowserMock(page));
+    const { collectComments } = jest.requireMock<{
+      collectComments: jest.Mock;
+    }>('./comment-collection');
+    collectComments.mockResolvedValue({
+      comments: [longComment],
+      renderedCount: 1,
+      expandedCount: 1,
+    });
+
+    const result = await scraper.fetchPostComments('webdev', 'postabc');
+
+    expect(result).toEqual([longComment]);
+    expect(embedFetcher).toHaveBeenCalled();
+    expect(chromium.connect).toHaveBeenCalled();
+  });
+
+  it('falls back to the browser when the embed has too few words', async () => {
+    const shortComment = { ...longComment, body: 'too short' };
+    const embedFetcher = jest.fn().mockResolvedValue({
+      comments: [shortComment],
+      remaining: 80,
+    });
+    const scraper = new RedditScraper(
+      'ws://browserless:3000',
+      makeFakeLogger(),
+      embedFetcher,
+    );
+    const page = makePageMock();
+    chromium.connect.mockResolvedValue(makeBrowserMock(page));
+    const { collectComments } = jest.requireMock<{
+      collectComments: jest.Mock;
+    }>('./comment-collection');
+    collectComments.mockResolvedValue({
+      comments: [longComment],
+      renderedCount: 1,
+      expandedCount: 1,
+    });
+
+    const result = await scraper.fetchPostComments('webdev', 'postabc');
+
+    expect(result).toEqual([longComment]);
+    expect(embedFetcher).toHaveBeenCalled();
+    expect(chromium.connect).toHaveBeenCalled();
   });
 });

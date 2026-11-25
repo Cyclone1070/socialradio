@@ -52,8 +52,8 @@ describe('Migration schema snapshot', () => {
   });
 
   describe('committed migrations', () => {
-    it('are a single migration that only contains generated statements', () => {
-      expect(migrationFiles()).toHaveLength(1);
+    it('are migrations that only contain generated statements', () => {
+      expect(migrationFiles()).toHaveLength(2);
 
       const statements = migrationSql().match(
         /rename column|drop column|alter column|update "|insert into/gi,

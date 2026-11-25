@@ -35,6 +35,11 @@ cp .env.example .env      # fill in LLM_API_KEY; the rest works as-is against lo
 docker compose -f deployment/docker/docker-compose.yml up --build
 ```
 
+On macOS with podman, use `podman compose -f deployment/docker/docker-compose.yml up --build`.
+Every service then runs inside the podman machine, so the topology matches deployment:
+the app reaches the fetcher by service name, and the fetcher reaches browserless over the
+compose network rather than a host-to-VM forward.
+
 Migrations run as their own compose service, never on app boot. Ports: app `:3000`, SeaweedFS `:9000`
 (console `:9001`), browserless `:4000`, speech service `:3002`; the fetcher is reachable only inside the
 compose network. A station needs rows in the music, break liner and jingle tables before it sounds like anything

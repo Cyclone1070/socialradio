@@ -3,12 +3,16 @@ import { parseCommentTree } from './comments';
 import {
   clickMoreReplies,
   clickMoreRepliesBatch,
+  findVisibleContinuationLinks,
   findContinuationLinks,
   readCommentCount,
   readCommentTree,
+  readExpectedCommentCount,
   isForbiddenPage,
+  isRedditChallengeUrl,
   readPostFeed,
   waitForCommentGrowth,
+  waitForCommentGrowthCount,
   waitForPostGrowth,
   waitForStableTree,
 } from './dom';
@@ -26,6 +30,20 @@ describe('readCommentCount', () => {
 });
 
 describe('readCommentTree', () => {
+  it('includes comments rendered outside #comment-tree', () => {
+    const document = doc(
+      '<div id="comment-tree"><shreddit-comment thingid="t1_a"><div slot="comment">a</div></shreddit-comment></div><shreddit-comment thingid="t1_b"><div slot="comment">b</div></shreddit-comment>',
+    );
+
+    const snapshot = readCommentTree(document);
+
+    expect(snapshot.count).toBe(2);
+    expect(parseCommentTree(snapshot.html).map((c) => c.thingId)).toEqual([
+      't1_a',
+      't1_b',
+    ]);
+  });
+
   it('reads a continuation page that has comments but no #comment-tree', () => {
     const document = doc(
       '<shreddit-comment thingid="t1_a"><div slot="comment">a</div><shreddit-comment thingid="t1_b"><div slot="comment">b</div></shreddit-comment></shreddit-comment>',
@@ -95,22 +113,90 @@ describe('clickMoreReplies', () => {
 });
 
 describe('clickMoreRepliesBatch', () => {
-  it('clicks up to the batch size, marks buttons, and skips them next time', () => {
+  it('clicks up to the batch size and can re-click a still-present control', () => {
     const document = doc(
       '<button>3 more replies</button><button>4 more replies</button><button>5 more replies</button>',
     );
+    let clicks = 0;
+    for (const button of document.querySelectorAll('button')) {
+      button.addEventListener('click', () => {
+        clicks += 1;
+      });
+    }
 
     expect(clickMoreRepliesBatch({ maxClicks: 2 }, document)).toBe(2);
-    expect(clickMoreRepliesBatch({ maxClicks: 2 }, document)).toBe(1);
-    expect(clickMoreRepliesBatch({ maxClicks: 2 }, document)).toBe(0);
+    expect(clickMoreRepliesBatch({ maxClicks: 2 }, document)).toBe(2);
+    expect(clicks).toBe(4);
   });
 
-  it('ignores anchors and already-expanded buttons', () => {
+  it('scrolls an off-screen control into view before clicking it', () => {
+    const document = doc('<button>5 more replies</button>');
+    const button = document.querySelector('button')!;
+    const scrollIntoView = jest.fn();
+    button.scrollIntoView = scrollIntoView;
+    button.getBoundingClientRect = () =>
+      ({ top: 2_000, bottom: 2_020 }) as DOMRect;
+
+    clickMoreRepliesBatch({ maxClicks: 1 }, document);
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center' });
+  });
+
+  it('scrolls a visible control too, to wake lazy rendering', () => {
+    const document = doc('<button>5 more replies</button>');
+    const button = document.querySelector('button')!;
+    const scrollIntoView = jest.fn();
+    button.scrollIntoView = scrollIntoView;
+    button.getBoundingClientRect = () => ({ top: 100, bottom: 120 }) as DOMRect;
+
+    clickMoreRepliesBatch({ maxClicks: 1 }, document);
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center' });
+  });
+
+  it('ignores anchors but re-clicks a button even if it was clicked before', () => {
     const document = doc(
-      '<a href="/x?force-legacy-sct=1">3 more replies</a><button data-qa-clicked="1">4 more replies</button>',
+      '<a href="/x?force-legacy-sct=1">3 more replies</a><button data-qa-clicked-at="4 more replies">4 more replies</button>',
     );
 
-    expect(clickMoreRepliesBatch({ maxClicks: 5 }, document)).toBe(0);
+    expect(clickMoreRepliesBatch({ maxClicks: 5 }, document)).toBe(1);
+  });
+
+  it('re-clicks a reused button whose label changed', () => {
+    const document = doc('<button>5 more replies</button>');
+
+    expect(clickMoreRepliesBatch({ maxClicks: 5 }, document)).toBe(1);
+    document.querySelector('button')!.textContent = '2 more replies';
+    expect(clickMoreRepliesBatch({ maxClicks: 5 }, document)).toBe(1);
+    expect(clickMoreRepliesBatch({ maxClicks: 5 }, document)).toBe(1);
+  });
+});
+
+describe('findVisibleContinuationLinks', () => {
+  it('returns only visible anchors, deduped by href', () => {
+    const document = doc(`
+      <shreddit-comment thingid="t1_a">
+        <a href="/r/x/comments/p/comment/a/?force-legacy-sct=1">3 more replies</a>
+        <a href="/r/x/comments/p/comment/a/?force-legacy-sct=1">3 more replies</a>
+      </shreddit-comment>
+      <shreddit-comment thingid="t1_b">
+        <a href="/r/x/comments/p/comment/b/?force-legacy-sct=1">2 more replies</a>
+      </shreddit-comment>
+    `);
+    const anchors = [...document.querySelectorAll('a')];
+    Object.defineProperty(anchors[0], 'offsetWidth', { value: 40 });
+    Object.defineProperty(anchors[1], 'offsetWidth', { value: 40 });
+    Object.defineProperty(anchors[2], 'offsetWidth', { value: 0 });
+    Object.defineProperty(anchors[2], 'offsetHeight', { value: 0 });
+
+    expect(findVisibleContinuationLinks(document)).toEqual([
+      {
+        href: '/r/x/comments/p/comment/a/?force-legacy-sct=1',
+        ownerId: 't1_a',
+        depth: 0,
+        more: 3,
+      },
+    ]);
   });
 });
 
@@ -129,10 +215,14 @@ describe('findContinuationLinks', () => {
       {
         href: '/r/x/comments/p/comment/a/?force-legacy-sct=1',
         ownerId: 't1_a',
+        depth: 0,
+        more: 48,
       },
       {
         href: '/r/x/comments/p/comment/b/?force-legacy-sct=1',
         ownerId: 't1_b',
+        depth: 0,
+        more: 11,
       },
     ]);
   });
@@ -185,6 +275,52 @@ describe('waitForCommentGrowth', () => {
   });
 });
 
+describe('waitForCommentGrowthCount', () => {
+  const install = (html: string) => {
+    const { window } = new JSDOM(html);
+    const scope = globalThis as {
+      document?: Document;
+      MutationObserver?: typeof MutationObserver;
+    };
+    scope.document = window.document;
+    scope.MutationObserver = window.MutationObserver;
+    return {
+      document: window.document,
+      restore: () => {
+        delete scope.document;
+        delete scope.MutationObserver;
+      },
+    };
+  };
+
+  it('returns the grown count, avoiding a second count RPC', async () => {
+    const { document, restore } = install(
+      '<div id="comment-tree"><shreddit-comment></shreddit-comment></div>',
+    );
+    const pending = waitForCommentGrowthCount({
+      previousCount: 1,
+      timeoutMs: 500,
+    });
+    document
+      .querySelector('#comment-tree')
+      ?.appendChild(document.createElement('shreddit-comment'));
+
+    await expect(pending).resolves.toEqual({ count: 2, grew: true });
+    restore();
+  });
+
+  it('returns the current count at the timeout', async () => {
+    const { restore } = install(
+      '<div id="comment-tree"><shreddit-comment></shreddit-comment></div>',
+    );
+
+    await expect(
+      waitForCommentGrowthCount({ previousCount: 1, timeoutMs: 40 }),
+    ).resolves.toEqual({ count: 1, grew: false });
+    restore();
+  });
+});
+
 describe('waitForStableTree', () => {
   it('resolves with the count once the tree stops changing', async () => {
     const { window } = new JSDOM(
@@ -220,6 +356,7 @@ describe('readPostFeed', () => {
       html: '<shreddit-post id="t3_a"></shreddit-post><shreddit-post id="t3_b"></shreddit-post>',
       count: 2,
       valid: true,
+      reloadUrl: null,
     });
   });
 
@@ -228,6 +365,7 @@ describe('readPostFeed', () => {
       html: '',
       count: 0,
       valid: false,
+      reloadUrl: null,
     });
   });
 });
@@ -256,6 +394,30 @@ describe('waitForPostGrowth', () => {
 
     delete scope.document;
     delete scope.MutationObserver;
+  });
+});
+
+describe('readExpectedCommentCount', () => {
+  it('reads the advertised count and tolerates a missing post', () => {
+    expect(
+      readExpectedCommentCount(
+        doc('<shreddit-post comment-count="853"></shreddit-post>'),
+      ),
+    ).toBe(853);
+    expect(readExpectedCommentCount(doc('<main></main>'))).toBe(0);
+  });
+});
+
+describe('isRedditChallengeUrl', () => {
+  it('recognizes the challenge interstitial and lets a normal thread through', () => {
+    expect(
+      isRedditChallengeUrl(
+        'https://www.reddit.com/r/x/comments/y/?solution=abc&js_challenge=1&jsc_token=def',
+      ),
+    ).toBe(true);
+    expect(isRedditChallengeUrl('https://www.reddit.com/r/x/comments/y/')).toBe(
+      false,
+    );
   });
 });
 

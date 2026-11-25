@@ -54,12 +54,13 @@ export class RedditScraperService {
    * client would only give up after five minutes of silence, and any byte resets
    * that clock, so a browser job that hangs can hold the scrape claim - and every
    * other instance standing aside - for the length of the walk. This is our own
-   * ceiling instead, generous enough that a cold browser under load still fits.
+   * ceiling instead. The fetcher's own comment budget is 90s, so this must be
+   * comfortably above that; 60s used to abort successful comment collections.
    */
   private get deadlineMs(): number {
     const raw = this.configService.get<string>('REDDIT_FETCHER_TIMEOUT_MS');
     const parsed = raw ? parseFloat(raw) : NaN;
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : 60000;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 180000;
   }
 
   private async getJson(path: string): Promise<unknown> {

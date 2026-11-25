@@ -398,7 +398,7 @@ describe('QueueService', () => {
       expect(mockContentContract.scrapeSubreddit).toHaveBeenCalledWith('funny');
     });
 
-    it('should run background scrapes sequentially without awaiting in bufferAhead', async () => {
+    it('should enqueue background scrapes sequentially and await the enqueue', async () => {
       const channelId = 'chan-1';
       mockSegmentRepo.count.mockResolvedValue(0);
       setupChannelSubreddits([
@@ -410,14 +410,14 @@ describe('QueueService', () => {
       ]);
       mockContentContract.getPostsBySubredditIds.mockResolvedValue([]);
 
-      let scrapeResolve: () => void;
-      const scrapePromise = new Promise<void>((resolve) => {
-        scrapeResolve = resolve;
+      const enqueued: string[] = [];
+      mockContentContract.scrapeSubreddit.mockImplementation((name: string) => {
+        enqueued.push(name);
+        return Promise.resolve();
       });
-      mockContentContract.scrapeSubreddit.mockReturnValue(scrapePromise);
 
       await expect(service.bufferAhead(channelId)).resolves.toBeUndefined();
-      scrapeResolve!();
+      expect(enqueued).toEqual(['sub1']);
     });
   });
 

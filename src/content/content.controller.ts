@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Delete, Body, UseGuards } from '@nestjs/common';
-import { ScraperService, ScrapeSubredditResult } from './scraper.service';
+import { ScraperService } from './scraper.service';
+import { ScrapeQueueService } from './scrape-queue.service';
 import { InjectRepository } from '@mikro-orm/nestjs';
 import { EntityRepository } from '@mikro-orm/postgresql';
 import { Subreddit } from './entities/subreddit.entity';
@@ -17,6 +18,7 @@ import { ScrapeSubredditDto } from './dto/scrape-subreddit.dto';
 export class ContentController {
   constructor(
     private readonly scraperService: ScraperService,
+    private readonly scrapeQueue: ScrapeQueueService,
     @InjectRepository(SubredditSchema)
     private readonly subredditRepo: EntityRepository<Subreddit>,
     @InjectRepository(PostSchema)
@@ -24,11 +26,10 @@ export class ContentController {
   ) {}
 
   @Post('scrape')
-  async scrape(
-    @Body() dto: ScrapeSubredditDto,
-  ): Promise<ScrapeSubredditResult> {
+  async scrape(@Body() dto: ScrapeSubredditDto): Promise<{ jobId: string }> {
     const normalizedName = dto.subredditName?.trim().toLowerCase();
-    return this.scraperService.scrapeSubreddit(normalizedName);
+    const job = await this.scrapeQueue.enqueue(normalizedName);
+    return { jobId: job.id };
   }
 
   @Delete('cache')

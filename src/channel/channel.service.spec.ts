@@ -112,6 +112,32 @@ describe('ChannelService', () => {
       expect(mockEntityManager.flush).toHaveBeenCalled();
     });
 
+    it('should enqueue an initial scrape for a new subreddit and still subscribe', async () => {
+      const channelId = 'chan-1';
+      const normalizedName = 'askreddit';
+      const subreddit = { id: 'sub-1', name: normalizedName };
+      const channel = Object.assign(new Channel(), {
+        id: channelId,
+        subreddits: {
+          getItems: jest.fn().mockReturnValue([] as SubredditRef[]),
+          add: jest.fn(),
+        },
+      });
+
+      mockChannelRepo.findOne.mockResolvedValue(channel);
+      mockContentContract.getSubredditByName
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(subreddit);
+
+      await service.subscribeToSubreddit(channelId, 'AskReddit');
+
+      expect(mockContentContract.scrapeSubreddit).toHaveBeenCalledWith(
+        normalizedName,
+      );
+      expect(channel.subreddits.add).toHaveBeenCalled();
+      expect(mockEntityManager.flush).toHaveBeenCalled();
+    });
+
     it('should be idempotent if channel is already subscribed', async () => {
       const channelId = 'chan-1';
       const subName = 'askreddit';

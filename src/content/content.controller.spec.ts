@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@mikro-orm/nestjs';
 import { ContentController } from './content.controller';
 import { ScraperService } from './scraper.service';
+import { ScrapeQueueService } from './scrape-queue.service';
 import {
   SubredditSchema,
   PostSchema,
@@ -12,8 +13,11 @@ describe('ContentController', () => {
   let controller: ContentController;
 
   const mockScraperService = {
-    scrapeSubreddit: jest.fn(),
     cleanupOldData: jest.fn(),
+  };
+
+  const mockScrapeQueue = {
+    enqueue: jest.fn(),
   };
 
   const mockSubredditRepo = {
@@ -33,6 +37,7 @@ describe('ContentController', () => {
       controllers: [ContentController],
       providers: [
         { provide: ScraperService, useValue: mockScraperService },
+        { provide: ScrapeQueueService, useValue: mockScrapeQueue },
         {
           provide: getRepositoryToken(SubredditSchema),
           useValue: mockSubredditRepo,
@@ -51,19 +56,15 @@ describe('ContentController', () => {
   });
 
   describe('scrape', () => {
-    it('should trigger scraper service for the subreddit and return the scrape result', async () => {
-      mockScraperService.scrapeSubreddit.mockResolvedValue({
-        scrapedPostsCount: 2,
-      });
+    it('should enqueue the subreddit and return the job id', async () => {
+      mockScrapeQueue.enqueue.mockResolvedValue({ id: 'job-1' });
 
       const result = await controller.scrape({
         subredditName: 'AskReddit',
       });
 
-      expect(result).toEqual({ scrapedPostsCount: 2 });
-      expect(mockScraperService.scrapeSubreddit).toHaveBeenCalledWith(
-        'askreddit',
-      );
+      expect(result).toEqual({ jobId: 'job-1' });
+      expect(mockScrapeQueue.enqueue).toHaveBeenCalledWith('askreddit');
     });
   });
 

@@ -778,14 +778,18 @@ export class QueueService {
       if (subsToScrape.length > 0) {
         this.logger.info(
           { channelId, subsToScrape, activeCount: activeSubs.length },
-          'background scrape chain started',
+          'background scrape jobs enqueued',
         );
-        const runSequentialScrapes = async (): Promise<void> => {
-          for (const name of subsToScrape) {
-            await this.contentContract.scrapeSubreddit(name).catch(() => {});
-          }
-        };
-        void runSequentialScrapes();
+        for (const name of subsToScrape) {
+          await this.contentContract
+            .scrapeSubreddit(name)
+            .catch((err: unknown) => {
+              this.logger.warn(
+                { channelId, name, err },
+                'failed to enqueue background scrape job',
+              );
+            });
+        }
       }
     }
   }

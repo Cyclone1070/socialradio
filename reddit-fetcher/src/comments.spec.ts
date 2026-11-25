@@ -525,3 +525,26 @@ describe('rendered thread extraction', () => {
     ]);
   });
 });
+
+describe('parseCommentTree golden fixture', () => {
+  it('preserves ids, bodies and word count across a large thread', () => {
+    const total = 120;
+    const html = Array.from(
+      { length: total },
+      (_, i) =>
+        `<shreddit-comment thingid="t1_g${i}" author="u${i}" score="${total - i}" created="2026-11-13T00:00:00.000000+0000" depth="0"><div slot="comment">word ${i} ${'filler '.repeat(24)}</div></shreddit-comment>`,
+    ).join('');
+
+    const parsed = parseCommentTree(html);
+    const ids = parsed.map((comment) => comment.thingId);
+    const words = parsed.reduce(
+      (sum, comment) => sum + comment.body.split(/\s+/).filter(Boolean).length,
+      0,
+    );
+
+    expect(parsed).toHaveLength(total);
+    expect(new Set(ids).size).toBe(total);
+    expect(words).toBeGreaterThan(2_500);
+    expect(parsed.every((comment) => comment.body.length > 0)).toBe(true);
+  });
+});

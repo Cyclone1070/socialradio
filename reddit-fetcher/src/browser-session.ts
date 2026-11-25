@@ -9,6 +9,14 @@ import pino from 'pino';
 const CONTEXT_IDLE_MS = 10 * 60 * 1000;
 
 /**
+ * Reddit's per-context quota starts around 221 units and drops by ~9 per full
+ * comment page. Rotate before the bucket empties so the next page load starts
+ * on a fresh context instead of returning 429.
+ */
+const DEFAULT_QUOTA_ROTATE_AT = 40;
+const DEFAULT_MAX_PAGES_PER_CONTEXT = 18;
+
+/**
  * Owns the browserless connection, the per-subreddit context cache, and the
  * retry policy. Scraping code gets a page and never touches the socket.
  */
@@ -17,6 +25,36 @@ export class BrowserSession {
   private readonly fingerprintGenerator = new FingerprintGenerator();
   private readonly contexts = new Map<string, BrowserContext>();
   private readonly lastUsedAt = new Map<string, number>();
+  private readonly staleContexts = new Set<string>();
+  private readonly quotaRemaining = new Map<string, number>();
+  private readonly quotaExhausted = new Set<string>();
+  private readonly pagesInContext = new Map<string, number>();
+  private readonly quotaFloor = this.numberFromEnv(
+    'REDDIT_CONTEXT_QUOTA_FLOOR',
+    10,
+  );
+  private readonly quotaRotateAt = this.numberFromEnv(
+    'REDDIT_CONTEXT_QUOTA_MIN',
+    DEFAULT_QUOTA_ROTATE_AT,
+  );
+  private readonly maxPagesPerContext = this.numberFromEnv(
+    'REDDIT_CONTEXT_MAX_PAGES',
+    DEFAULT_MAX_PAGES_PER_CONTEXT,
+  );
+
+  private numberFromEnv(name: string, fallback: number): number {
+    const value = Number(process.env[name]);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  }
+
+  /** Watch every response in a context, not just the main thread document. */
+  private watchQuota(subredditName: string, context: BrowserContext): void {
+    if (this.isCdp || typeof context.on !== 'function') return;
+    context.on('response', (response) => {
+      const remaining = response.headers()['x-ratelimit-remaining'];
+      if (remaining !== undefined) this.noteQuota(subredditName, remaining);
+    });
+  }
 
   constructor(
     private readonly wsEndpoint: string,
@@ -27,12 +65,22 @@ export class BrowserSession {
     chromium.use(StealthPlugin());
   }
 
+  /** Connects to browserless (ws) or attaches to a running Chrome (http). */
   private async connect(): Promise<Browser> {
     if (!this.browser) {
-      this.browser = await chromium.connect(this.wsEndpoint);
+      this.browser =
+        this.wsEndpoint === 'local'
+          ? await chromium.launch({ headless: true, channel: 'chrome' })
+          : /^https?:\/\//.test(this.wsEndpoint)
+            ? await chromium.connectOverCDP(this.wsEndpoint)
+            : await chromium.connect(this.wsEndpoint);
       this.logger.info({}, 'browser connected');
     }
     return this.browser;
+  }
+
+  private get isCdp(): boolean {
+    return /^https?:\/\//.test(this.wsEndpoint);
   }
 
   private getFingerprintContextOptions() {
@@ -52,8 +100,54 @@ export class BrowserSession {
     };
   }
 
+  /**
+   * Record the quota header Reddit sends with comment responses. When the
+   * bucket is nearly empty the current context is marked stale; the next
+   * operation rotates to a fresh context before it can hit 429.
+   */
+  noteQuota(subredditName: string, remaining: string | number | null): void {
+    const value = Number(remaining);
+    if (!Number.isFinite(value)) return;
+    this.quotaRemaining.set(subredditName, value);
+    if (value <= this.quotaFloor) this.quotaExhausted.add(subredditName);
+    if (value <= this.quotaRotateAt && !this.staleContexts.has(subredditName)) {
+      this.staleContexts.add(subredditName);
+      this.logger.info(
+        {
+          subreddit: subredditName,
+          remaining: value,
+          rotateAt: this.quotaRotateAt,
+        },
+        'reddit context quota low, rotating context',
+      );
+    }
+  }
+
+  /** True once a response reported the quota at or below the hard floor. */
+  isQuotaExhausted(subredditName: string): boolean {
+    return this.quotaExhausted.has(subredditName);
+  }
+
+  /** Close one subreddit's context; the next operation gets fresh cookies. */
+  async rotateContext(subredditName: string): Promise<void> {
+    const context = this.contexts.get(subredditName);
+    this.contexts.delete(subredditName);
+    this.lastUsedAt.delete(subredditName);
+    this.staleContexts.delete(subredditName);
+    this.quotaRemaining.delete(subredditName);
+    this.quotaExhausted.delete(subredditName);
+    this.pagesInContext.delete(subredditName);
+    if (context) {
+      await context.close().catch(() => {});
+      this.logger.info({ subreddit: subredditName }, 'reddit context rotated');
+    }
+  }
+
   /** Context affinity: same subreddit → same context; different sub → fresh. */
   private async getContext(subredditName: string): Promise<BrowserContext> {
+    if (this.staleContexts.has(subredditName)) {
+      await this.rotateContext(subredditName);
+    }
     const existing = this.contexts.get(subredditName);
     if (existing) {
       this.lastUsedAt.set(subredditName, Date.now());
@@ -63,7 +157,7 @@ export class BrowserSession {
     const now = Date.now();
     for (const [sub, context] of this.contexts) {
       const lastUsed = this.lastUsedAt.get(sub) ?? 0;
-      if (now - lastUsed > CONTEXT_IDLE_MS) {
+      if (!this.isCdp && now - lastUsed > CONTEXT_IDLE_MS) {
         this.logger.debug({ subreddit: sub }, 'idle context evicted');
         await context.close().catch(() => {});
         this.contexts.delete(sub);
@@ -72,11 +166,20 @@ export class BrowserSession {
     }
 
     const browser = await this.connect();
+    if (this.isCdp) {
+      // A real Chrome already has its own (warm) default context.
+      const context = browser.contexts()[0] ?? (await browser.newContext());
+      this.contexts.set(subredditName, context);
+      this.lastUsedAt.set(subredditName, now);
+      this.watchQuota(subredditName, context);
+      return context;
+    }
     const context = await browser.newContext(
       this.getFingerprintContextOptions(),
     );
     this.contexts.set(subredditName, context);
     this.lastUsedAt.set(subredditName, now);
+    this.watchQuota(subredditName, context);
     return context;
   }
 
@@ -90,17 +193,44 @@ export class BrowserSession {
     subredditName: string,
     fn: (page: Page) => Promise<T>,
   ): Promise<T> {
-    try {
-      return await this.withPage(subredditName, fn);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!/closed|connection/i.test(message)) throw err;
-      this.logger.warn(
-        { subreddit: subredditName },
-        'browser session died, reconnecting and retrying',
-      );
-      await this.invalidateConnection();
-      return this.withPage(subredditName, fn);
+    let rateLimitRetried = false;
+    let connectionRetried = false;
+    for (;;) {
+      if (this.staleContexts.has(subredditName)) {
+        await this.rotateContext(subredditName);
+      }
+      try {
+        return await this.withPage(subredditName, fn);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (
+          !rateLimitRetried &&
+          /HTTP 429|rate limit|challenge|stopped expanding|rendered only/i.test(
+            message,
+          )
+        ) {
+          rateLimitRetried = true;
+          this.logger.warn(
+            { subreddit: subredditName },
+            'reddit rate limited the context, retrying on a fresh context',
+          );
+          await this.rotateContext(subredditName);
+          continue;
+        }
+        if (
+          !connectionRetried &&
+          /closed|connection|Request has timed out|Target closed/i.test(message)
+        ) {
+          connectionRetried = true;
+          this.logger.warn(
+            { subreddit: subredditName },
+            'browser session died, reconnecting and retrying',
+          );
+          await this.invalidateConnection();
+          continue;
+        }
+        throw err;
+      }
     }
   }
 
@@ -115,6 +245,10 @@ export class BrowserSession {
     );
     this.contexts.clear();
     this.lastUsedAt.clear();
+    this.staleContexts.clear();
+    this.quotaRemaining.clear();
+    this.quotaExhausted.clear();
+    this.pagesInContext.clear();
     this.logger.info({}, 'browser connection invalidated');
   }
 
@@ -123,6 +257,22 @@ export class BrowserSession {
     fn: (page: Page) => Promise<T>,
   ): Promise<T> {
     const context = await this.getContext(subredditName);
+    const pages = (this.pagesInContext.get(subredditName) ?? 0) + 1;
+    this.pagesInContext.set(subredditName, pages);
+    if (
+      pages >= this.maxPagesPerContext &&
+      !this.staleContexts.has(subredditName)
+    ) {
+      this.staleContexts.add(subredditName);
+      this.logger.info(
+        {
+          subreddit: subredditName,
+          pages,
+          maxPages: this.maxPagesPerContext,
+        },
+        'reddit context page budget reached, rotating next operation',
+      );
+    }
     const page = await withTimeout(context.newPage(), 10_000, 'newPage');
     try {
       return await fn(page);

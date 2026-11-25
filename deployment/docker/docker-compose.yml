@@ -144,6 +144,7 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/socialradio
       REDDIT_FETCHER_URL: http://fetcher:3001
+      REDDIT_FETCHER_TIMEOUT_MS: 180000
       VOICE_SERVICE_URL: http://voice-service:3002
       STORAGE_ENDPOINT: http://seaweedfs:9000
       STORAGE_BUCKET: socialradio-media
@@ -194,7 +195,7 @@ services:
       context: ../../reddit-fetcher
       dockerfile: Dockerfile
     environment:
-      BROWSERLESS_WS_URL: ws://browserless:3000/playwright
+      BROWSERLESS_WS_URL: ws://browserless:3000/playwright/chromium
     depends_on:
       browserless:
         condition: service_started
@@ -205,12 +206,45 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Durable scrape jobs: claims from scrape_job on NOTIFY, runs the existing
+  # scrape walk, and owns retries/leases. Same image as the app, no HTTP port.
+  scrape-worker:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/Dockerfile
+      target: runner
+    command: ["node", "dist/scrape-worker.js"]
+    env_file: ../../.env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/socialradio
+      REDDIT_FETCHER_URL: http://fetcher:3001
+      REDDIT_FETCHER_TIMEOUT_MS: 180000
+    depends_on:
+      db:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+      fetcher:
+        condition: service_started
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   browserless:
-    image: browserless/chrome:latest
+    # Chrome runs inside this image; browserless spawns and controls it.
+    # The deprecated Chrome-121 image is ~2x slower on Reddit than a current
+    # Chrome on the same host, so keep this image on chromium.
+    image: ghcr.io/browserless/chromium:latest
     ports:
       - "4000:3000"
+    shm_size: "1g"
     environment:
-      - MAX_CONCURRENT_SESSIONS=10
+      # Long comment walks outlive the 30s default session timeout.
+      - CONCURRENT=10
+      - CONNECTION_TIMEOUT=2400000
     restart: always
 
 volumes:

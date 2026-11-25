@@ -651,7 +651,7 @@ describe('ScraperService', () => {
 
       const result = await service.scrapeSubreddit(subName);
 
-      expect(result).toEqual({ scrapedPostsCount: 5 });
+      expect(result).toEqual({ scrapedPostsCount: 5, failed: true });
       expect(mockRedditScraper.fetchTopPosts).toHaveBeenCalledTimes(2);
       expect(mockSubredditRepo.nativeDelete).not.toHaveBeenCalled();
       expect(cleanupSpy).toHaveBeenCalled();
@@ -673,7 +673,7 @@ describe('ScraperService', () => {
 
       const result = await service.scrapeSubreddit(subName);
 
-      expect(result).toEqual({ scrapedPostsCount: 0 });
+      expect(result).toEqual({ scrapedPostsCount: 0, failed: true });
       expect(mockSubredditRepo.nativeDelete).not.toHaveBeenCalled();
     });
 
@@ -744,6 +744,51 @@ describe('ScraperService', () => {
         2,
         subName,
         { limit: 100, after: 't3_x' },
+      );
+    });
+
+    it('counts duplicates toward the 100-candidate budget and reads no comments for them', async () => {
+      const subName = 'AskReddit';
+      const subEntity = Object.assign(new Subreddit(), {
+        id: 'sub-uuid',
+        name: subName,
+        lastScrapedAt: null,
+      });
+      const cleanupSpy = jest
+        .spyOn(service, 'cleanupOldData')
+        .mockResolvedValue(undefined);
+      const infoSpy = jest
+        .spyOn(PinoLogger.prototype, 'info')
+        .mockImplementation(() => {});
+
+      mockSubredditRepo.findOne.mockResolvedValue(subEntity);
+      const duplicates = Array.from({ length: 100 }, (_, i) => ({
+        id: `dup${i + 1}`,
+        title: `Dup ${i + 1}`,
+        selftext: '',
+        author: 'op',
+        score: 10,
+        created_utc: 1719999999,
+      }));
+      mockRedditScraper.fetchTopPosts.mockResolvedValue({
+        posts: duplicates,
+        after: null,
+        isInvalid: false,
+      });
+      mockPostRepo.findOne.mockResolvedValue({ id: 'existing' });
+
+      const result = await service.scrapeSubreddit(subName);
+
+      expect(result).toEqual({ scrapedPostsCount: 0 });
+      expect(mockRedditScraper.fetchPostComments).not.toHaveBeenCalled();
+      expect(cleanupSpy).toHaveBeenCalled();
+      expect(infoSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          considered: 100,
+          saved: 0,
+          stopReason: 'considered-100',
+        }),
+        'scrape walk finished',
       );
     });
 
@@ -1167,7 +1212,7 @@ describe('ScraperService', () => {
 
       const result = await service.scrapeSubreddit(subName);
 
-      expect(result).toEqual({ scrapedPostsCount: 0 });
+      expect(result).toEqual({ scrapedPostsCount: 0, failed: true });
       expect(mockSubredditRepo.nativeDelete).not.toHaveBeenCalled();
     });
   });
@@ -1320,7 +1365,7 @@ describe('ScraperService', () => {
 
       const result = await service.scrapeSubreddit(subName);
 
-      expect(result).toEqual({ scrapedPostsCount: 5 });
+      expect(result).toEqual({ scrapedPostsCount: 5, failed: true });
       expect(errorSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           sub: subName,

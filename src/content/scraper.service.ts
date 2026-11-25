@@ -26,6 +26,8 @@ type FetchedComment = Awaited<
 
 export interface ScrapeSubredditResult {
   scrapedPostsCount: number;
+  /** The walk stopped because the fetcher/network failed, so a retry is worth it. */
+  failed?: boolean;
 }
 
 // A run renews its claim on this beat. Three missed beats mean the run is gone -
@@ -36,6 +38,11 @@ export const CLAIM_LEASE_MS = 3 * CLAIM_TICK_MS;
 // Hard ceiling on one run. On reaching it the run stops itself AND stops renewing,
 // so a run that would never finish frees its subreddit instead of holding it.
 export const RUN_CAP_MS = 30 * 60 * 1000;
+
+// The walk considers at most this many top-week candidates, duplicates included.
+export const SCRAPE_CANDIDATE_LIMIT = 100;
+// It stops as soon as this many candidates pass the word guard and are stored.
+export const SCRAPE_SAVE_LIMIT = 20;
 
 // Cooldown applied after a scrape that yielded 0 new posts
 const SCRAPE_COOLDOWN_MS = 2 * 60 * 60 * 1000;
@@ -58,6 +65,11 @@ export class ScraperService {
   ) {}
 
   private readonly logger = createServiceLogger(ScraperService.name);
+
+  /** Creates the subreddit row without scraping, for callers that need the id. */
+  async ensureSubreddit(subredditName: string): Promise<void> {
+    await this.findOrCreateSubreddit(subredditName);
+  }
 
   async scrapeSubreddit(
     subredditName: string,
@@ -103,20 +115,23 @@ export class ScraperService {
 
     try {
       let savedCount = 0;
+      let consideredCount = 0;
       let pageCount = 0;
       let cursor: string | null = null;
       let prevFirstPostId: string | null = null;
       let stopReason = '';
+      let fetchFailed = false;
 
       while (true) {
         let page;
         try {
           page = await this.redditScraperService.fetchTopPosts(subredditName, {
-            limit: 100,
+            limit: SCRAPE_CANDIDATE_LIMIT,
             ...(cursor ? { after: cursor } : {}),
           });
         } catch (err) {
           stopReason = 'fetch-fail';
+          fetchFailed = true;
           this.logger.error(
             {
               scrapeId,
@@ -148,6 +163,7 @@ export class ScraperService {
             page: pageCount,
             cursor,
             viable: rawPosts.length,
+            considered: consideredCount,
             saved: savedCount,
           },
           'walk page fetched',
@@ -158,10 +174,16 @@ export class ScraperService {
             stopReason = lease.stopReason ?? 'claim-lost';
             break;
           }
-          if (savedCount >= 20) {
+          if (savedCount >= SCRAPE_SAVE_LIMIT) {
             stopReason = 'saved-20';
             break;
           }
+          if (consideredCount >= SCRAPE_CANDIDATE_LIMIT) {
+            stopReason = 'considered-100';
+            break;
+          }
+          // Duplicates and word-guard rejects still consume the candidate budget.
+          consideredCount += 1;
 
           const exists = await this.postRepo.findOne({
             redditId: rawPost.id,
@@ -229,9 +251,18 @@ export class ScraperService {
         }
         prevFirstPostId = firstPostId;
 
-        if (savedCount >= 20 || !after) {
+        if (
+          savedCount >= SCRAPE_SAVE_LIMIT ||
+          consideredCount >= SCRAPE_CANDIDATE_LIMIT ||
+          !after
+        ) {
           stopReason =
-            stopReason || (savedCount >= 20 ? 'saved-20' : 'pool-exhausted');
+            stopReason ||
+            (savedCount >= SCRAPE_SAVE_LIMIT
+              ? 'saved-20'
+              : consideredCount >= SCRAPE_CANDIDATE_LIMIT
+                ? 'considered-100'
+                : 'pool-exhausted');
           break;
         }
         cursor = after;
@@ -240,7 +271,9 @@ export class ScraperService {
       await this.cleanupOldData(subreddit.id);
 
       subreddit.lastScrapedAt = new Date();
-      if (savedCount === 0) {
+      // A network failure is not "this subreddit has nothing new": retrying is
+      // the point of the queue, so do not apply the empty-result cooldown.
+      if (savedCount === 0 && !fetchFailed) {
         subreddit.scrapeCooldownUntil = new Date(
           Date.now() + SCRAPE_COOLDOWN_MS,
         );
@@ -252,6 +285,7 @@ export class ScraperService {
           scrapeId,
           sub: subredditName,
           saved: savedCount,
+          considered: consideredCount,
           pages: pageCount,
           durationMs: Date.now() - startMs,
           stopReason,
@@ -259,7 +293,10 @@ export class ScraperService {
         'scrape walk finished',
       );
 
-      return { scrapedPostsCount: savedCount };
+      return {
+        scrapedPostsCount: savedCount,
+        ...(fetchFailed ? { failed: true } : {}),
+      };
     } finally {
       // Ownership-scoped: if another run has already taken over, this clears
       // nothing and that run keeps its claim. A deleted row makes it a no-op.

@@ -38,9 +38,13 @@ const context = await browser.newContext({
 });
 
 const jsonRequests = [];
+const rateLimited = [];
 const watchRequests = (target) => {
   target.on('request', (request) => {
     if (/\.json(\?|$)/.test(request.url())) jsonRequests.push(request.url());
+  });
+  target.on('response', (response) => {
+    if (response.status() === 429) rateLimited.push(response.url());
   });
 };
 
@@ -52,7 +56,8 @@ await page.goto(`https://www.reddit.com/r/${subreddit}/comments/${postId}/`, {
   waitUntil: 'domcontentloaded',
   timeout: 45000,
 });
-await page.waitForSelector('shreddit-comment', { timeout: 15000 }).catch(() => {});
+await page.evaluate(() => window.scrollTo(0, 800)).catch(() => {});
+await page.waitForSelector('shreddit-comment', { timeout: 20000 }).catch(() => {});
 await page
   .evaluate(waitForStableTree, { quietMs: 250, maxMs: 3000 })
   .catch(() => {});
@@ -105,17 +110,50 @@ const collectContinuations = async () => {
   return merged;
 };
 
-const result = await collectComments(reader, {
-  postId,
-  budgetMs: Math.max(5_000, Math.min(60_000, deadline - Date.now() - 10_000)),
-  minInlineForContinuations: 200,
-  continuationsOnlyBelowChainDepth: 5,
-  collectContinuations,
-});
+let result;
+try {
+  result = await collectComments(reader, {
+    postId,
+    budgetMs: Math.max(5_000, Math.min(60_000, deadline - Date.now() - 10_000)),
+    minInlineForContinuations: 200,
+    continuationsOnlyBelowChainDepth: 5,
+    collectContinuations,
+  });
+} catch (error) {
+  console.log(
+    JSON.stringify(
+      {
+        thread: `${subreddit}/${postId}`,
+        error: error instanceof Error ? error.message : String(error),
+        elapsedMs: Date.now() - startedAt,
+        rateLimited: rateLimited.length,
+        url: page.url(),
+      },
+      null,
+      2,
+    ),
+  );
+  await browser.close().catch(() => {});
+  process.exit(1);
+}
 
 const elapsedMs = Date.now() - startedAt;
 const urlSame = page.url() === urlBefore;
 const comments = result.comments;
+const words = comments.reduce(
+  (sum, comment) => sum + comment.body.trim().split(/\s+/).filter(Boolean).length,
+  0,
+);
+const invalidFields = comments.filter(
+  (c) =>
+    !c.id ||
+    !c.body ||
+    !c.author ||
+    !Number.isInteger(c.score) ||
+    !Number.isInteger(c.created_utc) ||
+    c.created_utc <= 0 ||
+    !c.parent_id,
+).length;
 const byId = new Map(comments.map((comment) => [comment.id, comment]));
 const chainLength = (comment) => {
   let length = 1;
@@ -210,37 +248,52 @@ if (manual) {
   );
 }
 
+const brokenParents = comments.filter(
+  (c) => c.parent_id !== postId && !ids.has(c.parent_id),
+).length;
+const unique = ids.size === comments.length;
+const minComments = Number(process.env.LIVE_QA_MIN_COMMENTS ?? 0);
+const minWords = Number(process.env.LIVE_QA_MIN_WORDS ?? 0);
+const maxMs = Number(process.env.LIVE_QA_MAX_MS ?? 0);
+const tooSlow = Number.isFinite(maxMs) && maxMs > 0 && elapsedMs > maxMs;
+const tooFewComments =
+  Number.isFinite(minComments) && minComments > 0 && comments.length < minComments;
+const tooFewWords =
+  Number.isFinite(minWords) && minWords > 0 && words < minWords;
+const failed =
+  manualFailed ||
+  invalidFields > 0 ||
+  brokenParents > 0 ||
+  !unique ||
+  rateLimited.length > 0 ||
+  tooSlow ||
+  tooFewComments ||
+  tooFewWords;
+
 console.log(
   JSON.stringify(
     {
       thread: `${subreddit}/${postId}`,
       returned: comments.length,
+      words,
       rendered: result.renderedCount,
       expanded: result.expandedCount,
       elapsedMs,
+      gates: { minComments, minWords, maxMs },
       urlSame,
       jsonRequests: jsonRequests.length,
-      unique: ids.size,
+      rateLimited: rateLimited.length,
+      unique,
       maxParentChain: Math.max(0, ...comments.map(chainLength)),
-      invalidFields: comments.filter(
-        (c) =>
-          !c.id ||
-          !c.body ||
-          !c.author ||
-          !Number.isInteger(c.score) ||
-          !Number.isInteger(c.created_utc) ||
-          c.created_utc <= 0 ||
-          !c.parent_id,
-      ).length,
-      brokenParents: comments.filter(
-        (c) => c.parent_id !== postId && !ids.has(c.parent_id),
-      ).length,
+      invalidFields,
+      brokenParents,
       sortedDesc: comments.every(
         (c, i) => i === 0 || comments[i - 1].score >= c.score,
       ),
       top3: comments
         .slice(0, 3)
         .map((c) => ({ id: c.id, score: c.score, body: c.body.slice(0, 60) })),
+      failed,
     },
     null,
     2,
@@ -248,4 +301,4 @@ console.log(
 );
 
 await browser.close();
-process.exit(manualFailed ? 1 : 0);
+process.exit(failed ? 1 : 0);

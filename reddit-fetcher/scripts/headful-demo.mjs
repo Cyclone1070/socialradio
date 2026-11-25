@@ -88,49 +88,71 @@ const result = await collectComments(reader, {
   continuationsOnlyBelowChainDepth: 5,
 });
 
-// Edge case: Reddit moves very deep chains onto their own page. Follow any
-// "continue this thread" link in a new tab and collect it the same way.
-const continuationLinks = await page
-  .evaluate(findContinuationLinks)
-  .catch(() => []);
+function pageDeepest(comments, rootId) {
+  const byId = new Map(comments.map((comment) => [comment.id, comment]));
+  let best = { id: null, depth: -1 };
+  for (const comment of comments) {
+    let depth = 0;
+    let cursor = comment;
+    while (cursor && cursor.parent_id !== rootId && byId.has(cursor.parent_id)) {
+      cursor = byId.get(cursor.parent_id);
+      depth += 1;
+    }
+    if (depth > best.depth) best = { id: comment.id, depth };
+  }
+  return best;
+}
+
+let hop = 0;
 let continuationComments = 0;
-console.log(`continuation links: ${continuationLinks.length}`);
-for (const link of continuationLinks.slice(0, 1)) {
-  console.log(`  opening continuation ${link.href.slice(0, 80)}`);
-  const tab = await context.newPage();
-  try {
-    await tab.goto(`https://www.reddit.com${link.href}`, {
-      waitUntil: 'domcontentloaded',
-      timeout: 20000,
-    });
-    await tab.waitForSelector('shreddit-comment', {
-      state: 'attached',
-      timeout: 15000,
-    });
-    const tabReader = {
-      readTree: () => tab.evaluate(readCommentTree),
-      readCount: () => tab.evaluate(readCommentCount),
+let current = result.comments;
+let currentRoot = postId;
+let chainDepth = 0;
+for (;;) {
+  const deepest = pageDeepest(current, postId);
+  chainDepth = Math.max(chainDepth, deepest.depth);
+  const links = await page.evaluate(findContinuationLinks).catch(() => []);
+  const next = links.find(
+    (link) => link.ownerId.replace(/^t1_/, '') === deepest.id,
+  );
+  if (!next || hop >= 8) {
+    console.log(`chain ends after ${hop} continuation page(s), depth ${chainDepth}`);
+    break;
+  }
+  hop += 1;
+  console.log(`  continuation ${hop}: opening ${next.href.slice(0, 70)}`);
+  await page.goto(`https://www.reddit.com${next.href}`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 20000,
+  });
+  await page.waitForSelector('shreddit-comment', {
+    state: 'attached',
+    timeout: 15000,
+  });
+  const part = await collectComments(
+    {
+      readTree: () => page.evaluate(readCommentTree),
+      readCount: () => page.evaluate(readCommentCount),
       clickMoreBatch: async (maxClicks) => {
-        const clicked = await tab.evaluate(clickMoreRepliesBatch, {
+        const clicked = await page.evaluate(clickMoreRepliesBatch, {
           maxClicks,
         });
-        if (clicked > 0) await tab.waitForTimeout(0);
         return clicked;
       },
       waitForGrowth: (previousCount, timeoutMs) =>
-        tab
+        page
           .evaluate(waitForCommentGrowth, { previousCount, timeoutMs })
           .catch(() => false),
-    };
-    const part = await collectComments(tabReader, {
-      postId,
-      budgetMs: 20_000,
-    });
-    continuationComments += part.comments.length;
-    console.log(`  continuation page: ${part.comments.length} comments`);
-  } finally {
-    await tab.close().catch(() => {});
-  }
+    },
+    { postId, budgetMs: 15_000 },
+  );
+  continuationComments += part.comments.length;
+  current = part.comments;
+  const partDepth = pageDeepest(current, postId).depth;
+  chainDepth = Math.max(chainDepth, chainDepth + 1 + partDepth);
+  console.log(
+    `  continuation ${hop}: ${part.comments.length} comments, page depth ${partDepth}, running depth ${chainDepth}`,
+  );
 }
 
 console.log(
@@ -138,6 +160,7 @@ console.log(
     {
       comments: result.comments.length,
       continuationComments,
+      chainDepth,
       renderedAtStart: result.renderedCount,
       expanded: result.expandedCount,
       elapsedMs: Date.now() - startedAt,

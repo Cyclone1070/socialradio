@@ -10,6 +10,7 @@ import {
   CommentSchema,
 } from '../infrastructure/database/schemas/content.schema';
 import { ScraperService } from './scraper.service';
+import { ScrapeQueueService } from './scrape-queue.service';
 import { ContentContract } from './content.contract';
 import { PostData, CommentData } from './types/post.types';
 import { SubredditData } from './types/subreddit.types';
@@ -24,6 +25,7 @@ export class ContentService implements ContentContract {
     @InjectRepository(CommentSchema)
     private readonly commentRepo: EntityRepository<Comment>,
     private readonly scraperService: ScraperService,
+    private readonly scrapeQueue: ScrapeQueueService,
   ) {}
 
   async getPostData(postId: string): Promise<PostData | null> {
@@ -93,6 +95,9 @@ export class ContentService implements ContentContract {
   }
 
   async scrapeSubreddit(subredditName: string): Promise<void> {
-    await this.scraperService.scrapeSubreddit(subredditName);
+    // Ensures the row exists before the job is queued: subscribers reference the
+    // subreddit id immediately, and a duplicate enqueue is deduped anyway.
+    await this.scraperService.ensureSubreddit(subredditName);
+    await this.scrapeQueue.enqueue(subredditName);
   }
 }
