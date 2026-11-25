@@ -18,6 +18,7 @@ describe('ContentController', () => {
 
   const mockScrapeQueue = {
     enqueue: jest.fn(),
+    status: jest.fn(),
   };
 
   const mockSubredditRepo = {
@@ -65,6 +66,31 @@ describe('ContentController', () => {
 
       expect(result).toEqual({ jobId: 'job-1' });
       expect(mockScrapeQueue.enqueue).toHaveBeenCalledWith('askreddit');
+    });
+  });
+
+  describe('scrapeStatus', () => {
+    it('returns the queue job state', async () => {
+      const job = {
+        id: 'job-1',
+        subreddit: 'askreddit',
+        state: 'done',
+        attempts: 1,
+        runAt: new Date(),
+        lastError: null,
+        finishedAt: new Date(),
+      };
+      mockScrapeQueue.status.mockResolvedValue(job);
+
+      await expect(controller.scrapeStatus('job-1')).resolves.toEqual(job);
+      expect(mockScrapeQueue.status).toHaveBeenCalledWith('job-1');
+    });
+
+    it('is a 404 for an unknown job', async () => {
+      mockScrapeQueue.status.mockResolvedValue(null);
+      await expect(controller.scrapeStatus('missing')).rejects.toThrow(
+        'scrape job not found',
+      );
     });
   });
 

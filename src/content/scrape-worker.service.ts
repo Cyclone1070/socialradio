@@ -41,7 +41,10 @@ export class ScrapeWorkerService
   private readonly sweepMs: number;
   private listener?: Client;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
-  private retryTimer?: ReturnType<typeof setTimeout>;
+  private readonly retryTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
   private sweepTimer?: ReturnType<typeof setInterval>;
   private running = false;
   private draining = false;
@@ -83,7 +86,8 @@ export class ScrapeWorkerService
     this.running = false;
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    if (this.retryTimer) clearTimeout(this.retryTimer);
+    for (const timer of this.retryTimers.values()) clearTimeout(timer);
+    this.retryTimers.clear();
     if (this.listener) {
       const listener = this.listener;
       this.listener = undefined;
@@ -163,16 +167,21 @@ export class ScrapeWorkerService
     }
   }
 
-  /** One-shot wake for a backed-off retry; the idle sweep is the fallback. */
-  private scheduleRetry(at: Date): void {
+  /**
+   * One-shot wake for a backed-off retry. Timers are kept per job so a later
+   * retry cannot cancel an earlier one; the idle sweep is still the fallback.
+   */
+  private scheduleRetry(jobId: string, at: Date): void {
     if (!this.running) return;
-    if (this.retryTimer) clearTimeout(this.retryTimer);
+    const existing = this.retryTimers.get(jobId);
+    if (existing) clearTimeout(existing);
     const delayMs = Math.max(0, at.getTime() - Date.now());
-    this.retryTimer = setTimeout(() => {
-      this.retryTimer = undefined;
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(jobId);
       void this.drain();
     }, delayMs);
-    this.retryTimer.unref?.();
+    timer.unref?.();
+    this.retryTimers.set(jobId, timer);
   }
 
   private async execute(job: ScrapeJob): Promise<void> {
@@ -206,6 +215,9 @@ export class ScrapeWorkerService
       const result = await RequestContext.create(this.em, () =>
         this.scraper.scrapeSubreddit(job.subreddit),
       );
+      if (result.claimHeld) {
+        throw new Error('another scrape still holds the subreddit claim');
+      }
       if (result.failed) {
         throw new Error('the scrape walk could not reach the fetcher');
       }
@@ -242,7 +254,7 @@ export class ScrapeWorkerService
           return null;
         });
       if (failure?.state === 'queued') {
-        this.scheduleRetry(failure.runAt);
+        this.scheduleRetry(job.id, failure.runAt);
       }
       this.logger.warn(
         { jobId: job.id, state: failure?.state, err: message },

@@ -46,6 +46,42 @@ describe('ScrapeQueueService', () => {
     });
   });
 
+  describe('status', () => {
+    it('reads one job by id', async () => {
+      const runAt = new Date();
+      execute.mockResolvedValueOnce([
+        {
+          id: 'job-1',
+          subreddit: 'news',
+          state: 'queued',
+          attempts: 2,
+          run_at: runAt,
+          last_error: 'boom',
+          finished_at: null,
+        },
+      ]);
+
+      await expect(service.status('job-1')).resolves.toEqual({
+        id: 'job-1',
+        subreddit: 'news',
+        state: 'queued',
+        attempts: 2,
+        runAt,
+        lastError: 'boom',
+        finishedAt: null,
+      });
+      expect(execute).toHaveBeenCalledWith(
+        expect.stringContaining('from "scrape_job"'),
+        ['job-1'],
+      );
+    });
+
+    it('returns null for an unknown job', async () => {
+      execute.mockResolvedValueOnce([]);
+      await expect(service.status('missing')).resolves.toBeNull();
+    });
+  });
+
   describe('claim', () => {
     it('claims queued or stale running jobs with skip locked', async () => {
       const leasedUntil = new Date();
@@ -101,6 +137,15 @@ describe('ScrapeQueueService', () => {
   });
 
   describe('fail', () => {
+    it('fences the failure update to a still-live lease', async () => {
+      execute.mockResolvedValueOnce([{ state: 'queued', run_at: new Date() }]);
+
+      await service.fail('job-1', 'worker-1', 'boom', 3);
+
+      const [sql] = execute.mock.calls[0] as unknown as [string, unknown[]];
+      expect(sql).toContain(`"leased_until" > now()`);
+    });
+
     it('returns the resulting state and retry time from the retry update', async () => {
       const runAt = new Date(Date.now() + 120_000);
       execute.mockResolvedValueOnce([{ state: 'queued', run_at: runAt }]);

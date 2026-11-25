@@ -92,6 +92,24 @@ describe('ScrapeWorkerService', () => {
     await worker.onApplicationShutdown();
   });
 
+  it('requeues when the subreddit claim is still held by another run', async () => {
+    queue.claim.mockResolvedValueOnce(job('news')).mockResolvedValueOnce(null);
+    scraper.scrapeSubreddit.mockResolvedValue({
+      scrapedPostsCount: 0,
+      claimHeld: true,
+    });
+
+    await internals.drain();
+
+    expect(queue.fail).toHaveBeenCalledWith(
+      'news',
+      expect.any(String),
+      'another scrape still holds the subreddit claim',
+      3,
+    );
+    expect(queue.complete).not.toHaveBeenCalled();
+  });
+
   it('records a failure and lets the queue decide whether to retry', async () => {
     queue.claim.mockResolvedValueOnce(job('news')).mockResolvedValueOnce(null);
     scraper.scrapeSubreddit.mockRejectedValue(new Error('reddit exploded'));

@@ -28,6 +28,8 @@ export interface ScrapeSubredditResult {
   scrapedPostsCount: number;
   /** The walk stopped because the fetcher/network failed, so a retry is worth it. */
   failed?: boolean;
+  /** The subreddit's own claim was held by another run, so this job must retry. */
+  claimHeld?: boolean;
 }
 
 // A run renews its claim on this beat. Three missed beats mean the run is gone -
@@ -102,7 +104,7 @@ export class ScraperService {
         { scrapeId, sub: subredditName },
         'scrape skipped: another run holds the claim',
       );
-      return { scrapedPostsCount: 0 };
+      return { scrapedPostsCount: 0, claimHeld: true };
     }
     lease.start((reason) => {
       this.logger.warn(
@@ -121,6 +123,7 @@ export class ScraperService {
       let prevFirstPostId: string | null = null;
       let stopReason = '';
       let fetchFailed = false;
+      let commentFetchFailed = false;
 
       while (true) {
         let page;
@@ -212,6 +215,7 @@ export class ScraperService {
               },
               'failed to fetch post comments — skipping post',
             );
+            commentFetchFailed = true;
             continue;
           }
 
@@ -270,13 +274,18 @@ export class ScraperService {
 
       await this.cleanupOldData(subreddit.id);
 
-      subreddit.lastScrapedAt = new Date();
-      // A network failure is not "this subreddit has nothing new": retrying is
-      // the point of the queue, so do not apply the empty-result cooldown.
-      if (savedCount === 0 && !fetchFailed) {
-        subreddit.scrapeCooldownUntil = new Date(
-          Date.now() + SCRAPE_COOLDOWN_MS,
-        );
+      const walkFailed = fetchFailed || commentFetchFailed;
+      // Only a walk that reached the end of its listing is fresh. A failed fetch
+      // must leave lastScrapedAt stale so the next topic check can retry it.
+      if (!walkFailed) {
+        subreddit.lastScrapedAt = new Date();
+        // A network failure is not "this subreddit has nothing new": retrying is
+        // the point of the queue, so do not apply the empty-result cooldown.
+        if (savedCount === 0) {
+          subreddit.scrapeCooldownUntil = new Date(
+            Date.now() + SCRAPE_COOLDOWN_MS,
+          );
+        }
       }
       await this.em.flush();
 
@@ -295,7 +304,7 @@ export class ScraperService {
 
       return {
         scrapedPostsCount: savedCount,
-        ...(fetchFailed ? { failed: true } : {}),
+        ...(walkFailed ? { failed: true } : {}),
       };
     } finally {
       // Ownership-scoped: if another run has already taken over, this clears

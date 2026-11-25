@@ -56,6 +56,35 @@ done
 [ "$SCRAPED" = 1 ] || fail "AskReddit scrape did not complete within ${MAX_WAIT}s"
 echo "  ✓ AskReddit scraped ($POST_COUNT posts) after ~${i}s"
 
+# The worker is a separate process, so posts appearing is not enough: the durable
+# job must also reach done with its lease released. This is the real-Postgres
+# integration check the mocked queue unit tests cannot provide.
+i=0
+JOB_ROW=""
+while [ $i -lt 30 ]; do
+  JOB_ROW=$(psql_run -t -A -c "
+    SELECT state || '|' || attempts || '|' ||
+           (lease_owner IS NULL)::text || '|' ||
+           (leased_until IS NULL)::text || '|' ||
+           (finished_at IS NOT NULL)::text
+    FROM scrape_job WHERE dedupe_key = 'subreddit:askreddit';
+  ")
+  case "$JOB_ROW" in
+    done\|*\|true\|true\|true) break ;;
+  esac
+  i=$((i+1))
+  sleep 1
+done
+[ "$JOB_ROW" = "done|1|true|true|true" ] \
+  || fail "durable scrape job did not finish cleanly (got '$JOB_ROW', wanted done|1|true|true|true)"
+echo "  ✓ durable scrape_job reached done with the lease released"
+
+JOB_ID=$(psql_run -t -A -c "SELECT id FROM scrape_job WHERE dedupe_key = 'subreddit:askreddit';")
+assert_status GET "$BASE_URL/admin/feeds/scrape/$JOB_ID" 200 \
+  -H "Authorization: Bearer $TOKEN"
+assert_jq '.state == "done" and .finishedAt != null and .lastError == null' \
+  'queue status endpoint exposes the completed job'
+
 echo "43. SQL fixture: inject dead_prod_sub_e2e_77401 behind API gate"
 psql_run -c "
   INSERT INTO subreddit (\"id\", \"name\", \"last_scraped_at\")

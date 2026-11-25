@@ -189,6 +189,56 @@ describe('ScraperService', () => {
       expect(mockRedditScraper.fetchPostComments).toHaveBeenCalledTimes(2);
     });
 
+    it('marks the walk failed when a post comment fetch fails, without refreshing lastScrapedAt', async () => {
+      const subEntity = Object.assign(new Subreddit(), {
+        id: 'sub-uuid',
+        name: 'AskReddit',
+        lastScrapedAt: null,
+      });
+      jest.spyOn(service, 'cleanupOldData').mockResolvedValue(undefined);
+      mockSubredditRepo.findOne.mockResolvedValue(subEntity);
+      mockPostRepo.findOne.mockResolvedValue(null);
+      mockRedditScraper.fetchTopPosts.mockResolvedValue({
+        posts: [
+          {
+            id: 'p1',
+            title: 'T 1',
+            selftext: '',
+            author: 'op',
+            score: 10,
+            created_utc: 1719999999,
+          },
+          {
+            id: 'p2',
+            title: 'T 2',
+            selftext: '',
+            author: 'op',
+            score: 9,
+            created_utc: 1719999999,
+          },
+        ],
+        after: null,
+        isInvalid: false,
+      });
+      mockRedditScraper.fetchPostComments
+        .mockRejectedValueOnce(new Error('comment render failed'))
+        .mockResolvedValueOnce([
+          {
+            id: 'c2',
+            body: 'hello '.repeat(2600).trim(),
+            author: 'user',
+            score: 10,
+            parent_id: 't3_p2',
+            created_utc: 1719999999,
+          },
+        ]);
+
+      const result = await service.scrapeSubreddit('AskReddit');
+
+      expect(result).toEqual({ scrapedPostsCount: 1, failed: true });
+      expect(subEntity.lastScrapedAt).toBeNull();
+    });
+
     it('skips the walk when another run holds the claim', async () => {
       const subEntity = Object.assign(new Subreddit(), {
         id: 'sub-uuid',
@@ -203,7 +253,7 @@ describe('ScraperService', () => {
 
       const result = await service.scrapeSubreddit('AskReddit');
 
-      expect(result).toEqual({ scrapedPostsCount: 0 });
+      expect(result).toEqual({ scrapedPostsCount: 0, claimHeld: true });
       expect(mockRedditScraper.fetchTopPosts).not.toHaveBeenCalled();
     });
 
@@ -655,7 +705,7 @@ describe('ScraperService', () => {
       expect(mockRedditScraper.fetchTopPosts).toHaveBeenCalledTimes(2);
       expect(mockSubredditRepo.nativeDelete).not.toHaveBeenCalled();
       expect(cleanupSpy).toHaveBeenCalled();
-      expect(subEntity.lastScrapedAt).toBeInstanceOf(Date);
+      expect(subEntity.lastScrapedAt).toBeNull();
     });
 
     it('stops quietly when the very first page fails: 0 saved, sub kept, no throw', async () => {
@@ -1087,7 +1137,7 @@ describe('ScraperService', () => {
 
       const result = await service.scrapeSubreddit(subName);
 
-      expect(result).toEqual({ scrapedPostsCount: 0 });
+      expect(result).toEqual({ scrapedPostsCount: 0, claimHeld: true });
       expect(mockRedditScraper.fetchTopPosts).not.toHaveBeenCalled();
     });
 
@@ -1128,7 +1178,7 @@ describe('ScraperService', () => {
       const result = await service.scrapeSubreddit(subName, true);
 
       expect(mockRedditScraper.fetchTopPosts).not.toHaveBeenCalled();
-      expect(result).toEqual({ scrapedPostsCount: 0 });
+      expect(result).toEqual({ scrapedPostsCount: 0, claimHeld: true });
     });
 
     it('bypasses the cooldown when force is true', async () => {

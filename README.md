@@ -62,6 +62,7 @@ compose network. A station needs rows in the music, break liner and jingle table
 | `GET` | `/channels/:id/live.m3u8` | none for public stations, JWT for private |
 | `GET` | `/admin/channels/:id/topics` | admin |
 | `POST` | `/admin/feeds/scrape` | admin |
+| `GET` | `/admin/feeds/scrape/:jobId` | admin |
 | `GET` | `/admin/feeds/subreddits` | admin |
 | `DELETE` | `/admin/feeds/cache` | admin |
 

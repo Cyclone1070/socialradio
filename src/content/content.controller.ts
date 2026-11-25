@@ -1,6 +1,15 @@
-import { Controller, Get, Post, Delete, Body, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Delete,
+  Body,
+  Param,
+  NotFoundException,
+  UseGuards,
+} from '@nestjs/common';
 import { ScraperService } from './scraper.service';
-import { ScrapeQueueService } from './scrape-queue.service';
+import { ScrapeJobStatus, ScrapeQueueService } from './scrape-queue.service';
 import { InjectRepository } from '@mikro-orm/nestjs';
 import { EntityRepository } from '@mikro-orm/postgresql';
 import { Subreddit } from './entities/subreddit.entity';
@@ -30,6 +39,13 @@ export class ContentController {
     const normalizedName = dto.subredditName?.trim().toLowerCase();
     const job = await this.scrapeQueue.enqueue(normalizedName);
     return { jobId: job.id };
+  }
+
+  @Get('scrape/:jobId')
+  async scrapeStatus(@Param('jobId') jobId: string): Promise<ScrapeJobStatus> {
+    const job = await this.scrapeQueue.status(jobId);
+    if (!job) throw new NotFoundException('scrape job not found');
+    return job;
   }
 
   @Delete('cache')

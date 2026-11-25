@@ -19,6 +19,16 @@ export interface ScrapeJob {
   leasedUntil: Date;
 }
 
+export interface ScrapeJobStatus {
+  id: string;
+  subreddit: string;
+  state: 'queued' | 'running' | 'done' | 'failed';
+  attempts: number;
+  runAt: Date;
+  lastError: string | null;
+  finishedAt: Date | null;
+}
+
 interface JobRow {
   id: string;
   dedupe_key: string;
@@ -65,6 +75,35 @@ export class ScrapeQueueService {
     const id = rows[0].id;
     await this.em.execute(`select pg_notify(?, ?)`, [SCRAPE_JOB_CHANNEL, id]);
     return { id };
+  }
+
+  async status(id: string): Promise<ScrapeJobStatus | null> {
+    const rows = await this.em.execute<
+      Array<{
+        id: string;
+        subreddit: string;
+        state: ScrapeJobStatus['state'];
+        attempts: number;
+        run_at: Date | string;
+        last_error: string | null;
+        finished_at: Date | string | null;
+      }>
+    >(
+      `select "id", "subreddit", "state", "attempts", "run_at", "last_error", "finished_at"
+       from "scrape_job" where "id" = ?`,
+      [id],
+    );
+    if (rows.length === 0) return null;
+    const row = rows[0];
+    return {
+      id: row.id,
+      subreddit: row.subreddit,
+      state: row.state,
+      attempts: row.attempts,
+      runAt: new Date(row.run_at),
+      lastError: row.last_error,
+      finishedAt: row.finished_at ? new Date(row.finished_at) : null,
+    };
   }
 
   async claim(
@@ -138,6 +177,7 @@ export class ScrapeQueueService {
              "run_at" = case when "attempts" >= ? then "run_at"
                              else now() + (power(2, least("attempts", 5)) * interval '1 minute') end
          where "id" = ? and "lease_owner" = ? and "state" = 'running'
+           and "leased_until" > now()
          returning "state", "run_at"`,
       [maxAttempts, error, maxAttempts, maxAttempts, id, workerId],
     );
